@@ -151,7 +151,7 @@ class ServerEmitter {
       `  if (ct.includes('application/x-adp')) {`,
       `    return _adpDecode(new Uint8Array(buf))`,
       `  }`,
-      `  const text = new TextDecoder().decode(buf) || '{}'`,
+      `  const text = _adpTdec.decode(buf) || '{}'`,
       `  try { return JSON.parse(text) } catch { throw new Error('Invalid request body: expected JSON or ADP') }`,
       `}`,
       ``,

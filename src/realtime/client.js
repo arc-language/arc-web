@@ -39,6 +39,9 @@ class RealtimeEmitter {
 
   emitChannel(decl, stateBindings) {
     const varName = decl.name
+    if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(varName)) {
+      throw new Error(`Arc codegen: unsafe @realtime variable name: ${JSON.stringify(varName)}`)
+    }
     // Channel expression: channel("chat/{roomId}") → extract the string
     const channelExpr = this.extractChannelName(decl.channel)
 

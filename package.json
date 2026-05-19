@@ -1,0 +1,17 @@
+{
+  "name": "arc",
+  "version": "0.1.0",
+  "description": "Arc — a new language for the web. Compiles to optimal HTML, CSS, and JS.",
+  "main": "src/cli.js",
+  "bin": {
+    "arc": "src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test tests/**/*.test.js",
+    "build": "node src/cli.js build",
+    "dev": "node src/cli.js dev"
+  },
+  "keywords": ["arc", "compiler", "web", "language"],
+  "license": "MIT",
+  "devDependencies": {}
+}

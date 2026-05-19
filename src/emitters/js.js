@@ -85,6 +85,7 @@ class JsEmitter {
     const capturedIds = new Set()
     for (const b of stateBindings) {
       if (!capturedIds.has(b.id)) {
+        _assertSafeAttr(b.id, 'state binding id')
         parts.push(`const _el_${b.id}=document.getElementById('${b.id}');`)
         capturedIds.add(b.id)
       }
@@ -152,7 +153,8 @@ class JsEmitter {
         `(function(){const _be=document.getElementById('${b.id}');if(!_be)return;` +
         `const _bevt=_be.tagName==='SELECT'||_be.type==='checkbox'||_be.type==='radio'?'change':'input';` +
         `_be.addEventListener(_bevt,function(e){` +
-        `_set_${b.expr}(_be.type==='checkbox'||_be.type==='radio'?e.target.checked:_be.type==='number'?parseFloat(e.target.value):e.target.value);` +
+        `const _bv=_be.type==='checkbox'||_be.type==='radio'?e.target.checked:_be.type==='number'?parseFloat(e.target.value):e.target.value;` +
+        `if(_be.type!=='number'||!isNaN(_bv))_set_${b.expr}(_bv);` +
         `});})();`
       )
     }
@@ -236,7 +238,7 @@ class JsEmitter {
         _assertSafeAttr(b.cls, 'class-toggle binding')
         return `${el}.classList.toggle('${b.cls}_${this.componentHash}',!!${val});`
       case 'bind':
-        return `${el}.value=${val};`
+        return `if(document.activeElement!==${el})${el}.value=${val};`
       default:
         return `${el}.textContent=${val};`
     }
@@ -247,6 +249,8 @@ class JsEmitter {
     const items = this.emitRuntimeExpr(b.expr)
     const item = b.itemName ?? 'item'
     const idx = b.indexName ?? 'i'
+    _assertSafeIdent(item, 'list item var')
+    _assertSafeIdent(idx, 'list index var')
     const tpl = JSON.stringify(b.bodyTemplate ?? '')
 
     // Suffix reactive IDs with item index to ensure DOM uniqueness across list items
@@ -275,6 +279,7 @@ class JsEmitter {
   // ── Event listeners ────────────────────────────────────────────────────────
 
   emitEventListener(ev) {
+    if (ev.elementId) _assertSafeAttr(ev.elementId, 'event listener elementId')
     const el = ev.elementId
       ? `document.getElementById('${ev.elementId}')`
       : `document.querySelector('[data-arc-ev="${ev.handlerId}"]')`
@@ -288,7 +293,7 @@ class JsEmitter {
 
     const evtName = ev.event ?? ''
     if (!_SAFE_DOM_EVENTS.has(evtName)) throw new Error(`Arc codegen: unknown/unsafe event type: ${JSON.stringify(evtName)}`)
-    return `${el}.addEventListener('${evtName}',function(event){${body}});`
+    return `(function(){const _ee=${el};if(_ee)_ee.addEventListener('${evtName}',function(event){${body}});})();`
   }
 
   // ── Expression emission ────────────────────────────────────────────────────

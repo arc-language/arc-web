@@ -266,10 +266,19 @@ class BuildExecutor {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new Error(`@build fetch: only http/https allowed, got ${parsed.protocol}`)
     }
-    const hostname = parsed.hostname
-    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' ||
+    const hostname = parsed.hostname.toLowerCase()
+    // Block IPv4 private/loopback ranges
+    if (hostname === 'localhost' || hostname === '127.0.0.1' ||
         hostname.startsWith('169.254.') || hostname.startsWith('10.') ||
         hostname.startsWith('192.168.') || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
+      throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
+    }
+    // Block IPv6 private/loopback/link-local/ULA/IPv4-mapped ranges
+    if (hostname === '::1' || hostname === '[::1]' ||
+        hostname.startsWith('[::') || hostname.startsWith('[fc') ||
+        hostname.startsWith('[fd') || hostname.startsWith('[fe80') ||
+        hostname.startsWith('[::ffff:10.') || hostname.startsWith('[::ffff:192.168.') ||
+        /^\[::ffff:172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
       throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
     }
 
@@ -282,21 +291,19 @@ class BuildExecutor {
         }
         const chunks = []
         let totalBytes = 0
-        let destroyed = false
+        let settled = false
         const MAX_BYTES = 10 * 1024 * 1024
         res.on('data', c => {
           totalBytes += c.length
           if (totalBytes > MAX_BYTES) {
-            destroyed = true
-            req.destroy()
-            res.destroy()
-            reject(new Error(`@build fetch: response too large (max 10MB): ${url}`))
+            if (!settled) { settled = true; req.destroy(); res.destroy(); reject(new Error(`@build fetch: response too large (max 10MB): ${url}`)) }
             return
           }
           chunks.push(c)
         })
         res.on('end', () => {
-          if (destroyed) return
+          if (settled) return
+          settled = true
           const body = Buffer.concat(chunks).toString()
           const ct = res.headers['content-type'] ?? ''
           try {
@@ -305,7 +312,7 @@ class BuildExecutor {
             resolve(body)
           }
         })
-      }).on('error', reject)
+      }).on('error', e => { if (!settled) { settled = true; reject(e) } })
       req.setTimeout(10000, () => { req.destroy(new Error(`@build fetch: timeout after 10s: ${url}`)) })
     })
   }
