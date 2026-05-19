@@ -21,7 +21,8 @@ const { SourceMapBuilder } = require('./sourcemap')
 // Reads imported .arc files, extracts their widget/fn/style declarations,
 // and merges them into the importing program's declaration list.
 
-async function resolveImports(program, projectDir, filename, visited) {
+async function resolveImports(program, projectDir, filename, visited, rootDir) {
+  const topLevelRoot = rootDir ?? path.resolve(projectDir)
   const imports = program.declarations.filter(d => d.type === 'ImportDecl')
   if (imports.length === 0) return program
 
@@ -42,9 +43,8 @@ async function resolveImports(program, projectDir, filename, visited) {
       continue
     }
 
-    // Prevent directory traversal outside project root
-    const projectRoot = path.resolve(projectDir)
-    if (!path.resolve(importPath).startsWith(projectRoot + path.sep)) {
+    // Prevent directory traversal outside original project root (use topLevelRoot, not dirname)
+    if (!path.resolve(importPath).startsWith(topLevelRoot + path.sep)) {
       console.warn(`arc: warning: import escapes project root, skipping: ${src}`)
       continue
     }
@@ -62,14 +62,21 @@ async function resolveImports(program, projectDir, filename, visited) {
     const lexer = new Lexer(importedSource, importPath)
     const tokens = lexer.tokenize()
     const parser = new Parser(tokens, importPath)
-    let importedProgram = parser.parse()
+    let importedProgram
+    try {
+      importedProgram = parser.parse()
+    } catch (e) {
+      console.warn(`arc: warning: syntax error in import ${src}: ${e.message}`)
+      continue
+    }
 
-    // Recursively resolve imports in the imported file
+    // Recursively resolve imports in the imported file (pass topLevelRoot to keep containment anchored)
     importedProgram = await resolveImports(
       importedProgram,
       path.dirname(importPath),
       importPath,
-      visited
+      visited,
+      topLevelRoot
     )
 
     // Merge: bring in widget/fn/style declarations that match the import names
@@ -540,7 +547,9 @@ async function dev(projectDir) {
 
   const absDir = path.resolve(projectDir)
   const distDir = path.join(absDir, 'dist')
-  const port = parseInt(process.env.PORT ?? '3000')
+  const rawPort = parseInt(process.env.PORT ?? '3000')
+  const port = (Number.isInteger(rawPort) && rawPort > 0 && rawPort < 65536) ? rawPort : 3000
+  if (rawPort !== port) console.warn(`arc: invalid PORT value, using 3000`)
 
   // SSE clients waiting for reload signal
   const reloadClients = new Set()
@@ -561,7 +570,14 @@ async function dev(projectDir) {
       return
     }
 
-    let urlPath = req.url.split('?')[0]
+    let urlPath
+    try {
+      urlPath = decodeURIComponent(req.url.split('?')[0])
+    } catch {
+      res.writeHead(400)
+      res.end('Bad Request')
+      return
+    }
     if (urlPath === '/' || urlPath === '') urlPath = '/index.html'
 
     const filePath = path.resolve(distDir, urlPath.replace(/^\//, ''))
@@ -610,6 +626,14 @@ async function dev(projectDir) {
     }
   })
 
+  server.on('error', e => {
+    if (e.code === 'EADDRINUSE') {
+      console.error(`arc: port ${port} already in use. Set PORT env var to use a different port.`)
+    } else {
+      console.error(`arc: server error: ${e.message}`)
+    }
+    process.exit(1)
+  })
   server.listen(port, () => {
     console.log(`arc: dev server → http://localhost:${port}`)
   })
@@ -617,9 +641,9 @@ async function dev(projectDir) {
   // File watcher with debounce to avoid multiple rebuilds per save
   console.log('arc: watching for changes...')
   let _rebuildTimer = null
-  fs.watch(absDir, { recursive: true }, (event, changedFile) => {
+  const watchHandler = (event, changedFile) => {
     if (!changedFile || !changedFile.endsWith('.arc')) return
-    if (changedFile.includes('dist/')) return
+    if (changedFile.includes('dist' + path.sep) || changedFile.includes('dist/')) return
 
     clearTimeout(_rebuildTimer)
     _rebuildTimer = setTimeout(() => {
@@ -634,7 +658,14 @@ async function dev(projectDir) {
         })
         .catch(e => formatError(e, null, changedFile))
     }, 50)
-  })
+  }
+  try {
+    const watcher = fs.watch(absDir, { recursive: true }, watchHandler)
+    watcher.on('error', e => console.error(`arc: watcher error: ${e.message}`))
+  } catch (e) {
+    console.error(`arc: could not start file watcher: ${e.message}`)
+    console.error('arc: automatic rebuilds disabled — run \'arc build\' manually after changes')
+  }
 }
 
 // ── Deploy command ────────────────────────────────────────────────────────
@@ -666,8 +697,14 @@ async function deploy(projectDir, target) {
 
   const projectName = path.basename(absDir).replace(/[^a-z0-9-]/gi, '-').toLowerCase() || 'arc-app'
 
-  // 3. Generate deployment artifacts
-  const deployer = require(`./deploy/${target}`)
+  // 3. Generate deployment artifacts (static dispatch — no dynamic require)
+  const deployModules = {
+    cloudflare: () => require('./deploy/cloudflare'),
+    deno:       () => require('./deploy/deno'),
+    bun:        () => require('./deploy/bun'),
+    node:       () => require('./deploy/node'),
+  }
+  const deployer = deployModules[target]()
   const files = deployer.generate({ html, css, js, edgeFunctions, projectName })
 
   // 4. Write output files to project root

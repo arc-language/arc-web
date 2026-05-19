@@ -50,6 +50,7 @@ class Parser {
   advance() {
     const t = this.tokens[this.pos]
     if (this.pos < this.tokens.length - 1) this.pos++
+    this._peekCache.clear()
     return t
   }
 
@@ -85,6 +86,7 @@ class Parser {
         this.pos++
       }
       this.pos++
+      this._peekCache.clear()
       return p
     }
     return null
@@ -97,12 +99,14 @@ class Parser {
       this.error(msg ?? `Expected ${type}, got ${t.type} (${JSON.stringify(t.value)})`, t)
     }
     this.pos++
+    this._peekCache.clear()
     return t
   }
 
   eatIf(type) {
     this.skipWhitespace()
     if (this.tokens[this.pos]?.type === type) {
+      this._peekCache.clear()
       return this.tokens[this.pos++]
     }
     return null

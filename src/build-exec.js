@@ -153,8 +153,8 @@ class BuildExecutor {
 
       if (obj && typeof obj === 'object') {
         const args = await Promise.all((expr.args ?? []).map(a => this.evalExpr(a, locals)))
-        if (typeof obj[methodName] === 'function') {
-          return obj[methodName](...args)
+        if (Object.prototype.hasOwnProperty.call(obj, methodName) && typeof obj[methodName] === 'function') {
+          return obj[methodName].call(obj, ...args)
         }
       }
     }
@@ -183,8 +183,13 @@ class BuildExecutor {
   async callArrayMethod(arr, method, args, locals) {
     switch (method) {
       case 'map':     return Promise.all(arr.map(item => typeof args[0] === 'function' ? args[0](item) : item))
-      case 'filter':  return (await Promise.all(arr.map(item => typeof args[0] === 'function' ? args[0](item) : true)))
-                        .map((keep, i) => keep ? arr[i] : null).filter(x => x !== null)
+      case 'filter': {
+        const results = []
+        for (let i = 0; i < arr.length; i++) {
+          if (typeof args[0] === 'function' ? await args[0](arr[i]) : true) results.push(arr[i])
+        }
+        return results
+      }
       case 'find':    for (const item of arr) { if (typeof args[0] === 'function' && await args[0](item)) return item } return undefined
       case 'sort':    return [...arr].sort(args[0])
       case 'slice':   return arr.slice(...args)
@@ -260,7 +265,16 @@ class BuildExecutor {
           return reject(new Error(`@build fetch: HTTP ${res.statusCode} from ${url}`))
         }
         const chunks = []
-        res.on('data', c => chunks.push(c))
+        let totalBytes = 0
+        const MAX_BYTES = 10 * 1024 * 1024
+        res.on('data', c => {
+          totalBytes += c.length
+          if (totalBytes > MAX_BYTES) {
+            req.destroy(new Error(`@build fetch: response too large (max 10MB): ${url}`))
+            return
+          }
+          chunks.push(c)
+        })
         res.on('end', () => {
           const body = Buffer.concat(chunks).toString()
           const ct = res.headers['content-type'] ?? ''
@@ -284,8 +298,12 @@ class BuildExecutor {
     if (!resolved.startsWith(projectRoot + path.sep) && resolved !== projectRoot) {
       throw new Error(`@build readFile: path escapes project root: ${filePath}`)
     }
+    const stat = fs.statSync(resolved)
+    if (stat.size > 10 * 1024 * 1024) throw new Error(`@build readFile: file too large (max 10MB): ${filePath}`)
     const content = fs.readFileSync(resolved, 'utf8')
-    if (filePath.endsWith('.json')) return JSON.parse(content)
+    if (filePath.endsWith('.json')) {
+      try { return JSON.parse(content) } catch { throw new Error(`@build readFile: invalid JSON in ${filePath}`) }
+    }
     return content
   }
 

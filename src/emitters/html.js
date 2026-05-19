@@ -135,16 +135,16 @@ class HtmlEmitter {
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
       `<title>${this.escape(title)}</title>`,
-      `<meta name="description" content="${this.escape(description || title)}">`,
+      description ? `<meta name="description" content="${this.escape(description)}">` : '',
       `<meta property="og:title" content="${this.escape(title)}">`,
-      `<meta property="og:description" content="${this.escape(description || title)}">`,
+      description ? `<meta property="og:description" content="${this.escape(description)}">` : '',
       '<meta property="og:type" content="website">',
       '<link rel="stylesheet" href="styles.css">',
       '</head>',
       '<body>',
-      `<a href="#main-content" class="arc-sr-only">Skip to main content</a>`,
-      `<h1 class="arc-sr-only">${this.escape(title)}</h1>`,
+      `<a href="#main-content" class="arc-skip-link">Skip to main content</a>`,
       `<main id="main-content">`,
+      `<h1 class="arc-sr-only">${this.escape(title)}</h1>`,
       bodyContent,
       '</main>',
       '</body>',
@@ -328,9 +328,16 @@ class HtmlEmitter {
 
     const hrefVal = attrs.href && attrs.href.type ? this.evalStaticExpr(attrs.href) : attrs.href
     const isLink = node.tag === 'a' || node.tag === 'link'
-    if (isLink && hrefVal && String(hrefVal).startsWith('http')) {
+    const hrefStr = hrefVal != null ? String(hrefVal) : ''
+    if (isLink && (hrefStr.startsWith('https://') || hrefStr.startsWith('http://'))) {
       if (!attrs.target) parts.push('target="_blank"')
       if (!attrs.rel) parts.push('rel="noopener noreferrer"')
+    }
+
+    // Auto-inject aria-hidden on decorative icon elements
+    if (node.tag === 'icon') {
+      if (!attrs['aria-label']) parts.push('aria-hidden="true"')
+      else parts.push('role="img"')
     }
 
     return parts.length > 0 ? ' ' + parts.join(' ') : ''
@@ -472,7 +479,10 @@ class HtmlEmitter {
       ? (rawId.type ? this.evalStaticExpr(rawId) : rawId)
       : 'modal'
     const children = this.emitChildren(node.children)
-    return `<dialog id="${this.escape(String(id))}" popover aria-modal="true">${children}</dialog>`
+    const rawLabel = node.attrs?.label
+    const label = rawLabel ? (rawLabel.type ? this.evalStaticExpr(rawLabel) : rawLabel) : null
+    const ariaLabel = label ? ` aria-label="${this.escape(String(label))}"` : ` aria-label="${this.escape(String(id))}"`
+    return `<dialog id="${this.escape(String(id))}" popover aria-modal="true"${ariaLabel}>${children}</dialog>`
   }
 
   emitTooltip(node) {
@@ -482,7 +492,7 @@ class HtmlEmitter {
       : ''
     const id = `tip_${this.componentHash}_${this.reactiveCounter++}`
     return [
-      `<span class="arc-tooltip-anchor_${this.componentHash}">`,
+      `<span class="arc-tooltip-anchor_${this.componentHash}" aria-describedby="${id}" tabindex="0">`,
       `  ${this.emitChildren(node.children)}`,
       `  <span role="tooltip" id="${id}" popover="hint">${this.escape(text)}</span>`,
       `</span>`,

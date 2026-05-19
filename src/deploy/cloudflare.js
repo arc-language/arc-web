@@ -31,17 +31,14 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', projectNam
 // Edge functions (from @server declarations)
 ${edgeFunctions}
 
-const EDGE_FN_NAMES = new Set(${edgeFnNamesLiteral})
+const EDGE_FN_MAP = {${edgeFnNames.map(n => `${n}`).join(',')}}
 
 async function handleEdgeFunction(path, request) {
-  const fnName = path.replace('/_arc/fn/', '').replace(/\//g, '_')
-  if (!EDGE_FN_NAMES.has(fnName)) {
-    return new Response('Edge function not found', { status: 404 })
-  }
-  if (typeof globalThis[fnName] === 'function') {
-    return await globalThis[fnName](request)
-  }
-  return new Response('Edge function not found', { status: 404 })
+  const segment = path.slice('/_arc/fn/'.length)
+  if (segment.includes('/')) return new Response('Not Found', { status: 404 })
+  const fn = EDGE_FN_MAP['_handler_' + segment]
+  if (typeof fn !== 'function') return new Response('Edge function not found', { status: 404 })
+  return await fn(request)
 }
 `
     : ''

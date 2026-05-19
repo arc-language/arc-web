@@ -69,11 +69,11 @@ class JsEmitter {
     // Function declarations
     for (const fn of fnDecls) {
       if (this.sourceMap && fn.line != null) {
-        const soFar = parts.join('\n')
-        const genLine = (soFar.match(/\n/g) ?? []).length + 1
         this.sourceMap.addMapping(genLine, 0, fn.line - 1, 0)
       }
-      parts.push(this.emitFnDecl(fn))
+      const code = this.emitFnDecl(fn)
+      genLine += (code.match(/\n/g) ?? []).length + 1
+      parts.push(code)
     }
 
     // Computed recompute functions
@@ -124,9 +124,13 @@ class JsEmitter {
 
     // bind:value two-way bindings
     for (const b of stateBindings.filter(b => b.kind === 'bind')) {
-      parts.push(`document.getElementById('${b.id}').addEventListener('input',function(e){`)
-      parts.push(`_set_${b.expr}(e.target.value);`)
-      parts.push('});')
+      parts.push(
+        `(function(){const _be=document.getElementById('${b.id}');if(!_be)return;` +
+        `const _bevt=_be.tagName==='SELECT'||_be.type==='checkbox'||_be.type==='radio'?'change':'input';` +
+        `_be.addEventListener(_bevt,function(e){` +
+        `_set_${b.expr}(_be.type==='checkbox'||_be.type==='radio'?e.target.checked:e.target.value);` +
+        `});})();`
+      )
     }
 
     // Initial render — set all reactive nodes to their initial values
@@ -389,8 +393,9 @@ class JsEmitter {
   }
 
   emitMatchExpr(expr) {
-    const subj = `_ms_${Math.random().toString(36).slice(2, 7)}`
-    const tmp  = `_mr_${Math.random().toString(36).slice(2, 7)}`
+    const id = (this._matchCounter = (this._matchCounter ?? 0) + 1)
+    const subj = `_ms${id}`
+    const tmp  = `_mr${id}`
     const arms = (expr.arms ?? []).map(arm => {
       const body = this.emitExpr(arm.body)
       if (!arm.pattern || arm.pattern.type === 'Wildcard') {

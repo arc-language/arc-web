@@ -51,6 +51,11 @@ class ServerEmitter {
   emitEdgeHandler(fn) {
     const params = (fn.params ?? []).map(p => p.name ?? p).join(', ')
     const body = this.jsEmitter.emitBody(fn.body?.body ?? fn.body)
+    // Extract only own-property values to prevent prototype pollution via destructuring
+    const paramExtract = (fn.params ?? []).map(p => {
+      const name = p.name ?? p
+      return `const ${name} = Object.prototype.hasOwnProperty.call(_body,'${name}') ? _body['${name}'] : undefined`
+    }).join('; ')
 
     return [
       `// @server fn ${fn.name}`,
@@ -58,7 +63,7 @@ class ServerEmitter {
       `  try {`,
       `    // Parse ADP or JSON request body`,
       `    const _body = req.method === 'POST' ? await _parseBody(req) : {}`,
-      `    const { ${params} } = _body`,
+      paramExtract ? `    ${paramExtract}` : '',
       `    const _session = req._arc_session ?? {}  // injected by auth middleware`,
       `    const _result = await (async function() {`,
       `      ${body}`,
@@ -68,13 +73,14 @@ class ServerEmitter {
       `      headers: { 'Content-Type': 'application/x-adp', 'Content-Length': String(_encoded.length) }`,
       `    })`,
       `  } catch (_e) {`,
+      `    console.error('[arc] @server ${fn.name} error:', _e)`,
       `    return new Response(JSON.stringify({ error: _e.message }), {`,
       `      status: 500, headers: { 'Content-Type': 'application/json' }`,
       `    })`,
       `  }`,
       `}`,
       ``,
-    ].join('\n')
+    ].filter(s => s !== '').join('\n')
   }
 
   emitEdgeRouter(serverFns) {
@@ -93,7 +99,8 @@ class ServerEmitter {
       `    const { decode } = require('arc/adp/decoder')`,
       `    return decode(new Uint8Array(buf))`,
       `  }`,
-      `  return JSON.parse(new TextDecoder().decode(buf) || '{}')`,
+      `  const text = new TextDecoder().decode(buf) || '{}'`,
+      `  try { return JSON.parse(text) } catch { throw new Error('Invalid request body: expected JSON or ADP') }`,
       `}`,
       ``,
       `// Cloudflare Workers / WinterCG fetch handler`,

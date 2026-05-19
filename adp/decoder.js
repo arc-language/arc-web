@@ -16,6 +16,9 @@ const TAG = {
   ENUM:    0x0A,
 }
 
+// Module-level TextDecoder singleton to avoid O(n) allocation per string
+const _textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder() : null
+
 class Decoder {
   constructor(buf) {
     this.buf = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
@@ -27,6 +30,7 @@ class Decoder {
   }
 
   readValue() {
+    if (this.pos >= this.buf.length) throw new Error(`ADP decode: unexpected end of buffer at pos ${this.pos}`)
     const tag = this.buf[this.pos++]
 
     switch (tag) {
@@ -35,16 +39,19 @@ class Decoder {
       case TAG.FALSE:   return false
 
       case TAG.UINT8:
+        if (this.pos >= this.buf.length) throw new Error('ADP decode: unexpected end of buffer reading UINT8')
         return this.buf[this.pos++]
 
       case TAG.INT32: {
+        if (this.pos + 4 > this.buf.length) throw new Error('ADP decode: unexpected end of buffer reading INT32')
         const v = (this.buf[this.pos] << 24) | (this.buf[this.pos+1] << 16) |
                   (this.buf[this.pos+2] << 8) | this.buf[this.pos+3]
         this.pos += 4
-        return v
+        return v  // signed int32 is intentional
       }
 
       case TAG.FLOAT64: {
+        if (this.pos + 8 > this.buf.length) throw new Error('ADP decode: unexpected end of buffer reading FLOAT64')
         const dv = new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 8)
         this.pos += 8
         return dv.getFloat64(0, false) // big-endian
@@ -73,31 +80,33 @@ class Decoder {
       }
 
       case TAG.DATE: {
-        const hi = (this.buf[this.pos] << 24) | (this.buf[this.pos+1] << 16) |
-                   (this.buf[this.pos+2] << 8) | this.buf[this.pos+3]
+        if (this.pos + 8 > this.buf.length) throw new Error('ADP decode: unexpected end of buffer reading DATE')
+        // Use >>> 0 to ensure unsigned interpretation of each 32-bit half
+        const hi = ((this.buf[this.pos] << 24) | (this.buf[this.pos+1] << 16) |
+                    (this.buf[this.pos+2] << 8) | this.buf[this.pos+3]) >>> 0
         const lo = ((this.buf[this.pos+4] << 24) | (this.buf[this.pos+5] << 16) |
                     (this.buf[this.pos+6] << 8) | this.buf[this.pos+7]) >>> 0
         this.pos += 8
-        return new Date(hi * 0x100000000 + lo)
+        return new Date(hi * 4294967296 + lo)
       }
 
       case TAG.ENUM:
+        if (this.pos >= this.buf.length) throw new Error('ADP decode: unexpected end of buffer reading ENUM')
         return this.buf[this.pos++]  // returns index; caller maps to string with schema
 
       default:
-        throw new Error(`ADP: unknown tag 0x${tag.toString(16)} at pos ${this.pos - 1}`)
+        throw new Error(`ADP: unknown tag 0x${(tag ?? 0).toString(16)} at pos ${this.pos - 1}`)
     }
   }
 
   readString() {
     const len = this.readVarInt()
+    if (this.pos + len > this.buf.length) {
+      throw new Error(`ADP decode: string length ${len} exceeds buffer at pos ${this.pos}`)
+    }
     const bytes = this.buf.subarray(this.pos, this.pos + len)
     this.pos += len
-    // Works in Node.js and browser
-    if (typeof TextDecoder !== 'undefined') {
-      return new TextDecoder().decode(bytes)
-    }
-    return Buffer.from(bytes).toString('utf8')
+    return _textDecoder ? _textDecoder.decode(bytes) : Buffer.from(bytes).toString('utf8')
   }
 
   readVarInt() {

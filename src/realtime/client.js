@@ -43,9 +43,9 @@ class RealtimeEmitter {
     const channelExpr = this.extractChannelName(decl.channel)
 
     // Find DOM bindings that depend on this @realtime variable
-    const bindings = stateBindings.filter(b =>
-      new RegExp(`\\b${varName}\\b`).test(b.expr ?? '')
-    )
+    const escapedName = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`\\b${escapedName}\\b`)
+    const bindings = stateBindings.filter(b => re.test(b.expr ?? ''))
 
     const domUpdates = bindings.map(b =>
       `      const _el = document.getElementById('${b.id}');\n      if (_el) _el.textContent = String(${b.expr} ?? '')`
