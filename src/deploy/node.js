@@ -69,6 +69,7 @@ async function handleEdgeFunction(urlPath, req, res) {
     res.writeHead(status, headers)
     res.end(body)
   } catch (e) {
+    console.error('[arc] edge function error:', e)
     res.writeHead(500, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'Internal server error' }))
   }
@@ -113,7 +114,12 @@ const server = http.createServer(async (req, res) => {
 ${edgeRoutingBlock}
   const asset = ASSETS[urlPath]
   if (asset !== undefined) {
-    res.writeHead(200, { 'Content-Type': getContentType(urlPath) })
+    res.writeHead(200, {
+      'Content-Type': getContentType(urlPath),
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'SAMEORIGIN',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+    })
     res.end(asset)
     return
   }
@@ -122,11 +128,12 @@ ${edgeRoutingBlock}
   res.end('Not found')
 })
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000
+const _rawPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000
+const PORT = (Number.isInteger(_rawPort) && _rawPort > 0 && _rawPort < 65536) ? _rawPort : 3000
 server.listen(PORT, () => {
   console.log(\`arc: server running on http://localhost:\${PORT}\`)
 })
-server.on('error', (e) => { console.error('arc server error:', e) })
+server.on('error', e => { console.error('arc server error:', e.message) })
 `
 
   return [

@@ -267,18 +267,21 @@ class BuildExecutor {
       throw new Error(`@build fetch: only http/https allowed, got ${parsed.protocol}`)
     }
     const hostname = parsed.hostname.toLowerCase()
-    // Block IPv4 private/loopback ranges
-    if (hostname === 'localhost' || hostname === '127.0.0.1' ||
+    // Block IPv4 private/loopback/unspecified ranges
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
+        hostname === '100.100.100.200' || // Alibaba Cloud instance metadata
         hostname.startsWith('169.254.') || hostname.startsWith('10.') ||
         hostname.startsWith('192.168.') || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
       throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
     }
     // Block IPv6 private/loopback/link-local/ULA/IPv4-mapped ranges
-    if (hostname === '::1' || hostname === '[::1]' ||
-        hostname.startsWith('[::') || hostname.startsWith('[fc') ||
-        hostname.startsWith('[fd') || hostname.startsWith('[fe80') ||
-        hostname.startsWith('[::ffff:10.') || hostname.startsWith('[::ffff:192.168.') ||
-        /^\[::ffff:172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
+    // Note: URL.hostname strips brackets for IPv6, so checks must be bracket-free
+    if (hostname === '::1' ||
+        hostname.startsWith('fc') || hostname.startsWith('fd') ||
+        hostname.startsWith('fe80') ||
+        hostname.startsWith('::ffff:10.') || hostname.startsWith('::ffff:127.') ||
+        hostname.startsWith('::ffff:192.168.') ||
+        /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
       throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
     }
 
@@ -313,7 +316,9 @@ class BuildExecutor {
           }
         })
       }).on('error', e => { if (!settled) { settled = true; reject(e) } })
-      req.setTimeout(10000, () => { req.destroy(new Error(`@build fetch: timeout after 10s: ${url}`)) })
+      req.setTimeout(10000, () => {
+        if (!settled) { settled = true; req.destroy(); reject(new Error(`@build fetch: timeout after 10s: ${url}`)) }
+      })
     })
   }
 
@@ -329,7 +334,8 @@ class BuildExecutor {
     let stat
     try { stat = fs.statSync(resolved) } catch (e) { throw new Error(`@build readFile: cannot read '${filePath}': ${e.code ?? e.message}`) }
     if (stat.size > 10 * 1024 * 1024) throw new Error(`@build readFile: file too large (max 10MB): ${filePath}`)
-    const content = fs.readFileSync(resolved, 'utf8')
+    let content
+    try { content = fs.readFileSync(resolved, 'utf8') } catch (e) { throw new Error(`@build readFile: cannot read '${filePath}': ${e.code ?? e.message}`) }
     if (filePath.endsWith('.json')) {
       try { return JSON.parse(content) } catch { throw new Error(`@build readFile: invalid JSON in ${filePath}`) }
     }

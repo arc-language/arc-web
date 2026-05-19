@@ -149,6 +149,9 @@ class JsEmitter {
 
     // bind:value two-way bindings
     for (const b of stateBindings.filter(b => b.kind === 'bind')) {
+      if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(b.expr)) {
+        throw new Error(`Arc codegen: bind:value only supports simple state variable names, got: ${JSON.stringify(b.expr)}`)
+      }
       parts.push(
         `(function(){const _be=document.getElementById('${b.id}');if(!_be)return;` +
         `const _bevt=_be.tagName==='SELECT'||_be.type==='checkbox'||_be.type==='radio'?'change':'input';` +
@@ -302,8 +305,8 @@ class JsEmitter {
     // Convert @name → _name, and known state/computed identifiers → _name
     let result = exprStr.replace(/@([a-zA-Z_][a-zA-Z0-9_]*)/g, '_$1')
     if (this.stateVarNames) {
-      // Replace bare identifiers that are state variables with their _prefixed form
-      result = result.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match) => {
+      // Replace bare identifiers (not after a dot) that are state variables with their _prefixed form
+      result = result.replace(/(?<![.])\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match) => {
         return this.stateVarNames.has(match) ? `_${match}` : match
       })
     }
@@ -377,14 +380,21 @@ class JsEmitter {
 
       case 'ObjectLiteral': {
         const props = (expr.properties ?? []).map(p => {
-          if (p.shorthand) return p.key
+          if (p.shorthand) {
+            _assertSafeIdent(p.key, 'object shorthand key')
+            return p.key
+          }
           return `${JSON.stringify(p.key)}:${this.emitExpr(p.value)}`
         }).join(',')
         return `{${props}}`
       }
 
       case 'ArrowFn': {
-        const params = (expr.params ?? []).map(p => p.name ?? p).join(',')
+        const params = (expr.params ?? []).map(p => {
+          const pname = p.name ?? p
+          _assertSafeIdent(pname, 'arrow fn param')
+          return pname
+        }).join(',')
         const body = expr.body?.type === 'BlockStatement'
           ? `{${this.emitBody(expr.body.body)}}`
           : this.emitExpr(expr.body)
@@ -554,6 +564,8 @@ class JsEmitter {
         const coll = this.emitExpr(stmt.collection)
         const item = stmt.itemName ?? 'item'
         const idx = stmt.indexName
+        _assertSafeIdent(item, 'for item var')
+        if (idx) _assertSafeIdent(idx, 'for index var')
         const body = this.emitBody(stmt.body?.body ?? stmt.body)
         if (idx) {
           return `${coll}.forEach(function(${item},${idx}){${body}});`
@@ -567,6 +579,7 @@ class JsEmitter {
       case 'TryCatch': {
         const tryBody = this.emitBody(stmt.tryBody?.body ?? stmt.tryBody)
         const catchParam = stmt.catchParam ?? 'e'
+        _assertSafeIdent(catchParam, 'catch param')
         const catchBody = this.emitBody(stmt.catchBody?.body ?? stmt.catchBody)
         return `try{${tryBody}}catch(${catchParam}){${catchBody}}`
       }
@@ -604,13 +617,18 @@ class JsEmitter {
   }
 
   emitFnDecl(fn) {
+    _assertSafeIdent(fn.name, 'fn decl name')
     const params = (fn.params ?? []).map(p => {
       if (p.type === 'Param') {
+        const pname = p.name ?? '_'
+        _assertSafeIdent(pname, 'fn param')
         const def = p.defaultValue ? `=${this.emitExpr(p.defaultValue)}` : ''
         const rest = p.rest ? '...' : ''
-        return `${rest}${p.name}${def}`
+        return `${rest}${pname}${def}`
       }
-      return p.name ?? '_'
+      const pname = p.name ?? '_'
+      _assertSafeIdent(pname, 'fn param')
+      return pname
     }).join(',')
 
     const async_ = fn.isAsync ? 'async ' : ''
@@ -624,14 +642,21 @@ class JsEmitter {
   }
 
   emitClassDecl(cls) {
+    _assertSafeIdent(cls.name, 'class name')
     const methods = (cls.methods ?? []).map(m => {
-      const params = (m.params ?? []).map(p => p.name ?? p).join(',')
+      _assertSafeIdent(m.name, 'class method name')
+      const params = (m.params ?? []).map(p => {
+        const pname = p.name ?? p
+        _assertSafeIdent(pname, 'class method param')
+        return pname
+      }).join(',')
       const body = this.emitBody(m.body?.body ?? m.body)
       const static_ = m.isStatic ? 'static ' : ''
       const getter = m.isGetter ? 'get ' : ''
       return `${static_}${getter}${m.name}(${params}){${body}}`
     })
     const fields = (cls.fields ?? []).map(f => {
+      _assertSafeIdent(f.name, 'class field name')
       const static_ = f.isStatic ? 'static ' : ''
       return `${static_}${f.name}${f.init ? `=${this.emitExpr(f.init)}` : ''};`
     })

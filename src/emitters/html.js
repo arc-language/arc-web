@@ -1,5 +1,8 @@
 'use strict'
 
+const _ESC_RE = /[&<>"']/g
+const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }
+
 // Maps Arc element names to HTML element names
 const ELEMENT_MAP = {
   // Arc layout primitives → semantic/div HTML
@@ -134,6 +137,7 @@ class HtmlEmitter {
       '<head>',
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
+      '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\';">',
       `<title>${this.escape(title)}</title>`,
       description ? `<meta name="description" content="${this.escape(description)}">` : '',
       `<meta property="og:title" content="${this.escape(title)}">`,
@@ -463,9 +467,19 @@ class HtmlEmitter {
       return ''
     }
     // Reactive match — emit all branches with reactive show/hide
+    const subjStr = this.exprToString(node.subject)
     return node.arms.map((arm, i) => {
-      const armId = this.getReactiveId(`match_${i}_${this.exprToString(node.subject)}`)
+      const armId = this.getReactiveId(`match_arm_${i}_${subjStr}`)
       const body = arm.body ? this.emitNode(arm.body) : ''
+      let condExpr
+      if (!arm.pattern || arm.pattern.type === 'Wildcard') {
+        condExpr = 'true'
+      } else if (arm.pattern.type === 'Literal') {
+        condExpr = `(${subjStr}===${JSON.stringify(arm.pattern.value)})`
+      } else {
+        condExpr = `(${subjStr}===${this.exprToString(arm.pattern)})`
+      }
+      this.stateBindings.push({ id: armId, expr: condExpr, kind: 'if-show', line: node.line })
       return `<div id="${armId}" hidden>${body}</div>`
     }).join('\n')
   }
@@ -527,12 +541,7 @@ class HtmlEmitter {
 
   escape(str) {
     if (typeof str !== 'string') return String(str ?? '')
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;')
+    return str.replace(_ESC_RE, c => _ESC_MAP[c])
   }
 
   getReactiveId(key) {

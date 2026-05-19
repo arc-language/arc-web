@@ -137,19 +137,19 @@ async function compile(source, filename = '<input>', options = {}) {
   const optimizer = new Optimizer(buildContext)
   program = optimizer.optimizeProgram(program)
 
-  // 5. HTML emit (also collects stateBindings + eventBindings)
+  // 6. HTML emit (also collects stateBindings + eventBindings)
   const htmlEmitter = new HtmlEmitter({ hash, buildContext })
   const html = htmlEmitter.emitProgram(program)
 
-  // 6. CSS emit
+  // 7. CSS emit
   const cssEmitter = new CssEmitter({ hash })
   const css = cssEmitter.emitProgram(program)
 
-  // 7. @server function compilation
+  // 8. @server function compilation
   const serverEmitter = new ServerEmitter({ hash })
   const { edgeFunctions, clientStubs } = serverEmitter.emitProgram(program)
 
-  // 8. JS emit (client-side: reactive bindings + @server client stubs + ADP mini-runtime)
+  // 9. JS emit (client-side: reactive bindings + @server client stubs + ADP mini-runtime)
   const jsEmitter = new JsEmitter({ hash, sourceMap: options.sourceMap ?? null })
   const jsReactive = jsEmitter.emitProgram(
     program,
@@ -157,7 +157,7 @@ async function compile(source, filename = '<input>', options = {}) {
     htmlEmitter.eventBindings
   )
 
-  // 9. @realtime WebSocket client code
+  // 10. @realtime WebSocket client code
   const realtimeDecls = program.declarations.filter(d => d.type === 'RealtimeDecl')
   const realtimeEmitter = new RealtimeEmitter({ hash })
   const realtimeJs = realtimeEmitter.emitAll(realtimeDecls, htmlEmitter.stateBindings)
@@ -165,7 +165,7 @@ async function compile(source, filename = '<input>', options = {}) {
   // Compose final JS: ADP runtime + @server stubs + reactive + @realtime connections
   const js = composeClientJs(jsReactive, clientStubs, realtimeJs)
 
-  // 10. @live edge renderer (if @live declarations present)
+  // 11. @live edge renderer (if @live declarations present)
   const edgeRenderer = new EdgeRenderer({ hash })
   const liveEdgeFunction = edgeRenderer.emitProgram(
     program, html, css, js, htmlEmitter.stateBindings
@@ -244,7 +244,9 @@ async function build(projectDir) {
   let entryFile = path.join(absDir, 'index.arc')
   if (!fs.existsSync(entryFile)) {
     // Look for any .arc file
-    const files = fs.readdirSync(absDir).filter(f => f.endsWith('.arc'))
+    let files
+    try { files = fs.readdirSync(absDir).filter(f => f.endsWith('.arc')) }
+    catch (e) { console.error(`arc: cannot read directory ${absDir}: ${e.message}`); process.exit(1) }
     if (files.length === 0) {
       console.error(`arc: no .arc files found in ${absDir}`)
       process.exit(1)
@@ -252,7 +254,9 @@ async function build(projectDir) {
     entryFile = path.join(absDir, files[0])
   }
 
-  const source = fs.readFileSync(entryFile, 'utf8')
+  let source
+  try { source = fs.readFileSync(entryFile, 'utf8') }
+  catch (e) { console.error(`arc: cannot read ${path.relative(process.cwd(), entryFile)}: ${e.message}`); process.exit(1) }
   const filename = path.relative(process.cwd(), entryFile)
 
   const sourceMapBuilder = new SourceMapBuilder()
@@ -641,22 +645,27 @@ async function dev(projectDir) {
   // File watcher with debounce to avoid multiple rebuilds per save
   console.log('arc: watching for changes...')
   let _rebuildTimer = null
+  let _building = false
   const watchHandler = (event, changedFile) => {
     if (!changedFile || !changedFile.endsWith('.arc')) return
     if (changedFile.includes('dist' + path.sep) || changedFile.includes('dist/')) return
 
     clearTimeout(_rebuildTimer)
-    _rebuildTimer = setTimeout(() => {
+    _rebuildTimer = setTimeout(async () => {
+      if (_building) return
+      _building = true
       console.log(`arc: ${changedFile} changed, rebuilding...`)
-      build(projectDir)
-        .then(() => {
-          // Notify all connected browsers to reload
-          for (const client of reloadClients) {
-            client.write('data: reload\n\n')
-          }
-          console.log(`arc: reload → ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''}`)
-        })
-        .catch(e => formatError(e, null, changedFile))
+      try {
+        await build(projectDir)
+        for (const client of [...reloadClients]) {
+          try { client.write('data: reload\n\n') } catch { reloadClients.delete(client) }
+        }
+        console.log(`arc: reload → ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''}`)
+      } catch (e) {
+        formatError(e, null, changedFile)
+      } finally {
+        _building = false
+      }
     }, 50)
   }
   try {
@@ -776,6 +785,11 @@ async function main() {
       break
     }
 
+    case '--version':
+    case '-v':
+      console.log(require('../package.json').version)
+      break
+
     default:
       console.log('arc — a new language for the web')
       console.log('')
@@ -785,6 +799,7 @@ async function main() {
       console.log('  arc check [files]   Type-check without emitting')
       console.log('  arc new <name>      Create a new Arc project (--template default|counter|blog)')
       console.log('  arc deploy [dir]    Deploy to hosting (--target cloudflare|deno|bun|node)')
+      console.log('  arc --version       Print version')
   }
 }
 
@@ -798,7 +813,10 @@ if (require.main === module) {
 
 function findArcFiles(dir) {
   const results = []
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+  let entries
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }) }
+  catch (e) { console.warn(`arc: warning: cannot read directory ${dir}: ${e.message}`); return results }
+  for (const entry of entries) {
     if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== 'dist') {
       results.push(...findArcFiles(path.join(dir, entry.name)))
     } else if (entry.isFile() && entry.name.endsWith('.arc')) {

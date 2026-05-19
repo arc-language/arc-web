@@ -81,9 +81,9 @@ class Decoder {
 
       case TAG.DATE: {
         if (this.pos + 8 > this.buf.length) throw new Error('ADP decode: unexpected end of buffer reading DATE')
-        // Use >>> 0 to ensure unsigned interpretation of each 32-bit half
-        const hi = ((this.buf[this.pos] << 24) | (this.buf[this.pos+1] << 16) |
-                    (this.buf[this.pos+2] << 8) | this.buf[this.pos+3]) >>> 0
+        // hi must be signed (encoder uses Math.floor for negative timestamps, e.g. pre-1970 dates)
+        const hi = (this.buf[this.pos] << 24) | (this.buf[this.pos+1] << 16) |
+                   (this.buf[this.pos+2] << 8) | this.buf[this.pos+3]
         const lo = ((this.buf[this.pos+4] << 24) | (this.buf[this.pos+5] << 16) |
                     (this.buf[this.pos+6] << 8) | this.buf[this.pos+7]) >>> 0
         this.pos += 8
@@ -128,8 +128,11 @@ function decode(buf) {
   return new Decoder(buf).decode()
 }
 
-// Fetch ADP from a URL (browser + Node.js)
+// Fetch ADP from a URL (browser + Node.js 18+)
 async function fetchAdp(url, options = {}) {
+  if (typeof fetch === 'undefined') {
+    throw new Error('ADP fetchAdp: fetch API not available (requires Node.js 18+ or a browser)')
+  }
   const res = await fetch(url, {
     ...options,
     headers: { 'Accept': 'application/x-adp', ...(options.headers ?? {}) }

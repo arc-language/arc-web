@@ -24,8 +24,6 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', projectNam
   const edgeFnNames = edgeFunctions
     ? [...edgeFunctions.matchAll(/^async function (_handler_\w+)\s*\(/mg)].map(m => m[1])
     : []
-  const edgeFnNamesLiteral = JSON.stringify(edgeFnNames)
-
   const edgeFunctionsBlock = edgeFunctions
     ? `
 // Edge functions (from @server declarations)
@@ -79,7 +77,12 @@ ${edgeRoutingBlock}
     if (asset !== undefined) {
       const contentType = getContentType(path)
       return new Response(asset, {
-        headers: { 'Content-Type': contentType },
+        headers: {
+          'Content-Type': contentType,
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'SAMEORIGIN',
+          'Referrer-Policy': 'strict-origin-when-cross-origin',
+        },
       })
     }
 
