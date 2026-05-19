@@ -178,9 +178,11 @@ class JsEmitter {
     const deps = new Map()
 
     for (const s of stateDecls) {
+      // Pre-compile once per state var, reused for all bindings
+      const re = new RegExp(`(?:^|[^a-zA-Z0-9_@])@?${s.name}(?:[^a-zA-Z0-9_]|$)`)
       const affected = []
       for (const b of stateBindings) {
-        if (this.bindingDependsOn(b, s.name, computedDecls)) {
+        if (this.bindingDependsOn(b, s.name, computedDecls, re)) {
           affected.push(b)
         }
       }
@@ -190,10 +192,10 @@ class JsEmitter {
     return deps
   }
 
-  bindingDependsOn(binding, stateVar, computedDecls) {
+  bindingDependsOn(binding, stateVar, computedDecls, re) {
     const expr = binding.expr ?? ''
     // Check if stateVar appears as a whole word in the expression
-    const re = new RegExp(`(?:^|[^a-zA-Z0-9_@])@?${stateVar}(?:[^a-zA-Z0-9_]|$)`)
+    if (!re) re = new RegExp(`(?:^|[^a-zA-Z0-9_@])@?${stateVar}(?:[^a-zA-Z0-9_]|$)`)
     if (re.test(expr)) return true
 
     // Check if any computed that binding uses depends on stateVar
@@ -383,6 +385,9 @@ class JsEmitter {
           if (p.shorthand) {
             _assertSafeIdent(p.key, 'object shorthand key')
             return p.key
+          }
+          if (p.computedKey) {
+            return `[${this.emitExpr(p.computedKey)}]:${this.emitExpr(p.value)}`
           }
           return `${JSON.stringify(p.key)}:${this.emitExpr(p.value)}`
         }).join(',')

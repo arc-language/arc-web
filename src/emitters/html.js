@@ -402,10 +402,10 @@ class HtmlEmitter {
     const ifContent = this.emitChildren(node.consequent)
     const elseContent = node.alternate ? this.emitChildren(node.alternate) : ''
 
-    const ifHtml = `<div id="${ifId}" hidden aria-live="polite">${ifContent}</div>`
-    const elseHtml = elseId ? `<div id="${elseId}" aria-live="polite">${elseContent}</div>` : ''
+    const ifHtml = `<div id="${ifId}" hidden>${ifContent}</div>`
+    const elseHtml = elseId ? `<div id="${elseId}">${elseContent}</div>` : ''
 
-    return ifHtml + (elseHtml ? '\n' + elseHtml : '')
+    return `<div aria-live="polite" aria-atomic="true">${ifHtml}${elseHtml ? '\n' + elseHtml : ''}</div>`
   }
 
   emitUnless(node) {
@@ -468,7 +468,7 @@ class HtmlEmitter {
     }
     // Reactive match — emit all branches with reactive show/hide
     const subjStr = this.exprToString(node.subject)
-    return node.arms.map((arm, i) => {
+    const arms = node.arms.map((arm, i) => {
       const armId = this.getReactiveId(`match_arm_${i}_${subjStr}`)
       const body = arm.body ? this.emitNode(arm.body) : ''
       let condExpr
@@ -480,8 +480,9 @@ class HtmlEmitter {
         condExpr = `(${subjStr}===${this.exprToString(arm.pattern)})`
       }
       this.stateBindings.push({ id: armId, expr: condExpr, kind: 'if-show', line: node.line })
-      return `<div id="${armId}" hidden aria-live="polite">${body}</div>`
+      return `<div id="${armId}" hidden>${body}</div>`
     }).join('\n')
+    return `<div aria-live="polite" aria-atomic="true">${arms}</div>`
   }
 
   // ── Native patterns (zero JS) ──────────────────────────────────────────────
@@ -496,7 +497,7 @@ class HtmlEmitter {
     const rawLabel = node.attrs?.label
     const label = rawLabel ? (rawLabel.type ? this.evalStaticExpr(rawLabel) : rawLabel) : null
     const ariaLabel = label ? ` aria-label="${this.escape(String(label))}"` : ` aria-label="${this.escape(String(id))}"`
-    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${ariaLabel}>${children}</dialog>`
+    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${ariaLabel} autofocus>${children}</dialog>`
   }
 
   emitTooltip(node) {
@@ -514,7 +515,9 @@ class HtmlEmitter {
   }
 
   emitAccordion(node) {
-    return `<details class="arc-accordion_${this.componentHash}">\n${this.emitChildren(node.children)}\n</details>`
+    const hasSummary = node.children?.some(c => c.tag === 'summary')
+    const summaryFallback = hasSummary ? '' : '<summary>Details</summary>\n'
+    return `<details class="arc-accordion_${this.componentHash}">\n${summaryFallback}${this.emitChildren(node.children)}\n</details>`
   }
 
   // Wrap an element that has a tooltip="" attr as a tooltip-anchor

@@ -23,17 +23,23 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', projectNam
 ${edgeFunctions}
 
 // Explicit dispatch map (handlers are local fn declarations, not globals)
-const _ARC_HANDLERS = {
+const _ARC_HANDLERS = Object.assign(Object.create(null), {
 ${handlerMapEntries}
-}
+})
 
 // Wrap Node.js IncomingMessage as a Fetch API compatible request shim
 async function _makeArcRequest(req) {
   const body = await new Promise((resolve, reject) => {
     const chunks = []
-    req.on('data', c => chunks.push(c))
-    req.on('end', () => resolve(Buffer.concat(chunks)))
-    req.on('error', reject)
+    let total = 0
+    const timer = setTimeout(() => { req.destroy(); reject(new Error('body read timeout')) }, 30000)
+    req.on('data', c => {
+      total += c.length
+      if (total > 1048576) { clearTimeout(timer); req.destroy(); reject(new Error('Request body too large')); return }
+      chunks.push(c)
+    })
+    req.on('end', () => { clearTimeout(timer); resolve(Buffer.concat(chunks)) })
+    req.on('error', e => { clearTimeout(timer); reject(e) })
   })
   const rawHeaders = req.headers
   return {
@@ -51,6 +57,7 @@ async function _makeArcRequest(req) {
 async function handleEdgeFunction(urlPath, req, res) {
   const segment = urlPath.slice('/_arc/fn/'.length)
   if (segment.includes('/')) return false
+  if (!Object.prototype.hasOwnProperty.call(_ARC_HANDLERS, segment)) return false
   const fn = _ARC_HANDLERS[segment]
   if (typeof fn !== 'function') return false
   try {

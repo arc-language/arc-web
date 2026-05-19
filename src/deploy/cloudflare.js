@@ -29,12 +29,14 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', projectNam
 // Edge functions (from @server declarations)
 ${edgeFunctions}
 
-const EDGE_FN_MAP = {${edgeFnNames.map(n => `${n}`).join(',')}}
+const EDGE_FN_MAP = Object.assign(Object.create(null), {${edgeFnNames.map(n => `${n}`).join(',')}})
 
 async function handleEdgeFunction(path, request) {
   const segment = path.slice('/_arc/fn/'.length)
   if (segment.includes('/')) return new Response('Not Found', { status: 404 })
-  const fn = EDGE_FN_MAP['_handler_' + segment]
+  const key = '_handler_' + segment
+  if (!Object.prototype.hasOwnProperty.call(EDGE_FN_MAP, key)) return new Response('Edge function not found', { status: 404 })
+  const fn = EDGE_FN_MAP[key]
   if (typeof fn !== 'function') return new Response('Edge function not found', { status: 404 })
   return await fn(request)
 }

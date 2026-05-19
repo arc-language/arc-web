@@ -52,7 +52,7 @@ function _adpDecode(buf){
       case 6:{const l=vi();if(p+l>buf.length)throw new Error('ADP: string overflow');const s=_adpTdec.decode(buf.subarray(p,p+l));p+=l;return s}
       case 7:{const n=vi();const a=new Array(n);for(let i=0;i<n;i++)a[i]=rv();return a}
       case 8:{const n=vi();const o={};for(let i=0;i<n;i++){const k=rv();o[k]=rv()}return o}
-      case 9:{const hi=((buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3])>>>0;const lo=((buf[p+4]<<24)|(buf[p+5]<<16)|(buf[p+6]<<8)|buf[p+7])>>>0;p+=8;return new Date(hi*4294967296+lo)}
+      case 9:{const hi=(buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3];const lo=((buf[p+4]<<24)|(buf[p+5]<<16)|(buf[p+6]<<8)|buf[p+7])>>>0;p+=8;return new Date(hi*4294967296+lo)}
       default:throw new Error('ADP: unknown tag '+t)
     }
   }
@@ -153,7 +153,7 @@ class ServerEmitter {
       `    return (decoded !== null && typeof decoded === 'object' && !Array.isArray(decoded)) ? decoded : {}`,
       `  }`,
       `  const text = _adpTdec.decode(buf) || '{}'`,
-      `  try { return JSON.parse(text) } catch { throw new Error('Invalid request body: expected JSON or ADP') }`,
+      `  try { const p = JSON.parse(text); return (p !== null && typeof p === 'object' && !Array.isArray(p)) ? p : {} } catch { throw new Error('Invalid request body: expected JSON or ADP') }`,
       `}`,
       ``,
       `// Cloudflare Workers / WinterCG fetch handler`,

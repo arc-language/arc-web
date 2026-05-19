@@ -19,13 +19,14 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', projectNam
 // Edge functions (from @server declarations)
 ${edgeFunctions}
 
-const _ARC_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
+const _ARC_HANDLERS: Record<string, (req: Request) => Promise<Response>> = Object.assign(Object.create(null), {
 ${handlerMapEntries}
-}
+})
 
 async function handleEdgeFunction(path: string, req: Request): Promise<Response> {
   const segment = path.slice('/_arc/fn/'.length)
   if (segment.includes('/')) return new Response('Not Found', { status: 404 })
+  if (!Object.prototype.hasOwnProperty.call(_ARC_HANDLERS, segment)) return new Response('Edge function not found', { status: 404 })
   const fn = _ARC_HANDLERS[segment]
   if (typeof fn !== 'function') return new Response('Edge function not found', { status: 404 })
   return await fn(req)

@@ -226,12 +226,12 @@ widget Field
 widget FormError
   // Attrs: message
   if @message
-    span class="form-error-banner" "{@message}"
+    div role="alert" aria-live="assertive" class="form-error-banner" "{@message}"
 
   design
     .form-error-banner
       p: 12px 16px
-      bg: #fef2f2
-      fg: #dc2626
+      bg: #fee2e2
+      fg: #991b1b
       radius: 6px
       size: 14px

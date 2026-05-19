@@ -90,7 +90,7 @@ class Encoder {
   writeString(str) {
     const bytes = Buffer.from(str, 'utf8')
     this.writeVarInt(bytes.length)
-    Array.prototype.push.apply(this.buf, bytes)
+    for (let i = 0; i < bytes.length; i++) this.buf.push(bytes[i])
   }
 
   writeVarInt(n) {
@@ -109,7 +109,7 @@ class Encoder {
   writeFloat64(n) {
     const b = Buffer.allocUnsafe(8)
     b.writeDoubleBE(n, 0)
-    Array.prototype.push.apply(this.buf, b)
+    for (let i = 0; i < 8; i++) this.buf.push(b[i])
   }
 
   writeInt64(n) {

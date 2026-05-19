@@ -29,9 +29,10 @@ class EdgeRenderer {
 
     // Find state bindings that reference @live variables
     // stateBindings format: { id, expr: string, line }
+    const liveVarRegexes = [...liveVarNames].map(v => new RegExp(`\\b${v}\\b`))
     const liveBindings = stateBindings.filter(b => {
       const exprStr = b.expr ?? ''
-      return [...liveVarNames].some(v => new RegExp(`\\b${v}\\b`).test(exprStr))
+      return liveVarRegexes.some(re => re.test(exprStr))
     })
 
     const parts = [
@@ -105,7 +106,7 @@ class EdgeRenderer {
       const exprStr = b.expr
       const m = exprStr.match(/^([a-z_][a-z0-9_]*)\b/i)
       if (m) liveVarsUsed.add(m[1])
-      return `  html = html.replaceAll('<span id="${b.id}"></span>', _esc(String(${exprStr} ?? '')))`
+      return `  html = html.replaceAll('<span id="${b.id}" aria-live="polite"></span>', _esc(String(${exprStr} ?? '')))`
     }).join('\n')
 
     const destructure = [...liveVarsUsed].join(', ')
@@ -119,15 +120,15 @@ class EdgeRenderer {
       `  const { ${destructure} } = data`,
       `  let html = BASE_HTML`,
       replacements,
-      `  html = html.replace('<link rel="stylesheet" href="styles.css">', \`<style>\${BASE_CSS}</style>\`)`,
-      `  if (CLIENT_JS) html = html.replace('<script src="app.js"></script>', \`<script>\${CLIENT_JS}</script>\`)`,
+      `  html = html.replace('<link rel="stylesheet" href="styles.css">', \`<style>\${BASE_CSS.replace(/<\\/style>/gi, '<\\/style>')}</style>\`)`,
+      `  if (CLIENT_JS) html = html.replace('<script src="app.js"></script>', \`<script>\${CLIENT_JS.replace(/<\\/script>/gi, '<\\/script>')}</script>\`)`,
       `  return html`,
       `}`,
       ``,
     ].join('\n')
   }
 
-  emitFetchHandler() {
+  emitFetchHandler(_baseCss, _clientJs) {  // args unused — values already embedded via JSON.stringify above
     return [
       `// WinterCG fetch handler (Cloudflare Workers / Deno Deploy / Bun)`,
       `export default {`,

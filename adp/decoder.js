@@ -74,7 +74,9 @@ class Decoder {
         const obj = {}
         for (let i = 0; i < count; i++) {
           const key = this.readString()
-          obj[key] = this.readValue()
+          const val = this.readValue()
+          if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
+          obj[key] = val
         }
         return obj
       }

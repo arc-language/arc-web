@@ -356,8 +356,6 @@ async function check(files) {
     }
     try {
       // Lex + parse + check only — no emit
-      const { Lexer } = require('./lexer')
-      const { Parser } = require('./parser')
       const lexer = new Lexer(source, file)
       const tokens = lexer.tokenize()
       const parser = new Parser(tokens, file)
