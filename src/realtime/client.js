@@ -42,14 +42,28 @@ class RealtimeEmitter {
     // Channel expression: channel("chat/{roomId}") → extract the string
     const channelExpr = this.extractChannelName(decl.channel)
 
-    // Find DOM bindings that depend on this @realtime variable
+    // Trigger reactive setters for @state vars bound to this realtime variable.
+    // The setter machinery handles all DOM updates — we just need to assign the new value.
+    // stateBindings here identifies which @state variable names map to this channel.
     const escapedName = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const re = new RegExp(`\\b${escapedName}\\b`)
-    const bindings = stateBindings.filter(b => re.test(b.expr ?? ''))
+    // Collect unique @state setter calls for bindings that reference this var
+    const setterNames = new Set()
+    for (const b of stateBindings) {
+      if (re.test(b.expr ?? '') && b.stateVar) setterNames.add(b.stateVar)
+    }
+    // Fall back to direct DOM update if no state setter is registered for a binding
+    const directBindings = stateBindings.filter(b => re.test(b.expr ?? '') && !b.stateVar)
 
-    const domUpdates = bindings.map(b =>
-      `      const _el = document.getElementById('${b.id}');\n      if (_el) _el.textContent = String(${b.expr} ?? '')`
-    ).join('\n')
+    const domUpdates = [
+      ...[...setterNames].map(sv =>
+        `      if (typeof _set_${sv} === 'function') _set_${sv}(${varName})`
+      ),
+      ...directBindings.map(b => {
+        const id = b.id
+        return `      const _el_${id} = document.getElementById('${id}'); if (_el_${id}) _el_${id}.textContent = String(${varName} ?? '')`
+      }),
+    ].join('\n')
 
     const protocol = `location.protocol === 'https:' ? 'wss:' : 'ws:'`
 

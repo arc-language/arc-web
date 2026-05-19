@@ -221,6 +221,9 @@ class JsEmitter {
     const idx = b.indexName ?? 'i'
     const tpl = JSON.stringify(b.bodyTemplate ?? '')
 
+    // Suffix reactive IDs with item index to ensure DOM uniqueness across list items
+    const tplWithIdx = `${tpl}.replace(/\\bid="([^"]+)"/g,function(_,id){return 'id="'+id+'_'+${idx}+'"'})`
+
     return [
       `(function(){`,
       `const _items=${items};`,
@@ -231,11 +234,11 @@ class JsEmitter {
       `  while(${el}.firstChild)${el}.removeChild(${el}.firstChild);`,
       `  _items.forEach(function(${item},${idx}){`,
       `    const _d=document.createElement('div');`,
-      `    _d.innerHTML=${tpl};`, // template is static HTML with placeholders
+      `    _d.innerHTML=${tplWithIdx};`,
       `    ${el}.appendChild(_d.firstChild||_d);`,
       `  });`,
       `}else{`,
-      `  ${el}.innerHTML=_items.map(function(${item},${idx}){return ${tpl};}).join('');`,
+      `  ${el}.innerHTML=_items.map(function(${item},${idx}){return ${tplWithIdx};}).join('');`,
       `}`,
       `})();`,
     ].join('\n')

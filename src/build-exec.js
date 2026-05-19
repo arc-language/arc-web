@@ -9,6 +9,19 @@ const http = require('http')
 // Supports: literals, arrays, objects, fetch(), file reads, array methods.
 // Safety: no eval(), no arbitrary code — constrained interpreter only.
 
+// Explicit allowlist for object method dispatch — prevents calling dangerous prototype methods
+const ALLOWED_OBJ_METHODS = new Set([
+  'toString', 'valueOf', 'toJSON',
+  'get', 'set', 'has', 'delete', 'clear', 'size',
+  'keys', 'values', 'entries',
+  'find', 'filter', 'map', 'forEach', 'reduce', 'some', 'every',
+  'push', 'pop', 'shift', 'unshift', 'splice', 'slice', 'concat', 'join',
+  'sort', 'reverse', 'flat', 'flatMap', 'includes', 'indexOf', 'lastIndexOf',
+  'trim', 'split', 'replace', 'toUpperCase', 'toLowerCase',
+  'getPosts', 'getPost', 'getPages', 'getPage', 'getItems', 'getItem',
+  'query', 'where', 'find', 'findOne', 'findAll', 'recent', 'limit', 'offset',
+])
+
 class BuildExecutor {
   constructor(projectDir = '.') {
     this.projectDir = projectDir
@@ -153,8 +166,13 @@ class BuildExecutor {
 
       if (obj && typeof obj === 'object') {
         const args = await Promise.all((expr.args ?? []).map(a => this.evalExpr(a, locals)))
-        if (Object.prototype.hasOwnProperty.call(obj, methodName) && typeof obj[methodName] === 'function') {
+        if (ALLOWED_OBJ_METHODS.has(methodName) &&
+            Object.prototype.hasOwnProperty.call(obj, methodName) &&
+            typeof obj[methodName] === 'function') {
           return obj[methodName].call(obj, ...args)
+        }
+        if (!ALLOWED_OBJ_METHODS.has(methodName)) {
+          throw new Error(`@build: object method '${methodName}' is not allowed at build time`)
         }
       }
     }
