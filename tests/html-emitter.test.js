@@ -140,16 +140,17 @@ describe('HTML Emitter', () => {
       assert.match(html, /arc-accordion_[a-z0-9]+/)
     })
 
-    test('modal emits popover div', async () => {
+    test('modal emits native dialog element', async () => {
       const { html } = await compile('page "T"\n  modal id="x"\n    text "Hello"')
-      assert.ok(html.includes('popover'), `Expected popover attribute in:\n${html}`)
+      assert.ok(html.includes('<dialog'), `Expected <dialog> in:\n${html}`)
       assert.ok(html.includes('id="x"'), `Expected id="x" in:\n${html}`)
+      assert.ok(!html.includes('<dialog id="x" popover'), `dialog must not have popover attribute:\n${html}`)
     })
 
     test('modal uses native dialog element', async () => {
       const { html } = await compile('page "T"\n  modal id="m1"\n    text "Hi"')
       assert.ok(html.includes('<dialog'), `Expected <dialog> in:\n${html}`)
-      assert.ok(html.includes('popover'), `Expected popover attribute in:\n${html}`)
+      assert.ok(!html.includes('popover'), `dialog must not use popover API:\n${html}`)
       assert.ok(html.includes('aria-modal="true"'), `Expected aria-modal="true" in:\n${html}`)
     })
 
@@ -189,7 +190,7 @@ describe('HTML Emitter', () => {
   @state let x = 0
   text "{x}"`
       const { html } = await compile(src)
-      assert.match(html, /<span id="_a\d+"><\/span>/, `Expected reactive span in:\n${html}`)
+      assert.match(html, /<span id="_a\d+" aria-live="polite"><\/span>/, `Expected reactive span in:\n${html}`)
     })
   })
 

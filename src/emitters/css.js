@@ -85,7 +85,8 @@ function expandToken(value, category) {
 
 function expandCalc(value) {
   // Turn "100% - 32px" into "calc(100% - 32px)"
-  if (/[+\-*/]/.test(value) && !value.includes('calc(')) {
+  // Require spaces around + and - to avoid wrapping hyphenated keywords (fit-content, max-content)
+  if ((/ [-+] /.test(value) || /[*/]/.test(value)) && !value.includes('calc(')) {
     return `calc(${value})`
   }
   return value
@@ -374,19 +375,12 @@ class CssEmitter {
 
     const innerRules = rules.map(r => {
       if (r.type === 'StyleRule') return this.emitStyleRule(r)
-      if (r.type === 'StyleProp') return '' // inline props handled separately
       return ''
     }).filter(Boolean)
 
-    const inlineProps = rules.filter(r => r.type === 'StyleProp')
+    if (innerRules.length === 0) return ''
 
-    if (innerRules.length === 0 && inlineProps.length === 0) return ''
-
-    const inlineDecls = inlineProps.length > 0
-      ? this.emitProps(inlineProps).join('; ')
-      : ''
-
-    return `${mediaQuery} {\n  ${innerRules.join('\n  ')}\n}`
+    return `${mediaQuery} {\n${innerRules.join('\n')}\n}`
   }
 
   emitConditionNested(condition, parentSelector) {

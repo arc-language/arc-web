@@ -364,7 +364,7 @@ class HtmlEmitter {
       }
       const id = this.getReactiveId(exprStr)
       this.stateBindings.push({ id, expr: exprStr, line: node.line })
-      return `<span id="${id}"></span>`
+      return `<span id="${id}" aria-live="polite"></span>`
     }).join('')
   }
 
@@ -380,7 +380,7 @@ class HtmlEmitter {
     // Reactive — emit a span placeholder
     const id = this.getReactiveId(exprStr)
     this.stateBindings.push({ id, expr: exprStr, line: node.line })
-    return `<span id="${id}"></span>`
+    return `<span id="${id}" aria-live="polite"></span>`
   }
 
   emitIf(node) {
@@ -402,8 +402,8 @@ class HtmlEmitter {
     const ifContent = this.emitChildren(node.consequent)
     const elseContent = node.alternate ? this.emitChildren(node.alternate) : ''
 
-    const ifHtml = `<div id="${ifId}" hidden>${ifContent}</div>`
-    const elseHtml = elseId ? `<div id="${elseId}">${elseContent}</div>` : ''
+    const ifHtml = `<div id="${ifId}" hidden aria-live="polite">${ifContent}</div>`
+    const elseHtml = elseId ? `<div id="${elseId}" aria-live="polite">${elseContent}</div>` : ''
 
     return ifHtml + (elseHtml ? '\n' + elseHtml : '')
   }
@@ -446,7 +446,7 @@ class HtmlEmitter {
       line: node.line
     })
 
-    return `<div id="${listId}"></div>`
+    return `<div id="${listId}" aria-live="polite"></div>`
   }
 
   emitForBody(bodyNodes, item, index) {
@@ -480,7 +480,7 @@ class HtmlEmitter {
         condExpr = `(${subjStr}===${this.exprToString(arm.pattern)})`
       }
       this.stateBindings.push({ id: armId, expr: condExpr, kind: 'if-show', line: node.line })
-      return `<div id="${armId}" hidden>${body}</div>`
+      return `<div id="${armId}" hidden aria-live="polite">${body}</div>`
     }).join('\n')
   }
 
@@ -496,7 +496,7 @@ class HtmlEmitter {
     const rawLabel = node.attrs?.label
     const label = rawLabel ? (rawLabel.type ? this.evalStaticExpr(rawLabel) : rawLabel) : null
     const ariaLabel = label ? ` aria-label="${this.escape(String(label))}"` : ` aria-label="${this.escape(String(id))}"`
-    return `<dialog id="${this.escape(String(id))}" popover aria-modal="true"${ariaLabel}>${children}</dialog>`
+    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${ariaLabel}>${children}</dialog>`
   }
 
   emitTooltip(node) {
@@ -523,7 +523,7 @@ class HtmlEmitter {
     const { tooltip: _t, ...attrsWithout } = node.attrs
     const inner = this.emitElement({ ...node, attrs: attrsWithout })
     return [
-      `<span class="arc-tooltip-anchor_${this.componentHash}">`,
+      `<span class="arc-tooltip-anchor_${this.componentHash}" aria-describedby="${id}">`,
       `  ${inner}`,
       `  <span role="tooltip" id="${id}" popover="hint">${this.escape(tooltipText)}</span>`,
       `</span>`,

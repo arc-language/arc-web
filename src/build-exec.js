@@ -75,6 +75,7 @@ class BuildExecutor {
       case 'ObjectLiteral': {
         const obj = {}
         for (const prop of (expr.properties ?? [])) {
+          if (prop.key === '__proto__') throw new Error('@build: __proto__ key not allowed in object literal')
           const val = await this.evalExpr(prop.value, locals)
           obj[prop.key] = val
         }

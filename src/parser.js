@@ -15,7 +15,7 @@ class Parser {
   // ── Utilities ──────────────────────────────────────────────────────────────
 
   peek(offset = 0) {
-    const key = `${this.pos}:${offset}`
+    const key = (this.pos << 8) | offset
     const cached = this._peekCache.get(key)
     if (cached !== undefined) return cached
 
@@ -246,7 +246,6 @@ class Parser {
   }
 
   parseStateDecl(line) {
-    const kind = this.peekType() === T.CONST ? 'const' : 'let'
     this.next() // consume const/let
     const name = this.eat(T.IDENT).value
     const typeAnnotation = this.eatIf(T.COLON) ? this.parseTypeAnnotation() : null
@@ -258,7 +257,6 @@ class Parser {
   }
 
   parseComputedDecl(line) {
-    const kind = this.peekType() === T.CONST ? 'const' : 'let'
     this.next()
     const name = this.eat(T.IDENT).value
     const typeAnnotation = this.eatIf(T.COLON) ? this.parseTypeAnnotation() : null
@@ -268,7 +266,6 @@ class Parser {
   }
 
   parseBuildDecl(line) {
-    const kind = this.peekType() === T.CONST ? 'const' : 'let'
     this.next()
     const name = this.eat(T.IDENT).value
     const typeAnnotation = this.eatIf(T.COLON) ? this.parseTypeAnnotation() : null
