@@ -44,16 +44,16 @@ class RealtimeEmitter {
 
     // Trigger reactive setters for @state vars bound to this realtime variable.
     // The setter machinery handles all DOM updates — we just need to assign the new value.
-    // stateBindings here identifies which @state variable names map to this channel.
     const escapedName = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const re = new RegExp(`\\b${escapedName}\\b`)
-    // Collect unique @state setter calls for bindings that reference this var
+    // Single pass: collect setter names and direct-DOM fallback bindings
     const setterNames = new Set()
+    const directBindings = []
     for (const b of stateBindings) {
-      if (re.test(b.expr ?? '') && b.stateVar) setterNames.add(b.stateVar)
+      if (!re.test(b.expr ?? '')) continue
+      if (b.stateVar) setterNames.add(b.stateVar)
+      else directBindings.push(b)
     }
-    // Fall back to direct DOM update if no state setter is registered for a binding
-    const directBindings = stateBindings.filter(b => re.test(b.expr ?? '') && !b.stateVar)
 
     const domUpdates = [
       ...[...setterNames].map(sv =>
@@ -85,7 +85,7 @@ class RealtimeEmitter {
       `    }`,
       `    _ws.onclose = function() {`,
       `      // Auto-reconnect with exponential backoff`,
-      `      setTimeout(_connect_${varName}, Math.min(1000 * Math.pow(2, _retries_${varName}++), 30000))`,
+      `      setTimeout(_connect_${varName}, Math.min(1000 * Math.pow(2, Math.min(_retries_${varName}++, 5)), 30000))`,
       `    }`,
       `    _ws.onerror = function(e) { console.warn('arc realtime ws error:', e) }`,
       `  })()`,

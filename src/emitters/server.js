@@ -12,8 +12,8 @@ const { JsEmitter } = require('./js')
 
 // Inlined ADP encode/decode for generated edge workers (no require() in CF Workers ESM)
 const ADP_EDGE_RUNTIME = `
-// ADP encode — inlined by Arc compiler
-const _ADP_TAG={NULL:0,TRUE:1,FALSE:2,UINT8:3,INT32:4,FLOAT64:5,STRING:6,ARRAY:7,OBJECT:8,DATE:9}
+// ADP encode/decode — inlined by Arc compiler (singletons avoid per-call allocation)
+const _adpTenc=new TextEncoder();const _adpTdec=new TextDecoder()
 function _adpEncode(val){
   const b=[]
   function w(v){
@@ -27,13 +27,13 @@ function _adpEncode(val){
     if(typeof v==='object'){const ks=Object.keys(v);b.push(8);vi(ks.length);for(const k of ks){ws(k);w(v[k])};return}
     b.push(6);ws(String(v))
   }
-  function ws(s){const e=new TextEncoder().encode(s);vi(e.length);for(const x of e)b.push(x)}
+  function ws(s){const e=_adpTenc.encode(s);vi(e.length);for(const x of e)b.push(x)}
   function vi(n){while(n>127){b.push((n&0x7f)|0x80);n>>>=7}b.push(n)}
   w(val);return new Uint8Array(b)
 }
 function _adpEncodeArray(items){
   const b=[7];function vi(n){while(n>127){b.push((n&0x7f)|0x80);n>>>=7}b.push(n)}
-  const enc=new _ADP_ENC();vi(items.length);for(const item of items){const r=_adpEncode(item);for(const x of r)b.push(x)}
+  vi(items.length);for(const item of items){const r=_adpEncode(item);for(const x of r)b.push(x)}
   return new Uint8Array(b)
 }
 // ADP decode — inlined by Arc compiler
@@ -49,7 +49,7 @@ function _adpDecode(buf){
       case 3:return buf[p++]
       case 4:{const v=(buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3];p+=4;return v}
       case 5:{const dv=new DataView(buf.buffer,buf.byteOffset+p,8);p+=8;return dv.getFloat64(0,false)}
-      case 6:{const l=vi();if(p+l>buf.length)throw new Error('ADP: string overflow');const s=new TextDecoder().decode(buf.subarray(p,p+l));p+=l;return s}
+      case 6:{const l=vi();if(p+l>buf.length)throw new Error('ADP: string overflow');const s=_adpTdec.decode(buf.subarray(p,p+l));p+=l;return s}
       case 7:{const n=vi();const a=new Array(n);for(let i=0;i<n;i++)a[i]=rv();return a}
       case 8:{const n=vi();const o={};for(let i=0;i<n;i++){const k=rv();o[k]=rv()}return o}
       case 9:{const hi=((buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3])>>>0;const lo=((buf[p+4]<<24)|(buf[p+5]<<16)|(buf[p+6]<<8)|buf[p+7])>>>0;p+=8;return new Date(hi*4294967296+lo)}
@@ -99,11 +99,14 @@ class ServerEmitter {
   }
 
   emitEdgeHandler(fn) {
+    const SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
+    if (!SAFE_IDENT.test(fn.name)) throw new Error(`Arc codegen: unsafe @server fn name: ${JSON.stringify(fn.name)}`)
     const params = (fn.params ?? []).map(p => p.name ?? p).join(', ')
     const body = this.jsEmitter.emitBody(fn.body?.body ?? fn.body)
     // Extract only own-property values to prevent prototype pollution via destructuring
     const paramExtract = (fn.params ?? []).map(p => {
       const name = p.name ?? p
+      if (!SAFE_IDENT.test(name)) throw new Error(`Arc codegen: unsafe @server param name: ${JSON.stringify(name)}`)
       return `const ${name} = Object.prototype.hasOwnProperty.call(_body,'${name}') ? _body['${name}'] : undefined`
     }).join('; ')
 
@@ -124,7 +127,7 @@ class ServerEmitter {
       `    })`,
       `  } catch (_e) {`,
       `    console.error('[arc] @server ${fn.name} error:', _e)`,
-      `    return new Response(JSON.stringify({ error: _e.message }), {`,
+      `    return new Response(JSON.stringify({ error: 'Internal server error' }), {`,
       `      status: 500, headers: { 'Content-Type': 'application/json' }`,
       `    })`,
       `  }`,
@@ -155,7 +158,7 @@ class ServerEmitter {
       `// Cloudflare Workers / WinterCG fetch handler`,
       `export default {`,
       `  async fetch(req) {`,
-      `    const _path = new URL(req.url).pathname`,
+      `    let _path; try { _path = new URL(req.url).pathname } catch { return new Response('Bad Request', { status: 400 }) }`,
       `${cases}`,
       `    return new Response('Not Found', { status: 404 })`,
       `  }`,
@@ -194,14 +197,24 @@ class ServerEmitter {
 
     return [
       `async function ${fn.name}(${params}) {`,
-      `  const _res = await fetch('/_arc/fn/${fn.name}', {`,
-      `    method: 'POST',`,
-      `    headers: {'Content-Type': 'application/x-adp'},`,
-      `    body: _adpEncode(${argObj})`,
-      `  })`,
-      `  if (!_res.ok) throw new Error(await _res.text())`,
-      `  const _buf = await _res.arrayBuffer()`,
-      `  return _adpDecode(new Uint8Array(_buf))`,
+      `  const _ctrl = new AbortController()`,
+      `  const _tid = setTimeout(() => _ctrl.abort(), 30000)`,
+      `  try {`,
+      `    const _res = await fetch('/_arc/fn/${fn.name}', {`,
+      `      method: 'POST',`,
+      `      headers: {'Content-Type': 'application/x-adp'},`,
+      `      body: _adpEncode(${argObj}),`,
+      `      signal: _ctrl.signal`,
+      `    })`,
+      `    if (!_res.ok) {`,
+      `      const _et = await _res.text()`,
+      `      let _em; try { _em = JSON.parse(_et).error ?? _et } catch { _em = _et }`,
+      `      throw new Error(_em)`,
+      `    }`,
+      `    const _buf = await _res.arrayBuffer()`,
+      `    if (_buf.byteLength > 10 * 1024 * 1024) throw new Error('Response too large')`,
+      `    return _adpDecode(new Uint8Array(_buf))`,
+      `  } finally { clearTimeout(_tid) }`,
       `}`,
     ].join('\n')
   }

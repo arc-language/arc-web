@@ -1,5 +1,29 @@
 'use strict'
 
+const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
+function _assertSafeIdent(val, context) {
+  if (typeof val !== 'string' || !_SAFE_IDENT.test(val)) {
+    throw new Error(`Arc codegen: unsafe identifier in ${context}: ${JSON.stringify(val)}`)
+  }
+}
+
+const _SAFE_ATTR = /^[a-zA-Z0-9_:.-]+$/
+function _assertSafeAttr(val, context) {
+  if (typeof val !== 'string' || !_SAFE_ATTR.test(val)) {
+    throw new Error(`Arc codegen: unsafe attribute/class in ${context}: ${JSON.stringify(val)}`)
+  }
+}
+
+const _SAFE_DOM_EVENTS = new Set([
+  'click','dblclick','mousedown','mouseup','mousemove','mouseenter','mouseleave','mouseover','mouseout',
+  'keydown','keyup','keypress','focus','blur','focusin','focusout',
+  'input','change','submit','reset','select',
+  'scroll','wheel','resize','load','unload','error',
+  'touchstart','touchend','touchmove','touchcancel',
+  'dragstart','drag','dragend','dragenter','dragleave','dragover','drop',
+  'contextmenu','pointerdown','pointerup','pointermove','pointerenter','pointerleave',
+])
+
 class JsEmitter {
   constructor(options = {}) {
     this.options = options
@@ -128,7 +152,7 @@ class JsEmitter {
         `(function(){const _be=document.getElementById('${b.id}');if(!_be)return;` +
         `const _bevt=_be.tagName==='SELECT'||_be.type==='checkbox'||_be.type==='radio'?'change':'input';` +
         `_be.addEventListener(_bevt,function(e){` +
-        `_set_${b.expr}(_be.type==='checkbox'||_be.type==='radio'?e.target.checked:e.target.value);` +
+        `_set_${b.expr}(_be.type==='checkbox'||_be.type==='radio'?e.target.checked:_be.type==='number'?parseFloat(e.target.value):e.target.value);` +
         `});})();`
       )
     }
@@ -184,15 +208,17 @@ class JsEmitter {
 
   exprReferences(expr, name) {
     if (!expr) return false
+    // Save/restore _matchCounter so dependency analysis has no side effects on code gen
+    const savedCounter = this._matchCounter
     const str = this.emitExpr(expr)
-    // Check both prefixed (_name) and bare (name) forms — emitExpr uses bare names
-    // for identifiers that are later prefixed by emitRuntimeExpr
+    this._matchCounter = savedCounter
     return new RegExp(`\\b_?${name}\\b`).test(str)
   }
 
   // ── DOM update snippets ────────────────────────────────────────────────────
 
   emitBindingUpdate(b) {
+    _assertSafeAttr(b.id, 'binding id')
     const el = `_el_${b.id}`
     const val = this.emitRuntimeExpr(b.expr)
 
@@ -204,8 +230,10 @@ class JsEmitter {
       case 'list':
         return this.emitListUpdate(b)
       case 'attr':
+        _assertSafeAttr(b.attr, 'attr binding')
         return `${el}.setAttribute('${b.attr}',${val});`
       case 'class-toggle':
+        _assertSafeAttr(b.cls, 'class-toggle binding')
         return `${el}.classList.toggle('${b.cls}_${this.componentHash}',!!${val});`
       case 'bind':
         return `${el}.value=${val};`
@@ -235,7 +263,7 @@ class JsEmitter {
       `  _items.forEach(function(${item},${idx}){`,
       `    const _d=document.createElement('div');`,
       `    _d.innerHTML=${tplWithIdx};`,
-      `    ${el}.appendChild(_d.firstChild||_d);`,
+      `    while(_d.firstChild)${el}.appendChild(_d.firstChild);`,
       `  });`,
       `}else{`,
       `  ${el}.innerHTML=_items.map(function(${item},${idx}){return ${tplWithIdx};}).join('');`,
@@ -258,7 +286,9 @@ class JsEmitter {
           : `${this.emitExpr(ev.handler)};`)
       : ''
 
-    return `${el}.addEventListener('${ev.event}',function(event){${body}});`
+    const evtName = ev.event ?? ''
+    if (!_SAFE_DOM_EVENTS.has(evtName)) throw new Error(`Arc codegen: unknown/unsafe event type: ${JSON.stringify(evtName)}`)
+    return `${el}.addEventListener('${evtName}',function(event){${body}});`
   }
 
   // ── Expression emission ────────────────────────────────────────────────────
@@ -554,7 +584,8 @@ class JsEmitter {
   }
 
   emitMatchStmt(stmt) {
-    const subj = `_ms`
+    const id = (this._matchCounter = (this._matchCounter ?? 0) + 1)
+    const subj = `_ms${id}`
     const cond = this.emitExpr(stmt.subject)
     const arms = (stmt.arms ?? []).map(arm => {
       const body = this.emitBody(arm.body?.body ?? arm.body)

@@ -12,14 +12,14 @@ const http = require('http')
 // Explicit allowlist for object method dispatch — prevents calling dangerous prototype methods
 const ALLOWED_OBJ_METHODS = new Set([
   'toString', 'valueOf', 'toJSON',
-  'get', 'set', 'has', 'delete', 'clear', 'size',
+  'get', 'set', 'has', 'delete', 'clear',
   'keys', 'values', 'entries',
   'find', 'filter', 'map', 'forEach', 'reduce', 'some', 'every',
   'push', 'pop', 'shift', 'unshift', 'splice', 'slice', 'concat', 'join',
   'sort', 'reverse', 'flat', 'flatMap', 'includes', 'indexOf', 'lastIndexOf',
   'trim', 'split', 'replace', 'toUpperCase', 'toLowerCase',
   'getPosts', 'getPost', 'getPages', 'getPage', 'getItems', 'getItem',
-  'query', 'where', 'find', 'findOne', 'findAll', 'recent', 'limit', 'offset',
+  'query', 'where', 'findOne', 'findAll', 'recent', 'limit', 'offset',
 ])
 
 class BuildExecutor {
@@ -166,13 +166,11 @@ class BuildExecutor {
 
       if (obj && typeof obj === 'object') {
         const args = await Promise.all((expr.args ?? []).map(a => this.evalExpr(a, locals)))
-        if (ALLOWED_OBJ_METHODS.has(methodName) &&
-            Object.prototype.hasOwnProperty.call(obj, methodName) &&
-            typeof obj[methodName] === 'function') {
-          return obj[methodName].call(obj, ...args)
-        }
         if (!ALLOWED_OBJ_METHODS.has(methodName)) {
           throw new Error(`@build: object method '${methodName}' is not allowed at build time`)
+        }
+        if (typeof obj[methodName] === 'function') {
+          return obj[methodName].call(obj, ...args)
         }
       }
     }
@@ -284,16 +282,21 @@ class BuildExecutor {
         }
         const chunks = []
         let totalBytes = 0
+        let destroyed = false
         const MAX_BYTES = 10 * 1024 * 1024
         res.on('data', c => {
           totalBytes += c.length
           if (totalBytes > MAX_BYTES) {
-            req.destroy(new Error(`@build fetch: response too large (max 10MB): ${url}`))
+            destroyed = true
+            req.destroy()
+            res.destroy()
+            reject(new Error(`@build fetch: response too large (max 10MB): ${url}`))
             return
           }
           chunks.push(c)
         })
         res.on('end', () => {
+          if (destroyed) return
           const body = Buffer.concat(chunks).toString()
           const ct = res.headers['content-type'] ?? ''
           try {
@@ -316,7 +319,8 @@ class BuildExecutor {
     if (!resolved.startsWith(projectRoot + path.sep) && resolved !== projectRoot) {
       throw new Error(`@build readFile: path escapes project root: ${filePath}`)
     }
-    const stat = fs.statSync(resolved)
+    let stat
+    try { stat = fs.statSync(resolved) } catch (e) { throw new Error(`@build readFile: cannot read '${filePath}': ${e.code ?? e.message}`) }
     if (stat.size > 10 * 1024 * 1024) throw new Error(`@build readFile: file too large (max 10MB): ${filePath}`)
     const content = fs.readFileSync(resolved, 'utf8')
     if (filePath.endsWith('.json')) {
