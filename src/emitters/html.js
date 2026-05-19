@@ -472,7 +472,7 @@ class HtmlEmitter {
       ? (rawId.type ? this.evalStaticExpr(rawId) : rawId)
       : 'modal'
     const children = this.emitChildren(node.children)
-    return `<div id="${this.escape(String(id))}" popover role="dialog" aria-modal="true">${children}</div>`
+    return `<dialog id="${this.escape(String(id))}" popover aria-modal="true">${children}</dialog>`
   }
 
   emitTooltip(node) {

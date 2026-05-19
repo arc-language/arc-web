@@ -390,6 +390,7 @@ class JsEmitter {
 
   emitMatchExpr(expr) {
     const subj = `_ms_${Math.random().toString(36).slice(2, 7)}`
+    const tmp  = `_mr_${Math.random().toString(36).slice(2, 7)}`
     const arms = (expr.arms ?? []).map(arm => {
       const body = this.emitExpr(arm.body)
       if (!arm.pattern || arm.pattern.type === 'Wildcard') {
@@ -398,12 +399,13 @@ class JsEmitter {
       const cond = this.emitPattern(arm.pattern, subj)
       return `(${cond}?(${body}):undefined)`
     })
-    // Chain: first match wins, last arm is wildcard
+    // Chain right-to-left; assign each arm to tmp so it's only evaluated once
     const chain = arms.reduceRight((acc, cur, i) => {
-      if (i === arms.length - 1) return cur // wildcard
-      return `(${cur}!==undefined?${cur}:${acc})`
+      if (i === arms.length - 1) return cur // wildcard — no undefined check needed
+      return `((${tmp}=${cur})!==undefined?${tmp}:${acc})`
     })
-    return `((${subj})=>${chain})(${this.emitExpr(expr.subject)})`
+    // Outer IIFE: subj holds evaluated subject, tmp is scratch for arm results
+    return `((${subj},${tmp})=>${chain})(${this.emitExpr(expr.subject)},undefined)`
   }
 
   emitPattern(pattern, subj) {
