@@ -204,7 +204,7 @@ class HtmlEmitter {
       case 'UnlessNode':        return this.emitUnless(node)
       case 'ForNode':           return this.emitFor(node)
       case 'MatchTemplateNode': return this.emitMatchTemplate(node)
-      case 'RawNode':           return node.html
+      case 'RawNode':           return this.emitRaw(node)
       default:                  return ''
     }
   }
@@ -514,6 +514,13 @@ class HtmlEmitter {
       `  <span role="tooltip" id="${id}" popover="hint">${this.escape(tooltipText)}</span>`,
       `</span>`,
     ].join('\n')
+  }
+
+  emitRaw(node) {
+    if (this.options.allowRaw === false) {
+      throw new Error('Arc: RawNode encountered but allowRaw is disabled')
+    }
+    return node.html
   }
 
   // ── Utilities ──────────────────────────────────────────────────────────────
