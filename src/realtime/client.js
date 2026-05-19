@@ -107,7 +107,8 @@ class RealtimeEmitter {
         // Convert Arc template literal to JS template literal
         const parts = arg.parts.map(p => {
           if (p.type === 'Literal') return p.value
-          return `\${${p.name ?? JSON.stringify(p)}}`
+          if (p.type === 'Identifier' && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(p.name)) return `\${${p.name}}`
+          return `\${''}` // safe fallback for complex expressions
         })
         return '`' + parts.join('') + '`'
       }

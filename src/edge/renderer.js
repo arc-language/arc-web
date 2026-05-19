@@ -91,7 +91,7 @@ class EdgeRenderer {
       `    return { ${liveDecls.map(d => d.name).join(', ')} }`,
       `  } catch (e) {`,
       `    console.error('[arc] @live data error:', e)
-    return { _error: true }`,
+    return { __arc_render_error__: true }`,
       `  }`,
       `}`,
       ``,
@@ -102,14 +102,25 @@ class EdgeRenderer {
     // Collect top-level @live variable names referenced in bindings
     // stateBindings format: { id, expr: string }
     const liveVarsUsed = new Set()
-    const replacements = liveBindings.map(b => {
+    const bindingExprs = liveBindings.map(b => {
       const exprStr = b.expr
       const m = exprStr.match(/^([a-z_][a-z0-9_]*)\b/i)
       if (m) liveVarsUsed.add(m[1])
-      return `  html = html.replaceAll('<span id="${b.id}" aria-live="polite"></span>', _esc(String(${exprStr} ?? '')))`
-    }).join('\n')
+      return { id: b.id, exprStr }
+    })
 
     const destructure = [...liveVarsUsed].join(', ')
+
+    // Build a map of span id → replacement value, then do a single-pass regex replace
+    // instead of O(N) replaceAll calls over the full HTML string
+    const mapEntries = bindingExprs.map(({ id, exprStr }) =>
+      `  _m['${id}'] = _esc(String(${exprStr} ?? ''))`
+    ).join('\n')
+
+    const spanIds = bindingExprs.map(({ id }) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&')).join('|')
+    const regexSrc = spanIds.length > 0
+      ? `'<span id="(?:' + ${JSON.stringify(spanIds)} + ')" aria-live="polite"></\\\\/span>'`
+      : `'(?!)'`
 
     return [
       `function _esc(s) {`,
@@ -118,8 +129,13 @@ class EdgeRenderer {
       ``,
       `function _fillHtml(data) {`,
       `  const { ${destructure} } = data`,
-      `  let html = BASE_HTML`,
-      replacements,
+      `  const _m = Object.create(null)`,
+      mapEntries,
+      `  const _re = new RegExp(${regexSrc}, 'g')`,
+      `  let html = BASE_HTML.replace(_re, m => {`,
+      `    const id = m.match(/id="([^"]+)"/)?.[1]`,
+      `    return id && id in _m ? _m[id] : m`,
+      `  })`,
       `  html = html.replace('<link rel="stylesheet" href="styles.css">', \`<style>\${BASE_CSS.replace(/<\\/style>/gi, '<\\/style>')}</style>\`)`,
       `  if (CLIENT_JS) html = html.replace('<script src="app.js"></script>', \`<script>\${CLIENT_JS.replace(/<\\/script>/gi, '<\\/script>')}</script>\`)`,
       `  return html`,
@@ -135,7 +151,7 @@ class EdgeRenderer {
       `  async fetch(request, env, ctx) {`,
       `    try {`,
       `      const data = await _resolveData(request)`,
-      `      if (data._error) {`,
+      `      if (data.__arc_render_error__) {`,
       `        return new Response('Internal Server Error', { status: 500 })`,
       `      }`,
       `      const html = _fillHtml(data)`,

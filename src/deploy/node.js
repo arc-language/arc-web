@@ -70,9 +70,18 @@ async function handleEdgeFunction(urlPath, req, res) {
     } else if (result.headers && typeof result.headers === 'object') {
       Object.assign(headers, result.headers)
     }
-    const body = typeof result.arrayBuffer === 'function'
-      ? Buffer.from(await result.arrayBuffer())
-      : Buffer.from(result.body ?? '')
+    let rawBody
+    if (typeof result.arrayBuffer === 'function') {
+      rawBody = Buffer.from(await result.arrayBuffer())
+    } else {
+      rawBody = Buffer.from(result.body ?? '')
+    }
+    if (rawBody.length > 10 * 1024 * 1024) {
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Response too large' }))
+      return true
+    }
+    const body = rawBody
     res.writeHead(status, headers)
     res.end(body)
   } catch (e) {

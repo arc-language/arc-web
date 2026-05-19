@@ -389,9 +389,27 @@ class CssEmitter {
 
     const inlineProps = condition.rules.filter(r => r.type === 'StyleProp')
     const decls = this.emitProps(inlineProps)
-    if (decls.length === 0) return ''
 
-    return `${mediaQuery} {\n  ${parentSelector} {\n    ${decls.join(';\n    ')};\n  }\n}`
+    const nestedRules = condition.rules
+      .filter(r => r.type === 'StyleRule')
+      .map(r => {
+        const nestedSel = r.selector.startsWith('&')
+          ? parentSelector + r.selector.slice(1)
+          : r.selector.startsWith(':') || r.selector.startsWith('::')
+          ? parentSelector + r.selector
+          : `${parentSelector} ${this.scopeSelector(r.selector)}`
+        const nestedDecls = this.emitProps(r.props)
+        if (nestedDecls.length === 0) return ''
+        return `  ${nestedSel} {\n    ${nestedDecls.join(';\n    ')};\n  }`
+      })
+      .filter(Boolean)
+
+    if (decls.length === 0 && nestedRules.length === 0) return ''
+
+    const innerBlocks = []
+    if (decls.length > 0) innerBlocks.push(`  ${parentSelector} {\n    ${decls.join(';\n    ')};\n  }`)
+    innerBlocks.push(...nestedRules)
+    return `${mediaQuery} {\n${innerBlocks.join('\n')}\n}`
   }
 
   resolveCondition(kind, query) {

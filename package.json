@@ -7,12 +7,16 @@
     "arc": "src/cli.js"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arc-lang/arc"
   },
   "files": ["src", "stdlib", "adp"],
   "scripts": {
-    "test": "node --test tests/**/*.test.js",
-    "test:coverage": "node --test --experimental-test-coverage tests/**/*.test.js",
+    "test": "node --test 'tests/**/*.test.js'",
+    "test:coverage": "node --test --experimental-test-coverage 'tests/**/*.test.js'",
     "build": "node src/cli.js build",
     "dev": "node src/cli.js dev"
   },

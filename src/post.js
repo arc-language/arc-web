@@ -37,10 +37,13 @@ class PostProcessor {
 
     const cssBytes = Buffer.byteLength(css)
 
+    // Escape </style> sequences that could break out of inline style tags
+    const safeInline = (s) => s.replace(/<\/style>/gi, '<\\/style>')
+
     // Small CSS: inline everything, no external file needed
     if (cssBytes <= this.criticalCssThreshold) {
       const inlined = html
-        .replace('<link rel="stylesheet" href="styles.css">', `<style>${css}</style>`)
+        .replace('<link rel="stylesheet" href="styles.css">', `<style>${safeInline(css)}</style>`)
       return { html: inlined, css }
     }
 
@@ -53,7 +56,7 @@ class PostProcessor {
 
     const inlined = html.replace(
       '<link rel="stylesheet" href="styles.css">',
-      `<style>${critical}</style>\n${preload}`
+      `<style>${safeInline(critical)}</style>\n${preload}`
     )
 
     return { html: inlined, css }

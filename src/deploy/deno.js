@@ -29,6 +29,8 @@ async function handleEdgeFunction(path: string, req: Request): Promise<Response>
   if (!Object.prototype.hasOwnProperty.call(_ARC_HANDLERS, segment)) return new Response('Edge function not found', { status: 404 })
   const fn = _ARC_HANDLERS[segment]
   if (typeof fn !== 'function') return new Response('Edge function not found', { status: 404 })
+  const cl = parseInt(req.headers.get('content-length') ?? '0', 10)
+  if (cl > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
   return await fn(req)
 }
 `

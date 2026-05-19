@@ -534,8 +534,8 @@ class HtmlEmitter {
   }
 
   emitRaw(node) {
-    if (this.options.allowRaw === false) {
-      throw new Error('Arc: RawNode encountered but allowRaw is disabled')
+    if (this.options.allowRaw !== true) {
+      throw new Error('Arc: RawNode requires opt-in via allowRaw: true')
     }
     return node.html
   }

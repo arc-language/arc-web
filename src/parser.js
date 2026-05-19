@@ -9,7 +9,7 @@ class Parser {
     this.pos = 0
     this.filename = filename
     this.hoistedDecls = []  // @state/@computed/@build found inside templates
-    this._peekCache = new Map()  // (pos << 4 | offset) → token, avoids O(n) scan per call
+    this._peekCache = new Map()  // (pos << 8 | offset) → token, avoids O(n) scan per call
   }
 
   // ── Utilities ──────────────────────────────────────────────────────────────
@@ -1157,18 +1157,7 @@ class Parser {
 
       const isStatic = t.type === T.STATIC ? (this.pos++, true) : false
 
-      // @field = value
-      if (this.tokens[this.pos]?.type === T.AT_IDENT) {
-        const fieldTok = this.tokens[this.pos++]
-        const fieldName = fieldTok.value.slice(1) // remove @
-        const typeAnnotation = this.eatIf(T.COLON) ? this.parseTypeAnnotation() : null
-        const init = this.eatIf(T.EQ) ? this.parseExpr() : null
-        this.consumeNewlines()
-        fields.push(N.ClassField(fieldName, typeAnnotation, init, isStatic, fieldTok.line))
-        continue
-      }
-
-      // @get prop() => expr  (getter)
+      // @get prop() => expr  (getter) — must come before generic @field check
       if (this.tokens[this.pos]?.type === T.AT_IDENT && this.tokens[this.pos].value === '@get') {
         this.pos++
         const methodName = this.eat(T.IDENT).value
@@ -1177,6 +1166,17 @@ class Parser {
         const body = this.eatIf(T.ARROW) ? this.parseExpr() : this.parseBlock()
         this.consumeNewlines()
         methods.push(N.ClassMethod(methodName, params, returnType, body, isStatic, true, t.line))
+        continue
+      }
+
+      // @field = value
+      if (this.tokens[this.pos]?.type === T.AT_IDENT) {
+        const fieldTok = this.tokens[this.pos++]
+        const fieldName = fieldTok.value.slice(1) // remove @
+        const typeAnnotation = this.eatIf(T.COLON) ? this.parseTypeAnnotation() : null
+        const init = this.eatIf(T.EQ) ? this.parseExpr() : null
+        this.consumeNewlines()
+        fields.push(N.ClassField(fieldName, typeAnnotation, init, isStatic, fieldTok.line))
         continue
       }
 
@@ -1369,6 +1369,12 @@ class Parser {
       this.eat(T.RPAREN)
       return { type: 'ResultPattern', kind, name, line: t.line }
     }
+    // Plain identifier binding (e.g., `n` in `n => n * 2`)
+    // Must be checked before parseExpr so that `n =>` is not parsed as an arrow function
+    if (t.type === T.IDENT) {
+      this.pos++
+      return N.Identifier(t.value, t.line)
+    }
     return this.parseExpr()
   }
 
@@ -1554,8 +1560,14 @@ class Parser {
       return N.AtProperty(t.value.slice(1), t.line)
     }
 
-    // Identifier
+    // Identifier — check for bare single-param arrow fn `x => expr` before returning
     if (t.type === T.IDENT) {
+      if (this.tokens[this.pos + 1]?.type === T.ARROW) {
+        this.pos++
+        this.eat(T.ARROW)
+        const body = this.parseExpr()
+        return N.ArrowFn([N.Param(t.value, null, null, false, t.line)], body, false, t.line)
+      }
       this.pos++
       return N.Identifier(t.value, t.line)
     }
@@ -1563,14 +1575,6 @@ class Parser {
     // Ok(...) / Err(...)
     if (t.type === T.OK) { this.pos++; this.eat(T.LPAREN); const v = this.parseExpr(); this.eat(T.RPAREN); return N.ResultOk(v, t.line) }
     if (t.type === T.ERR) { this.pos++; this.eat(T.LPAREN); const v = this.parseExpr(); this.eat(T.RPAREN); return N.ResultErr(v, t.line) }
-
-    // Arrow function: x => expr or (a, b) => expr
-    if (t.type === T.IDENT && this.tokens[this.pos + 1]?.type === T.ARROW) {
-      this.pos++
-      this.eat(T.ARROW)
-      const body = this.parseExpr()
-      return N.ArrowFn([N.Param(t.value, null, null, false, t.line)], body, false, t.line)
-    }
 
     // Parenthesized expr or arrow fn params
     if (t.type === T.LPAREN) {
@@ -1679,7 +1683,7 @@ class Parser {
       let params
       if (this.peekType() === T.IDENT && this.tokens[this.pos + 1]?.type === T.ARROW) {
         const pTok = this.tokens[this.pos++]
-        params = [N.Param(pTok.value, null, null, pTok.line)]
+        params = [N.Param(pTok.value, null, null, false, pTok.line)]
       } else {
         params = this.parseParams()
       }

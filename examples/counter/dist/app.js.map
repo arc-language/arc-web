@@ -1,0 +1,1 @@
+{"version":3,"file":"app.js","sources":["index.arc"],"sourcesContent":["page \"Counter\"\n  @state let count = 0\n\n  main\n    card\n      heading \"Counter\"\n      text \"{count}\"\n      row\n        button on:click={ @count -= 1 } \"−\"\n        button on:click={ @count += 1 } \"+\"\n      text \"Double: {count * 2}\"\n"],"mappings":";AACA"}

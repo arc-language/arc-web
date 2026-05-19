@@ -1,0 +1,25 @@
+@layer base {
+  *, *::before, *::after { box-sizing: border-box }
+  :root {
+    --arc-font-sans: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+    --arc-font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    --arc-font-serif: Lora, Georgia, serif;
+    --arc-radius-sm: 4px;
+    --arc-radius-md: 8px;
+    --arc-radius-lg: 12px;
+    --arc-radius-xl: 16px;
+    --arc-radius-2xl: 24px;
+    --arc-radius-full: 9999px;
+    --arc-shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.05);
+    --arc-shadow-md: 0 4px 6px oklch(0% 0 0 / 0.07), 0 1px 3px oklch(0% 0 0 / 0.06);
+    --arc-shadow-lg: 0 10px 15px oklch(0% 0 0 / 0.08), 0 4px 6px oklch(0% 0 0 / 0.05);
+    --arc-shadow-xl: 0 20px 25px oklch(0% 0 0 / 0.10), 0 8px 10px oklch(0% 0 0 / 0.04);
+  }
+  .arc-row { display: flex; flex-direction: row }
+  .arc-col { display: flex; flex-direction: column }
+  .arc-center { display: flex; align-items: center; justify-content: center }
+  .arc-spacer { flex: 1 0 auto }
+  .arc-wrap { display: flex; flex-wrap: wrap }
+  :focus-visible { outline: 2px solid oklch(60% 0.15 250); outline-offset: 2px }
+  .arc-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0 }
+}

@@ -199,16 +199,20 @@ widget Field
 
   col gap="4px"
     if @label
-      label class="field-label" "{@label}"
+      label id={"label-" + @name} class="field-label" "{@label}"
     input
+      id={"field-" + @name}
       type={ fieldType }
       value={ @form.getValue(@name) }
       placeholder={ @placeholder ?? "" }
+      aria-labelledby={"label-" + @name}
+      aria-invalid={ isTouched && error ? "true" : "false" }
+      aria-describedby={ isTouched && error ? "error-" + @name : none }
       on:input={ fn e => @form.setValue(@name, e.target.value) }
       on:blur={ fn() => @form.touch(@name) }
       class={ isTouched && error ? "field-error" : "" }
     if isTouched && error
-      span class="field-error-msg" "{error}"
+      span id={"error-" + @name} class="field-error-msg" role="alert" "{error}"
 
   design
     .field-label

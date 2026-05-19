@@ -215,11 +215,15 @@ class JsEmitter {
 
   exprReferences(expr, name) {
     if (!expr) return false
-    // Save/restore _matchCounter so dependency analysis has no side effects on code gen
-    const savedCounter = this._matchCounter
-    const str = this.emitExpr(expr)
-    this._matchCounter = savedCounter
-    return new RegExp(`\\b_?${name}\\b`).test(str)
+    this._emitCache ??= new WeakMap()
+    if (!this._emitCache.has(expr)) {
+      const savedCounter = this._matchCounter
+      this._emitCache.set(expr, this.emitExpr(expr))
+      this._matchCounter = savedCounter
+    }
+    this._reCache ??= new Map()
+    if (!this._reCache.has(name)) this._reCache.set(name, new RegExp(`\\b_?${name}\\b`))
+    return this._reCache.get(name).test(this._emitCache.get(expr))
   }
 
   // ── DOM update snippets ────────────────────────────────────────────────────
@@ -446,24 +450,26 @@ class JsEmitter {
   }
 
   emitMatchExpr(expr) {
+    if (!expr.arms || expr.arms.length === 0) return 'undefined'
     const id = (this._matchCounter = (this._matchCounter ?? 0) + 1)
     const subj = `_ms${id}`
     const tmp  = `_mr${id}`
+    const sentinel = `_mn${id}` // unique no-match sentinel avoids collision with undefined arm results
     const arms = (expr.arms ?? []).map(arm => {
       const body = this.emitExpr(arm.body)
       if (!arm.pattern || arm.pattern.type === 'Wildcard') {
         return `(${body})`
       }
       const cond = this.emitPattern(arm.pattern, subj)
-      return `(${cond}?(${body}):undefined)`
+      return `(${cond}?(${body}):${sentinel})`
     })
     // Chain right-to-left; assign each arm to tmp so it's only evaluated once
     const chain = arms.reduceRight((acc, cur, i) => {
-      if (i === arms.length - 1) return cur // wildcard — no undefined check needed
-      return `((${tmp}=${cur})!==undefined?${tmp}:${acc})`
+      if (i === arms.length - 1) return cur // wildcard — no sentinel check needed
+      return `((${tmp}=${cur})!==${sentinel}?${tmp}:${acc})`
     })
-    // Outer IIFE: subj holds evaluated subject, tmp is scratch for arm results
-    return `((${subj},${tmp})=>${chain})(${this.emitExpr(expr.subject)},undefined)`
+    // Outer IIFE: subj=subject, tmp=arm scratch, sentinel=Symbol() for no-match
+    return `((${subj},${tmp},${sentinel})=>${chain})(${this.emitExpr(expr.subject)},undefined,Symbol())`
   }
 
   emitPattern(pattern, subj) {
@@ -527,7 +533,7 @@ class JsEmitter {
 
     switch (stmt.type) {
       case 'VarDecl':
-        return `${stmt.kind} _${stmt.name}=${this.emitExpr(stmt.init)};`
+        return `${stmt.kind} ${stmt.name}=${this.emitExpr(stmt.init)};`
 
       case 'ExprStatement':
         return `${this.emitExpr(stmt.expr)};`
