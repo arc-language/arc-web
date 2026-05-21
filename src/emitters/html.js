@@ -131,6 +131,11 @@ class HtmlEmitter {
 
     const bodyContent = this.emitChildren(node.body)
 
+    // Don't double-wrap if the page already has a top-level <main>
+    const hasUserMain = (node.body ?? []).some(
+      n => n.type === 'Element' && (n.tag === 'main' || n.attrs?.role === 'main')
+    )
+
     return [
       '<!DOCTYPE html>',
       `<html lang="${this.escape(lang)}">`,
@@ -147,10 +152,10 @@ class HtmlEmitter {
       '</head>',
       '<body>',
       `<a href="#main-content" class="arc-skip-link">Skip to main content</a>`,
-      `<main id="main-content">`,
-      `<h1 class="arc-sr-only">${this.escape(title)}</h1>`,
+      hasUserMain ? '' : `<main id="main-content">`,
+      hasUserMain ? '' : `<h1 class="arc-sr-only">${this.escape(title)}</h1>`,
       bodyContent,
-      '</main>',
+      hasUserMain ? '' : '</main>',
       '</body>',
       '</html>',
     ].filter(Boolean).join('\n')
@@ -296,14 +301,16 @@ class HtmlEmitter {
         ? (this.isStaticExpr(rawValue) ? this.evalStaticExpr(rawValue) : rawValue)
         : rawValue
 
-      // Popover API: trigger="id" → popovertarget="id"
+      // <dialog> trigger: trigger="id" → onclick that calls showModal()
       if (key === 'trigger') {
-        parts.push(`popovertarget="${this.escape(String(value))}"`)
+        const dialogId = this.escape(String(value))
+        parts.push(`onclick="var _d=document.getElementById('${dialogId}');if(_d)_d.showModal()"`)
         continue
       }
-      // Popover API: close="id" → popovertarget="id" popovertargetaction="hide"
+      // <dialog> close: close="id" → onclick that calls close()
       if (key === 'close') {
-        parts.push(`popovertarget="${this.escape(String(value))}" popovertargetaction="hide"`)
+        const dialogId = this.escape(String(value))
+        parts.push(`onclick="var _d=document.getElementById('${dialogId}');if(_d)_d.close()"`)
         continue
       }
       // Native dialog attrs (legacy)
@@ -355,12 +362,20 @@ class HtmlEmitter {
     // A template literal mixes static string parts and reactive expressions.
     // Render each part inline (no wrapper element).
     return node.parts.map(part => {
-      if (part.type === 'Literal') return this.escape(String(part.value))
+      if (part.type === 'Literal') {
+        const s = String(part.value)
+        // In for-template mode, static parts must have backticks/$ escaped (done by emitForBodyTemplate wrapper)
+        return this.escape(s)
+      }
       // Expression part
       const exprStr = this.exprToString(part)
       if (this.isStaticExpr(part)) {
         const val = this.evalStaticExpr(part)
         return val !== undefined ? this.escape(String(val)) : ''
+      }
+      // Inside a for-loop template: inline the expression
+      if (this._inForTemplate) {
+        return `\${_esc(String(${exprStr}??''))}`
       }
       const id = this.getReactiveId(exprStr)
       this.stateBindings.push({ id, expr: exprStr, line: node.line })
@@ -375,6 +390,11 @@ class HtmlEmitter {
 
     if (this.isStaticExpr(node.expr)) {
       return this.escape(this.evalStaticExpr(node.expr))
+    }
+
+    // Inside a for-loop template: inline the expression as ${_esc(...)} so each item renders correctly
+    if (this._inForTemplate) {
+      return `\${_esc(String(${exprStr}??''))}`
     }
 
     // Reactive — emit a span placeholder
@@ -436,13 +456,16 @@ class HtmlEmitter {
 
     // Reactive for — emit a container, JS will manage children
     const listId = this.getReactiveId(`list_${collStr}`)
+    // Emit body as a JS template-literal source with item expressions inlined
+    const bodyTpl = this.emitForBodyTemplate(node.body, node.itemName ?? 'item', node.indexName ?? 'i')
     this.stateBindings.push({
       id: listId,
       expr: collStr,
       kind: 'list',
       itemName: node.itemName,
       indexName: node.indexName,
-      bodyTemplate: this.emitChildren(node.body), // template for one item
+      bodyTemplate: bodyTpl,
+      bodyIsTemplate: true,
       line: node.line
     })
 
@@ -453,6 +476,21 @@ class HtmlEmitter {
     // Static unrolling: substitute item references with actual values
     // For now, emit with data attributes — full static eval is in optimizer
     return this.emitChildren(bodyNodes)
+  }
+
+  // Emit a for-loop body as a JS template-literal source string.
+  // Item property expressions are inlined as ${_esc(item.field)} — no global reactive spans needed.
+  emitForBodyTemplate(bodyNodes, itemName, indexName) {
+    const prev = this._forItemName
+    this._forItemName = itemName
+    this._forIndexName = indexName
+    this._inForTemplate = true
+    const html = this.emitChildren(bodyNodes)
+    this._inForTemplate = false
+    this._forItemName = prev
+    this._forIndexName = undefined
+    // Escape backticks and bare $ in the static HTML portions, then return as template-literal source
+    return html.replace(/`/g, '\\`').replace(/\$(?!\{)/g, '\\$')
   }
 
   emitMatchTemplate(node) {
@@ -488,7 +526,7 @@ class HtmlEmitter {
   // ── Native patterns (zero JS) ──────────────────────────────────────────────
 
   emitModal(node) {
-    // Uses Popover API — zero JS, opened via popovertarget on buttons
+    // Uses native <dialog> element — opened via showModal() from trigger= attr
     const rawId = node.id ?? node.attrs?.id
     const id = rawId
       ? (rawId.type ? this.evalStaticExpr(rawId) : rawId)
@@ -557,10 +595,10 @@ class HtmlEmitter {
   isStaticExpr(expr) {
     if (!expr) return true
     if (expr.type === 'Literal') return true
-    if (expr.type === 'AtProperty') return expr.name in this.currentAttrs  // static if attr is bound
+    if (expr.type === 'AtProperty') return Object.prototype.hasOwnProperty.call(this.currentAttrs, expr.name)
     if (expr.type === 'Identifier') {
       // Known @build variable → static
-      return expr.name in this.buildContext
+      return Object.prototype.hasOwnProperty.call(this.buildContext, expr.name)
     }
     if (expr.type === 'MemberExpr' && !expr.computed) {
       return this.isStaticExpr(expr.object)
@@ -578,10 +616,10 @@ class HtmlEmitter {
     if (!expr) return undefined
     if (expr.type === 'Literal') return expr.value
     // @attr reference inside a widget invocation
-    if (expr.type === 'AtProperty' && expr.name in this.currentAttrs) {
+    if (expr.type === 'AtProperty' && Object.prototype.hasOwnProperty.call(this.currentAttrs, expr.name)) {
       return this.currentAttrs[expr.name]
     }
-    if (expr.type === 'Identifier' && expr.name in this.buildContext) {
+    if (expr.type === 'Identifier' && Object.prototype.hasOwnProperty.call(this.buildContext, expr.name)) {
       return this.buildContext[expr.name]
     }
     if (expr.type === 'MemberExpr' && !expr.computed) {

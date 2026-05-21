@@ -38,7 +38,12 @@ async function handleEdgeFunction(path, request) {
   if (!Object.prototype.hasOwnProperty.call(EDGE_FN_MAP, key)) return new Response('Edge function not found', { status: 404 })
   const fn = EDGE_FN_MAP[key]
   if (typeof fn !== 'function') return new Response('Edge function not found', { status: 404 })
-  return await fn(request)
+  try {
+    return await fn(request)
+  } catch (e) {
+    console.error('[arc] edge function error:', e)
+    return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+  }
 }
 `
     : ''

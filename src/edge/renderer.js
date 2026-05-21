@@ -128,7 +128,7 @@ class EdgeRenderer {
       `}`,
       ``,
       `function _fillHtml(data) {`,
-      `  const { ${destructure} } = data`,
+      `  const { ${[...liveVarsUsed].map(v => `${v} = undefined`).join(', ')} } = data`,
       `  const _m = Object.create(null)`,
       mapEntries,
       `  const _re = new RegExp(${regexSrc}, 'g')`,

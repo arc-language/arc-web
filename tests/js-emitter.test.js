@@ -208,4 +208,34 @@ describe('JS Emitter', () => {
     })
   })
 
+  describe('match expression binding patterns', () => {
+    test('identifier pattern in match arm becomes binding (not equality check)', async () => {
+      const src = `page "T"
+  @state let val = 0
+  @computed let label = match val {
+    0 => "zero"
+    n => "nonzero"
+  }
+  main text "{label}"`
+      const { js } = await compile(src)
+      // Binding arm should use arrow fn: (n) => 'nonzero', not val===n
+      assert.ok(js.includes('(n)=>'), `Expected binding arrow fn in:\n${js}`)
+      assert.ok(!js.includes('===n'), `Should not use equality check for binding:\n${js}`)
+    })
+
+    test('computed cascade updates transitively (a→b→c)', async () => {
+      const src = `page "T"
+  @state let a = 1
+  @computed let b = a * 2
+  @computed let c = b + 1
+  main text "{c}"`
+      const { js } = await compile(src)
+      // setter for a must update both b and c
+      const setterMatch = js.match(/function _set_a\(v\)\{([^}]+)\}/)
+      assert.ok(setterMatch, `Expected _set_a setter in:\n${js}`)
+      assert.ok(setterMatch[1].includes('_b='), `Expected _b recompute in setter:\n${setterMatch[1]}`)
+      assert.ok(setterMatch[1].includes('_c='), `Expected _c recompute in setter:\n${setterMatch[1]}`)
+    })
+  })
+
 })

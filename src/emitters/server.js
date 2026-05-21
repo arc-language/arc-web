@@ -51,7 +51,7 @@ function _adpDecode(buf){
       case 5:{const dv=new DataView(buf.buffer,buf.byteOffset+p,8);p+=8;return dv.getFloat64(0,false)}
       case 6:{const l=vi();if(p+l>buf.length)throw new Error('ADP: string overflow');const s=_adpTdec.decode(buf.subarray(p,p+l));p+=l;return s}
       case 7:{const n=vi();const a=new Array(n);for(let i=0;i<n;i++)a[i]=rv();return a}
-      case 8:{const n=vi();const o={};for(let i=0;i<n;i++){const k=rv();o[k]=rv()}return o}
+      case 8:{const n=vi();const o=Object.create(null);for(let i=0;i<n;i++){const k=rv();const v=rv();if(k!=='__proto__'&&k!=='constructor'&&k!=='prototype')o[k]=v;}return o}
       case 9:{const hi=(buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3];const lo=((buf[p+4]<<24)|(buf[p+5]<<16)|(buf[p+6]<<8)|buf[p+7])>>>0;p+=8;return new Date(hi*4294967296+lo)}
       default:throw new Error('ADP: unknown tag '+t)
     }

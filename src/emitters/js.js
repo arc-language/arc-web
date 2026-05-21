@@ -114,25 +114,35 @@ class JsEmitter {
       }
     }
 
+    // Pre-build computed dependency adjacency: computedName → [computeds that directly depend on it]
+    const computedAdj = new Map()
+    for (const c of computedDecls) computedAdj.set(c.name, [])
+    for (const c of computedDecls) {
+      for (const dep of computedDecls) {
+        if (dep.name !== c.name && this.exprReferences(dep.init, c.name)) {
+          computedAdj.get(c.name).push(dep)
+        }
+      }
+    }
+
     // Setter functions — one per @state variable
     for (const s of stateDecls) {
       const affected = deps.get(s.name) ?? []
       parts.push(`function _set_${s.name}(v){`)
       parts.push(`_${s.name}=v;`)
 
-      // Recompute dependents
-      const affectedComputed = computedDecls.filter(c =>
-        this.exprReferences(c.init, s.name)
-      )
-      for (const c of affectedComputed) {
-        parts.push(`_${c.name}=${this.emitExpr(c.init)};`)
-        // Cascade: recompute computed that depend on this computed
-        const cascade = computedDecls.filter(c2 =>
-          c2.name !== c.name && this.exprReferences(c2.init, c.name)
-        )
-        for (const c2 of cascade) {
-          parts.push(`_${c2.name}=${this.emitExpr(c2.init)};`)
+      // Recompute all transitively affected computeds in topological order (BFS)
+      const toRecompute = []
+      const visited = new Set()
+      const queue = computedDecls.filter(c => this.exprReferences(c.init, s.name))
+      for (const c of queue) { if (!visited.has(c.name)) { visited.add(c.name); toRecompute.push(c) } }
+      for (let i = 0; i < toRecompute.length; i++) {
+        for (const dep of (computedAdj.get(toRecompute[i].name) ?? [])) {
+          if (!visited.has(dep.name)) { visited.add(dep.name); toRecompute.push(dep) }
         }
+      }
+      for (const c of toRecompute) {
+        parts.push(`_${c.name}=${this.emitExpr(c.init)};`)
       }
 
       // Update DOM nodes
@@ -260,13 +270,18 @@ class JsEmitter {
     const idx = b.indexName ?? 'i'
     _assertSafeIdent(item, 'list item var')
     _assertSafeIdent(idx, 'list index var')
-    const tpl = JSON.stringify(b.bodyTemplate ?? '')
 
-    // Suffix reactive IDs with item index to ensure DOM uniqueness across list items
-    const tplWithIdx = `${tpl}.replace(/\\bid="([^"]+)"/g,function(_,id){return 'id="'+id+'_'+${idx}+'"'})`
+    // _esc helper for safe HTML insertion of item values
+    const escHelper = `function _esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}`
+
+    // Template that renders one item: JS template literal or plain HTML
+    const tplFnBody = b.bodyIsTemplate
+      ? `return \`${b.bodyTemplate ?? ''}\``
+      : `return ${JSON.stringify(b.bodyTemplate ?? '')}.replace(/\\bid="([^"]+)"/g,function(_,id){return 'id="'+id+'_'+${idx}+'"'})`
 
     return [
       `(function(){`,
+      escHelper,
       `const _items=${items};`,
       `if(!Array.isArray(_items)){${el}.innerHTML='';return;}`,
       // Small lists: individual nodes (minimal reflow)
@@ -275,11 +290,11 @@ class JsEmitter {
       `  while(${el}.firstChild)${el}.removeChild(${el}.firstChild);`,
       `  _items.forEach(function(${item},${idx}){`,
       `    const _d=document.createElement('div');`,
-      `    _d.innerHTML=${tplWithIdx};`,
+      `    _d.innerHTML=(function(${item},${idx}){${tplFnBody}})(${item},${idx});`,
       `    while(_d.firstChild)${el}.appendChild(_d.firstChild);`,
       `  });`,
       `}else{`,
-      `  ${el}.innerHTML=_items.map(function(${item},${idx}){return ${tplWithIdx};}).join('');`,
+      `  ${el}.innerHTML=_items.map(function(${item},${idx}){${tplFnBody}}).join('');`,
       `}`,
       `})();`,
     ].join('\n')
@@ -460,12 +475,18 @@ class JsEmitter {
       if (!arm.pattern || arm.pattern.type === 'Wildcard') {
         return `(${body})`
       }
+      // Identifier binding pattern: always matches, introduces bound variable
+      if (arm.pattern.type === 'Identifier') {
+        const bindName = arm.pattern.name
+        _assertSafeIdent(bindName, 'match binding')
+        return `((${bindName})=>(${body}))(${subj})`
+      }
       const cond = this.emitPattern(arm.pattern, subj)
       return `(${cond}?(${body}):${sentinel})`
     })
     // Chain right-to-left; assign each arm to tmp so it's only evaluated once
     const chain = arms.reduceRight((acc, cur, i) => {
-      if (i === arms.length - 1) return cur // wildcard — no sentinel check needed
+      if (i === arms.length - 1) return cur // wildcard/binding — no sentinel check needed
       return `((${tmp}=${cur})!==${sentinel}?${tmp}:${acc})`
     })
     // Outer IIFE: subj=subject, tmp=arm scratch, sentinel=Symbol() for no-match
@@ -478,7 +499,7 @@ class JsEmitter {
     if (pattern.type === 'IsExpr') {
       return this.emitIsCheck(pattern.typeOrValue, subj)
     }
-    if (pattern.type === 'Identifier') return `${subj}===${pattern.name}`
+    // Identifier binding: handled in emitMatchExpr/emitMatchStmt directly
     return 'true'
   }
 
@@ -620,6 +641,12 @@ class JsEmitter {
       const body = this.emitBody(arm.body?.body ?? arm.body)
       if (!arm.pattern || arm.pattern.type === 'Wildcard') {
         return `{${body}break;}`
+      }
+      // Identifier binding pattern: always matches, introduces bound variable
+      if (arm.pattern.type === 'Identifier') {
+        const bindName = arm.pattern.name
+        _assertSafeIdent(bindName, 'match binding')
+        return `{const ${bindName}=${subj};${body}break;}`
       }
       const test = this.emitPattern(arm.pattern, subj)
       return `if(${test}){${body}break;}`

@@ -154,9 +154,10 @@ describe('HTML Emitter', () => {
       assert.ok(html.includes('aria-modal="true"'), `Expected aria-modal="true" in:\n${html}`)
     })
 
-    test('button with trigger becomes popovertarget', async () => {
+    test('button with trigger emits showModal onclick', async () => {
       const { html } = await compile('page "T"\n  button trigger="x" "Open"')
-      assert.ok(html.includes('popovertarget="x"'), `Expected popovertarget="x" in:\n${html}`)
+      assert.ok(html.includes('showModal'), `Expected showModal in:\n${html}`)
+      assert.ok(html.includes("'x'"), `Expected dialog id 'x' in:\n${html}`)
     })
   })
 

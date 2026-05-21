@@ -215,6 +215,9 @@ class Checker {
         if (bindExpr?.type === 'Identifier' && !declared.has(bindExpr.name)) {
           this.error(`bind:${key.slice(5)} references undeclared variable "${bindExpr.name}"`, node)
         }
+        if (bindExpr?.type === 'AtProperty' && !this.inWidget && bindExpr.name && !declared.has(bindExpr.name)) {
+          this.error(`bind:${key.slice(5)} references undeclared @state variable "@${bindExpr.name}"`, node)
+        }
       }
     }
 
@@ -255,13 +258,14 @@ class Checker {
         this.checkBody(stmt.consequent, declared, ctx)
         if (stmt.alternate) this.checkBody(stmt.alternate, declared, ctx)
         break
-      case 'ForStatement':
+      case 'ForStatement': {
         if (stmt.collection) this.checkExpr(stmt.collection, declared, ctx)
         const forScope = new Map(declared)
         if (stmt.itemName) forScope.set(stmt.itemName, 'ForVar')
         if (stmt.indexName) forScope.set(stmt.indexName, 'ForVar')
         this.checkBody(stmt.body, forScope, ctx)
         break
+      }
       case 'WhileStatement':
       case 'UntilStatement':
         this.checkExpr(stmt.condition, declared, ctx)

@@ -31,7 +31,12 @@ async function handleEdgeFunction(path: string, req: Request): Promise<Response>
   if (typeof fn !== 'function') return new Response('Edge function not found', { status: 404 })
   const cl = parseInt(req.headers.get('content-length') ?? '0', 10)
   if (cl > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
-  return await fn(req)
+  try {
+    return await fn(req)
+  } catch (e) {
+    console.error('[arc] edge function error:', e)
+    return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+  }
 }
 `
     : ''

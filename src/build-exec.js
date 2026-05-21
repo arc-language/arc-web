@@ -18,8 +18,6 @@ const ALLOWED_OBJ_METHODS = new Set([
   'push', 'pop', 'shift', 'unshift', 'splice', 'slice', 'concat', 'join',
   'sort', 'reverse', 'flat', 'flatMap', 'includes', 'indexOf', 'lastIndexOf',
   'trim', 'split', 'replace', 'toUpperCase', 'toLowerCase',
-  'getPosts', 'getPost', 'getPages', 'getPage', 'getItems', 'getItem',
-  'query', 'where', 'findOne', 'findAll', 'recent', 'limit', 'offset',
 ])
 
 class BuildExecutor {
@@ -90,6 +88,7 @@ class BuildExecutor {
         const key = expr.computed
           ? await this.evalExpr(expr.property, locals)
           : expr.property.name ?? expr.property.value
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') return undefined
         return obj[key]
       }
 
@@ -217,7 +216,6 @@ class BuildExecutor {
       case 'flatMap': return (await Promise.all(arr.map(item => typeof args[0] === 'function' ? args[0](item) : item))).flat()
       case 'reverse': return [...arr].reverse()
       case 'join':    return arr.join(args[0] ?? ',')
-      case 'length':  return arr.length
       case 'includes': return arr.includes(args[0])
       case 'indexOf': return arr.indexOf(args[0])
       default: throw new Error(`Array.${method} not supported at build time`)
@@ -291,6 +289,11 @@ class BuildExecutor {
     return new Promise((resolve, reject) => {
       const protocol = parsed.protocol === 'https:' ? https : http
       const req = protocol.get(url, (res) => {
+        // Reject redirects explicitly — following them could bypass the SSRF blocklist
+        if (res.statusCode >= 300 && res.statusCode < 400) {
+          res.resume()
+          return reject(new Error(`@build fetch: redirects not allowed (${res.statusCode}): ${url}`))
+        }
         if (res.statusCode < 200 || res.statusCode >= 300) {
           res.resume()
           return reject(new Error(`@build fetch: HTTP ${res.statusCode} from ${url}`))

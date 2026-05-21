@@ -76,6 +76,15 @@ fn matchRoute(pattern, path) {
   return { matched: true, params: extracted }
 }
 
+// Move focus to main content after navigation for screen reader users
+fn _focusMain() {
+  const main = document.querySelector("main, [role='main'], #main-content")
+  if main {
+    if !main.hasAttribute("tabindex") { main.setAttribute("tabindex", "-1") }
+    main.focus({ preventScroll: false })
+  }
+}
+
 // Navigate to a new path — updates URL and runs View Transition if available
 fn navigate(path) {
   unless path == _routerPath {
@@ -85,10 +94,12 @@ fn navigate(path) {
         history.pushState({}, "", path)
         _routerPath = path
         _routerTransitioning = false
+        _focusMain()
       })
     } else {
       history.pushState({}, "", path)
       _routerPath = path
+      _focusMain()
     }
   }
 }

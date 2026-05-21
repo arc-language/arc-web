@@ -167,6 +167,8 @@ fn createForm(schema) {
           // If handler throws { field: "message" }, show field errors
           if err && !err.message {
             errors = { ...errors, ...err }
+          } else if err {
+            errors = { ...errors, _form: err.message }
           }
         })
     }
@@ -205,7 +207,7 @@ widget Field
       type={ fieldType }
       value={ @form.getValue(@name) }
       placeholder={ @placeholder ?? "" }
-      aria-labelledby={"label-" + @name}
+      aria-labelledby={ @label ? "label-" + @name : none }
       aria-invalid={ isTouched && error ? "true" : "false" }
       aria-describedby={ isTouched && error ? "error-" + @name : none }
       on:input={ fn e => @form.setValue(@name, e.target.value) }
