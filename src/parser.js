@@ -7,6 +7,9 @@ const N = require('./ast')
 const _CSS_UNIT_RE = /^(px|em|rem|%|vh|vw|vmin|vmax|svh|dvh|ch|ex|fr|deg|rad|ms|s)$/
 const _CSS_NUM_RE = /^\d/
 
+// Hoisted to avoid per-rule object allocation in parseStyleRule
+const _PSEUDO_SHORTHANDS = Object.freeze({ hover: ':hover', focus: ':focus-visible', active: ':active', disabled: ':disabled', checked: ':checked', placeholder: '::placeholder' })
+
 class Parser {
   constructor(tokens, filename = '<input>') {
     this.tokens = tokens  // keep all tokens, handle newlines in context
@@ -352,11 +355,11 @@ class Parser {
 
     const body = this.parseTemplateBlock()
     // design can be inside the body block OR after it (both syntaxes supported)
+    // Design blocks are always the last node in a template body by syntax
     let design = null
-    const designIdx = body.findIndex(n => n?.type === 'DesignBlock')
-    if (designIdx >= 0) {
-      design = body[designIdx]
-      body.splice(designIdx, 1)
+    const lastNode = body[body.length - 1]
+    if (lastNode?.type === 'DesignBlock') {
+      design = body.pop()
     } else if (this.peekType() === T.DESIGN) {
       design = this.parseDesign()
     }
@@ -380,10 +383,9 @@ class Parser {
 
     const body = this.parseTemplateBlock()
     let design = null
-    const designIdx = body.findIndex(n => n?.type === 'DesignBlock')
-    if (designIdx >= 0) {
-      design = body[designIdx]
-      body.splice(designIdx, 1)
+    const lastPageNode = body[body.length - 1]
+    if (lastPageNode?.type === 'DesignBlock') {
+      design = body.pop()
     } else if (this.peekType() === T.DESIGN) {
       design = this.parseDesign()
     }
@@ -906,7 +908,6 @@ class Parser {
       // Property: name: value (name may be hyphenated: align-items, min-height, etc.)
       // Special case: hover/focus/active/disabled followed by { ... } → pseudo-class rule
       if (pt.type === T.IDENT) {
-        const PSEUDO_SHORTHANDS = { hover: ':hover', focus: ':focus-visible', active: ':active', disabled: ':disabled', checked: ':checked', placeholder: '::placeholder' }
         let propName = this.tokens[this.pos++].value
         // Consume hyphens in property names (align-items, min-height, background-color, etc.)
         while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.IDENT) {
@@ -916,7 +917,7 @@ class Parser {
         if (this.tokens[this.pos]?.type === T.COLON) {
           this.pos++
           // hover: { ... } / focus: { ... } → nested pseudo-class rule
-          if (PSEUDO_SHORTHANDS[propName] && this.tokens[this.pos]?.type === T.LBRACE) {
+          if (_PSEUDO_SHORTHANDS[propName] && this.tokens[this.pos]?.type === T.LBRACE) {
             this.pos++ // consume {
             const pseudoProps = []
             while (this.tokens[this.pos]?.type !== T.RBRACE && this.tokens[this.pos]?.type !== T.EOF) {
@@ -935,7 +936,7 @@ class Parser {
               } else this.pos++
             }
             this.eatIf(T.RBRACE)
-            children.push(N.StyleRule(PSEUDO_SHORTHANDS[propName], pseudoProps, [], pt.line))
+            children.push(N.StyleRule(_PSEUDO_SHORTHANDS[propName], pseudoProps, [], pt.line))
           } else {
             const value = this.parseStyleValue()
             props.push(N.StyleProp(propName, value, pt.line))
@@ -1294,7 +1295,8 @@ class Parser {
     let catchParam = null
     let catchBody = null
     if (this.eatIf(T.CATCH)) {
-      catchParam = this.eat(T.IDENT).value
+      // catch param is optional: `catch e { }` or `catch { }`
+      catchParam = this.peekType() === T.IDENT ? this.eat(T.IDENT).value : null
       catchBody = this.parseBlock()
     }
     this.consumeNewlines()

@@ -17,8 +17,10 @@
   "scripts": {
     "test": "node --test 'tests/**/*.test.js'",
     "test:coverage": "node --test --experimental-test-coverage 'tests/**/*.test.js'",
+    "lint": "node --check src/**/*.js adp/**/*.js",
     "build": "node src/cli.js build",
-    "dev": "node src/cli.js dev"
+    "dev": "node src/cli.js dev",
+    "start": "node src/cli.js dev"
   },
   "keywords": ["arc", "compiler", "web", "language"],
   "license": "MIT",

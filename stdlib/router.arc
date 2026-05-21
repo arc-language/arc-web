@@ -80,9 +80,26 @@ fn matchRoute(pattern, path) {
 fn _focusMain() {
   const main = document.querySelector("main, [role='main'], #main-content")
   if main {
-    if !main.hasAttribute("tabindex") { main.setAttribute("tabindex", "-1") }
+    const hadTabindex = main.hasAttribute("tabindex")
+    if !hadTabindex { main.setAttribute("tabindex", "-1") }
     main.focus({ preventScroll: false })
+    if !hadTabindex { main.removeAttribute("tabindex") }
   }
+}
+
+// Announce route changes to screen readers via an aria-live region
+fn _announceRoute(path) {
+  let region = document.getElementById("_arc_route_announce")
+  unless region {
+    region = document.createElement("div")
+    region.id = "_arc_route_announce"
+    region.setAttribute("aria-live", "polite")
+    region.setAttribute("aria-atomic", "true")
+    region.style.cssText = "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap"
+    document.body.appendChild(region)
+  }
+  region.textContent = ""
+  requestAnimationFrame(fn() { region.textContent = "Navigated to " + path })
 }
 
 // Navigate to a new path — updates URL and runs View Transition if available
@@ -95,11 +112,13 @@ fn navigate(path) {
         _routerPath = path
         _routerTransitioning = false
         _focusMain()
+        _announceRoute(path)
       })
     } else {
       history.pushState({}, "", path)
       _routerPath = path
       _focusMain()
+      _announceRoute(path)
     }
   }
 }
@@ -107,6 +126,7 @@ fn navigate(path) {
 // Handle browser back/forward buttons
 window.addEventListener("popstate", fn() {
   _routerPath = location.pathname
+  _focusMain()
 })
 
 // Router widget — renders the first matching route
@@ -133,7 +153,7 @@ widget Route
 // Link widget — renders <a> that uses router navigation instead of full page load
 widget Link
   // Attrs: href, class, (slot for children)
-  link href={ @href }
+  link href={ @href } aria-current={ @href == _routerPath ? "page" : "false" }
     on:click={ fn(e) {
       e.preventDefault()
       navigate(@href)

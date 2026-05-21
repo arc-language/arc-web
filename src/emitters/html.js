@@ -152,7 +152,7 @@ class HtmlEmitter {
       '<head>',
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
-      '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\';">',
+      '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'; object-src \'none\'; base-uri \'self\'; form-action \'self\';">',
       `<title>${this.escape(title)}</title>`,
       description ? `<meta name="description" content="${this.escape(description)}">` : '',
       `<meta property="og:title" content="${this.escape(title)}">`,
@@ -249,27 +249,21 @@ class HtmlEmitter {
       return this.emitTooltipAttr(node, String(tipText))
     }
 
-    // Handle bind:value two-way binding — give element an id and register bind
+    // Single pass: handle bind: and on: attrs together
     for (const [key, value] of Object.entries(attrs)) {
-      if (!key.startsWith('bind:')) continue
-      if (!id) id = this.getReactiveId(`bind_${tag}_${node.line}`)
-      const boundName = value?.type === 'Identifier' ? value.name
-        : value?.type === 'AtProperty' ? value.name
-        : (typeof value === 'string' ? value : null)
-      if (boundName) {
-        this.stateBindings.push({ id, expr: boundName, kind: 'bind', line: node.line })
+      if (key.startsWith('bind:')) {
+        if (!id) id = this.getReactiveId(`bind_${tag}_${node.line}`)
+        const boundName = value?.type === 'Identifier' ? value.name
+          : value?.type === 'AtProperty' ? value.name
+          : (typeof value === 'string' ? value : null)
+        if (boundName) {
+          this.stateBindings.push({ id, expr: boundName, kind: 'bind', line: node.line })
+        }
+      } else if (key.startsWith('on:')) {
+        if (!id) id = this.getReactiveId(`ev_${tag}_${node.line}`)
+        const event = key.slice(3)
+        this.eventBindings.push({ elementId: id, event, handler: value, line: node.line })
       }
-    }
-
-    // Collect event handlers — give element an id if it has on:event attrs
-    const hasEvents = Object.keys(attrs).some(k => k.startsWith('on:'))
-    if (hasEvents && !id) {
-      id = this.getReactiveId(`ev_${tag}_${node.line}`)
-    }
-    for (const [key, value] of Object.entries(attrs)) {
-      if (!key.startsWith('on:')) continue
-      const event = key.slice(3)
-      this.eventBindings.push({ elementId: id, event, handler: value, line: node.line })
     }
 
     const htmlTag = ELEMENT_MAP[tag] ?? tag

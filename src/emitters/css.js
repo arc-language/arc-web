@@ -280,7 +280,7 @@ class CssEmitter {
   }
 
   emitDesignBlock(block) {
-    return block.rules.map(rule => this.emitRule(rule)).filter(Boolean)
+    return (block.rules ?? []).map(rule => this.emitRule(rule)).filter(Boolean)
   }
 
   emitRule(rule) {
@@ -290,7 +290,7 @@ class CssEmitter {
   }
 
   emitStyleRule(rule) {
-    const { selector, props, children } = rule
+    const { selector, props, children = [] } = rule
 
     // Scope the selector
     const scopedSelector = this.scopeSelector(selector)
@@ -306,7 +306,7 @@ class CssEmitter {
           ? scopedSelector + c.selector
           : `${scopedSelector} ${this.scopeSelector(c.selector)}`
         const nestedDecls = this.emitProps(c.props)
-        const nestedChildren = c.children.map(cc => this.emitRule(cc)).filter(Boolean)
+        const nestedChildren = (c.children ?? []).map(cc => this.emitRule(cc)).filter(Boolean)
         const block = `${nestedSel} {\n  ${nestedDecls.join(';\n  ')}\n}${nestedChildren.length ? '\n' + nestedChildren.join('\n') : ''}`
         return block
       }

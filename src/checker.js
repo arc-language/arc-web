@@ -251,7 +251,7 @@ class Checker {
         if (stmt.value) this.checkExpr(stmt.value, declared, ctx)
         break
       case 'ExprStatement':
-        this.checkExpr(stmt.expression ?? stmt.expr, declared, ctx)
+        if (stmt.expr) this.checkExpr(stmt.expr, declared, ctx)
         break
       case 'IfStatement':
         this.checkExpr(stmt.condition, declared, ctx)
@@ -290,6 +290,20 @@ class Checker {
         }
         break
       }
+      case 'LoopStatement':
+        this.checkBody(stmt.body, declared, ctx)
+        break
+      case 'TryCatch':
+        this.checkBody(stmt.tryBody, declared, ctx)
+        if (stmt.catchBody) {
+          const catchScope = new Map(declared)
+          if (stmt.catchParam) catchScope.set(stmt.catchParam, 'CatchParam')
+          this.checkBody(stmt.catchBody, catchScope, ctx)
+        }
+        break
+      case 'FnDecl':
+        this.checkFnDecl(stmt, declared)
+        break
       case 'BreakStatement':
       case 'ContinueStatement':
         break
@@ -375,7 +389,7 @@ class Checker {
         }
         break
 
-      case 'ArrowFn':
+      case 'ArrowFn': {
         const arrowScope = new Map(declared)
         for (const p of expr.params ?? []) {
           const pname = p.name ?? p
@@ -383,6 +397,7 @@ class Checker {
         }
         this.checkExpr(expr.body, arrowScope, ctx)
         break
+      }
 
       case 'PipelineExpr':
         this.checkExpr(expr.left, declared, ctx)
@@ -418,12 +433,8 @@ class Checker {
         this.checkExpr(expr.end, declared, ctx)
         break
 
-      case 'SpreadExpr':
+      case 'SpreadElement':
         this.checkExpr(expr.argument, declared, ctx)
-        break
-
-      case 'TypeCheckExpr':
-        this.checkExpr(expr.value, declared, ctx)
         break
 
       // Literals — always valid

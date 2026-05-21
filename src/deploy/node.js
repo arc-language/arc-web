@@ -85,7 +85,7 @@ async function handleEdgeFunction(urlPath, req, res) {
     res.writeHead(status, headers)
     res.end(body)
   } catch (e) {
-    console.error('[arc] edge function error:', e)
+    console.error('[arc] edge function error:', e.message)
     res.writeHead(500, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'Internal server error' }))
   }
@@ -129,7 +129,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === '' || urlPath === '/') urlPath = '/'
   if (urlPath === '/_arc/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ status: 'ok' }))
+    res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }))
     return
   }
 ${edgeRoutingBlock}
@@ -137,6 +137,7 @@ ${edgeRoutingBlock}
   if (asset !== undefined) {
     res.writeHead(200, {
       'Content-Type': getContentType(urlPath),
+      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'SAMEORIGIN',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
@@ -155,6 +156,12 @@ server.listen(PORT, () => {
   console.log(\`arc: server running on http://localhost:\${PORT}\`)
 })
 server.on('error', e => { console.error('arc server error:', e.message); process.exit(1) })
+process.on('SIGTERM', () => {
+  server.close(err => {
+    if (err) console.error('arc: server close error:', err.message)
+    process.exit(err ? 1 : 0)
+  })
+})
 `
 
   return [

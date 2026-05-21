@@ -111,8 +111,6 @@ class EdgeRenderer {
       return { id: b.id, exprStr }
     })
 
-    const destructure = [...liveVarsUsed].join(', ')
-
     // Build a map of span id → replacement value, then do a single-pass regex replace
     // instead of O(N) replaceAll calls over the full HTML string
     const mapEntries = bindingExprs.map(({ id, exprStr }) =>
@@ -120,26 +118,45 @@ class EdgeRenderer {
     ).join('\n')
 
     const spanIds = bindingExprs.map(({ id }) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-    const regexSrc = spanIds.length > 0
-      ? `'<span id="(?:' + ${JSON.stringify(spanIds)} + ')" aria-live="polite"></\\\\/span>'`
-      : `'(?!)'`
 
-    return [
+    const cssInline = `  html = html.replace('<link rel="stylesheet" href="styles.css">', \`<style>\${BASE_CSS.replace(/<\\/style>/gi, '<\\/style>')}</style>\`)`
+    const jsInline = `  if (CLIENT_JS) html = html.replace('<script src="app.js"></script>', \`<script>\${CLIENT_JS.replace(/<\\/script>/gi, '<\\/script>')}</script>\`)`
+
+    const escFn = [
       `function _esc(s) {`,
       `  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')`,
       `}`,
       ``,
+    ].join('\n')
+
+    // Short-circuit: no @live bindings → skip regex entirely
+    if (bindingExprs.length === 0) {
+      return [
+        escFn,
+        `function _fillHtml(_data) {`,
+        `  let html = BASE_HTML`,
+        cssInline,
+        jsInline,
+        `  return html`,
+        `}`,
+        ``,
+      ].join('\n')
+    }
+
+    return [
+      escFn,
+      `const _SPAN_RE = new RegExp('<span id="(?:' + ${JSON.stringify(spanIds)} + ')" aria-live="polite"><\\/span>', 'g')`,
+      ``,
       `function _fillHtml(data) {`,
-      `  const { ${[...liveVarsUsed].filter(v => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(v)).map(v => `${v} = undefined`).join(', ')} } = data`,
+      `  const { ${[...liveVarsUsed].filter(v => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(v) && v !== '__proto__' && v !== 'constructor' && v !== 'prototype').map(v => `${v} = undefined`).join(', ')} } = data`,
       `  const _m = Object.create(null)`,
       mapEntries,
-      `  const _re = new RegExp(${regexSrc}, 'g')`,
-      `  let html = BASE_HTML.replace(_re, m => {`,
+      `  let html = BASE_HTML.replace(_SPAN_RE, m => {`,
       `    const id = m.match(/id="([^"]+)"/)?.[1]`,
       `    return id && id in _m ? _m[id] : m`,
       `  })`,
-      `  html = html.replace('<link rel="stylesheet" href="styles.css">', \`<style>\${BASE_CSS.replace(/<\\/style>/gi, '<\\/style>')}</style>\`)`,
-      `  if (CLIENT_JS) html = html.replace('<script src="app.js"></script>', \`<script>\${CLIENT_JS.replace(/<\\/script>/gi, '<\\/script>')}</script>\`)`,
+      cssInline,
+      jsInline,
       `  return html`,
       `}`,
       ``,

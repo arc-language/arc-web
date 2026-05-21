@@ -141,12 +141,14 @@ class BuildExecutor {
 
     // fetch(url) — HTTP/HTTPS request
     if (callee.type === 'Identifier' && callee.name === 'fetch') {
+      if (!expr.args || expr.args.length === 0) throw new Error('@build fetch: requires a URL argument')
       const url = await this.evalExpr(expr.args[0], locals)
       return this.doFetch(url)
     }
 
     // readFile(path) — local file read
     if (callee.type === 'Identifier' && callee.name === 'readFile') {
+      if (!expr.args || expr.args.length === 0) throw new Error('@build readFile: requires a path argument')
       const filePath = await this.evalExpr(expr.args[0], locals)
       return this.doReadFile(filePath)
     }
@@ -200,20 +202,30 @@ class BuildExecutor {
 
   async callArrayMethod(arr, method, args, locals) {
     switch (method) {
-      case 'map':     return Promise.all(arr.map(item => typeof args[0] === 'function' ? args[0](item) : item))
+      case 'map': {
+        if (typeof args[0] !== 'function') throw new Error('@build Array.map: callback must be a function')
+        return Promise.all(arr.map(item => args[0](item)))
+      }
       case 'filter': {
+        if (typeof args[0] !== 'function') throw new Error('@build Array.filter: callback must be a function')
         const results = []
         for (let i = 0; i < arr.length; i++) {
-          if (typeof args[0] === 'function' ? await args[0](arr[i]) : true) results.push(arr[i])
+          if (await args[0](arr[i])) results.push(arr[i])
         }
         return results
       }
-      case 'find':    for (const item of arr) { if (typeof args[0] === 'function' && await args[0](item)) return item } return undefined
+      case 'find': {
+        if (typeof args[0] !== 'function') throw new Error('@build Array.find: callback must be a function')
+        for (const item of arr) { if (await args[0](item)) return item } return undefined
+      }
       case 'sort':    return [...arr].sort(args[0])
       case 'slice':   return arr.slice(...args)
       case 'concat':  return arr.concat(...args)
       case 'flat':    return arr.flat(args[0] ?? 1)
-      case 'flatMap': return (await Promise.all(arr.map(item => typeof args[0] === 'function' ? args[0](item) : item))).flat()
+      case 'flatMap': {
+        if (typeof args[0] !== 'function') throw new Error('@build Array.flatMap: callback must be a function')
+        return (await Promise.all(arr.map(item => args[0](item)))).flat()
+      }
       case 'reverse': return [...arr].reverse()
       case 'join':    return arr.join(args[0] ?? ',')
       case 'includes': return arr.includes(args[0])

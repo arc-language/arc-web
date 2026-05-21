@@ -208,7 +208,7 @@ widget Field
       value={ @form.getValue(@name) }
       placeholder={ @placeholder ?? "" }
       aria-labelledby={ @label ? "label-" + @name : none }
-      aria-invalid={ isTouched && error ? "true" : "false" }
+      aria-invalid={ isTouched ? (error ? "true" : "false") : none }
       aria-describedby={"error-" + @name}
       on:input={ fn e => @form.setValue(@name, e.target.value) }
       on:blur={ fn() => @form.touch(@name) }
@@ -235,6 +235,7 @@ widget SubmitButton
     type="submit"
     disabled={ @form.isSubmitting }
     aria-busy={ @form.isSubmitting ? "true" : "false" }
+    aria-label={ @form.isSubmitting ? "Submitting, please wait" : none }
     class={ @form.isSubmitting ? "btn-submitting" : "" }
     slot
 

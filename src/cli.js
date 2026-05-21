@@ -562,16 +562,18 @@ async function dev(projectDir) {
   const server = http.createServer((req, res) => {
     if (req.url === '/_arc/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ status: 'ok', mode: 'dev' }))
+      res.end(JSON.stringify({ status: 'ok', mode: 'dev', uptime: process.uptime() }))
       return
     }
 
     if (req.url === '/_arc/reload') {
+      const origin = req.headers.origin ?? ''
+      const acao = /^https?:\/\/localhost(:\d+)?$/.test(origin) ? origin : 'http://localhost'
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': acao,
       })
       res.write('retry: 1000\n\n')
       reloadClients.add(res)
@@ -793,6 +795,10 @@ async function main() {
         process.exit(1)
       }
       const tmplIdx = args.indexOf('--template')
+      if (tmplIdx !== -1 && !args[tmplIdx + 1]) {
+        console.error('arc: --template requires a value (default|counter|blog)')
+        process.exit(1)
+      }
       const template = tmplIdx !== -1 ? args[tmplIdx + 1] : 'default'
       newProject(args[0], template)
       break
@@ -831,7 +837,11 @@ async function main() {
 if (require.main === module) {
   main().catch(e => {
     console.error(`arc: fatal: ${e.message}`)
-    if (process.env.ARC_DEBUG) console.error(e.stack)
+    if (process.env.ARC_DEBUG) {
+      console.error(e.stack)
+    } else {
+      console.error('arc: set ARC_DEBUG=1 for a full stack trace')
+    }
     process.exit(1)
   })
 }

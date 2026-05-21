@@ -17,6 +17,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+          cache: 'npm'
       - name: Install dependencies
         run: npm ci
       - name: Audit dependencies
@@ -26,7 +27,7 @@ jobs:
       - name: Run tests
         run: node --test tests/**/*.test.js
       - name: Test coverage
-        run: node --test --experimental-test-coverage tests/**/*.test.js
+        run: node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=70 tests/**/*.test.js
         if: matrix.node == 22
       - name: Build smoke test
         run: node src/cli.js build examples/counter

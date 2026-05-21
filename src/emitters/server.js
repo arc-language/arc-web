@@ -102,7 +102,9 @@ class ServerEmitter {
     const SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
     if (!SAFE_IDENT.test(fn.name)) throw new Error(`Arc codegen: unsafe @server fn name: ${JSON.stringify(fn.name)}`)
     const params = (fn.params ?? []).map(p => p.name ?? p).join(', ')
-    const body = this.jsEmitter.emitBody(fn.body?.body ?? fn.body)
+    const body = fn.body?.type === 'BlockStatement'
+      ? this.jsEmitter.emitBody(fn.body.body)
+      : fn.body ? `return ${this.jsEmitter.emitExpr(fn.body)};` : ''
     // Extract only own-property values to prevent prototype pollution via destructuring
     const paramExtract = (fn.params ?? []).map(p => {
       const name = p.name ?? p
