@@ -21,5 +21,13 @@ jobs:
         run: npm ci
       - name: Audit dependencies
         run: npm audit --audit-level=high
+      - name: Lint (syntax check)
+        run: node --check src/**/*.js adp/**/*.js
       - name: Run tests
         run: node --test tests/**/*.test.js
+      - name: Test coverage
+        run: node --test --experimental-test-coverage tests/**/*.test.js
+        if: matrix.node == 22
+      - name: Build smoke test
+        run: node src/cli.js build examples/counter
+        if: matrix.node == 22

@@ -72,7 +72,7 @@ class Encoder {
     }
 
     if (typeof val === 'object') {
-      const keys = Object.keys(val)
+      const keys = Object.keys(val).filter(k => k !== '__proto__' && k !== 'constructor' && k !== 'prototype')
       this.buf.push(TAG.OBJECT)
       this.writeVarInt(keys.length)
       for (const key of keys) {

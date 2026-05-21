@@ -129,12 +129,22 @@ class HtmlEmitter {
     const lang = node.meta?.lang ? this.evalStaticExpr(node.meta.lang) : 'en'
     const description = node.meta?.description ? this.evalStaticExpr(node.meta.description) : ''
 
-    const bodyContent = this.emitChildren(node.body)
-
     // Don't double-wrap if the page already has a top-level <main>
     const hasUserMain = (node.body ?? []).some(
       n => n.type === 'Element' && (n.tag === 'main' || n.attrs?.role === 'main')
     )
+
+    // Ensure skip link target exists: inject id="main-content" on user's <main> if not already set
+    const bodyNodes = hasUserMain
+      ? (node.body ?? []).map(n => {
+          if (n.type === 'Element' && (n.tag === 'main' || n.attrs?.role === 'main') && !n.id && !n.attrs?.id) {
+            return { ...n, id: 'main-content' }
+          }
+          return n
+        })
+      : (node.body ?? [])
+
+    const bodyContent = this.emitChildren(bodyNodes)
 
     return [
       '<!DOCTYPE html>',
@@ -219,7 +229,7 @@ class HtmlEmitter {
   }
 
   emitElement(node) {
-    const { tag, classes, attrs, children } = node
+    const { tag, classes = [], attrs = {}, children = [] } = node
     let { id } = node
 
     // Widget invocation — inline the widget body with bound attrs
@@ -326,6 +336,14 @@ class HtmlEmitter {
       if (value === true) {
         parts.push(this.escape(key))
       } else if (value !== false && value !== undefined) {
+        // Block dangerous URI schemes in URL attributes
+        if (key === 'href' || key === 'src' || key === 'action' || key === 'formaction') {
+          const strVal = String(value).replace(/[\t\n\r ]/g, '').toLowerCase()
+          if (strVal.startsWith('javascript:') || strVal.startsWith('data:') || strVal.startsWith('vbscript:')) {
+            parts.push(`${this.escape(key)}="#"`)
+            continue
+          }
+        }
         parts.push(`${this.escape(key)}="${this.escape(String(value))}"`)
       }
     }
@@ -429,12 +447,12 @@ class HtmlEmitter {
   }
 
   emitUnless(node) {
-    // unless X = if !X
+    // unless X = if !X (UnlessNode has 'body', not 'consequent')
     return this.emitIf({
       ...node,
       type: 'IfNode',
       condition: { type: 'UnaryExpr', op: '!', operand: node.condition },
-      consequent: node.consequent,
+      consequent: node.consequent ?? node.body,
       alternate: null,
     })
   }

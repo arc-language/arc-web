@@ -53,8 +53,8 @@ class BuildExecutor {
 
       case 'Identifier': {
         const name = expr.name
-        if (name in locals) return locals[name]
-        if (name in this.context) return this.context[name]
+        if (Object.prototype.hasOwnProperty.call(locals, name)) return locals[name]
+        if (Object.prototype.hasOwnProperty.call(this.context, name)) return this.context[name]
         throw new Error(`Undefined identifier: ${name}`)
       }
 
@@ -271,6 +271,7 @@ class BuildExecutor {
     // Block IPv4 private/loopback/unspecified ranges
     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
         hostname === '100.100.100.200' || // Alibaba Cloud instance metadata
+        hostname === 'metadata.google.internal' || hostname === 'metadata.goog' || // GCP instance metadata
         hostname.startsWith('169.254.') || hostname.startsWith('10.') ||
         hostname.startsWith('192.168.') || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
       throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)

@@ -163,7 +163,7 @@ class JsEmitter {
         throw new Error(`Arc codegen: bind:value only supports simple state variable names, got: ${JSON.stringify(b.expr)}`)
       }
       parts.push(
-        `(function(){const _be=document.getElementById('${b.id}');if(!_be)return;` +
+        `(function(){const _be=_el_${b.id};if(!_be)return;` +
         `const _bevt=_be.tagName==='SELECT'||_be.type==='checkbox'||_be.type==='radio'?'change':'input';` +
         `_be.addEventListener(_bevt,function(e){` +
         `const _bv=_be.type==='checkbox'||_be.type==='radio'?e.target.checked:_be.type==='number'?parseFloat(e.target.value):e.target.value;` +
@@ -350,7 +350,7 @@ class JsEmitter {
 
       case 'TemplateLiteral':
         return '`' + expr.parts.map(p => {
-          if (p.type === 'Literal') return p.value
+          if (p.type === 'Literal') return String(p.value).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$')
           return `\${${this.emitExpr(p)}}`
         }).join('') + '`'
 
@@ -380,10 +380,10 @@ class JsEmitter {
         if (expr.computed) {
           return `${this.emitExpr(expr.object)}[${this.emitExpr(expr.property)}]`
         }
-        return `${this.emitExpr(expr.object)}.${this.emitExpr(expr.property)}`
+        return `${this.emitExpr(expr.object)}.${expr.property.name ?? expr.property.value}`
 
       case 'OptionalChain':
-        return `${this.emitExpr(expr.object)}?.${this.emitExpr(expr.property)}`
+        return `${this.emitExpr(expr.object)}?.${expr.property.name ?? expr.property.value}`
 
       case 'NullCoalesce':
         return `(${this.emitExpr(expr.left)}??${this.emitExpr(expr.right)})`
@@ -553,8 +553,11 @@ class JsEmitter {
     if (!stmt) return ''
 
     switch (stmt.type) {
-      case 'VarDecl':
-        return `${stmt.kind} ${stmt.name}=${this.emitExpr(stmt.init)};`
+      case 'VarDecl': {
+        _assertSafeIdent(stmt.name, 'var decl name')
+        const kind = stmt.kind === 'let' ? 'let' : 'const'
+        return `${kind} ${stmt.name}=${this.emitExpr(stmt.init)};`
+      }
 
       case 'ExprStatement':
         return `${this.emitExpr(stmt.expr)};`

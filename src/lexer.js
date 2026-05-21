@@ -2,6 +2,9 @@
 
 const { T, KEYWORDS, Token } = require('./tokens')
 
+// String escape sequences — hoisted to avoid per-character object allocation
+const _STR_ESCAPES = { n: '\n', t: '\t', r: '\r', '\\': '\\', '"': '"', "'": "'", '{': '{' }
+
 // Lexer modes — Arc has three syntactic regions
 const MODE = {
   TOP: 'TOP',           // top-level: imports, @annotations, widget/page declarations
@@ -88,8 +91,7 @@ class Lexer {
       if (ch === '\\') {
         this.advance()
         const esc = this.advance()
-        const escapes = { n: '\n', t: '\t', r: '\r', '\\': '\\', '"': '"', "'": "'", '{': '{' }
-        value += escapes[esc] ?? esc
+        value += _STR_ESCAPES[esc] ?? esc
         continue
       }
 

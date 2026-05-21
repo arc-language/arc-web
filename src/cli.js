@@ -211,10 +211,11 @@ const RESET  = process.stderr.isTTY ? '\x1b[0m'  : ''
 
 function formatError(e, source, filename) {
   const msg = e.message ?? String(e)
+  const filePrefix = filename ? `${path.relative(process.cwd(), filename)}: ` : ''
   // Each line of the message may be a separate error (from checker)
   const lines = msg.split('\n').filter(Boolean)
   for (const line of lines) {
-    console.error(`${RED}error${RESET}: ${line}`)
+    console.error(`${RED}error${RESET}: ${filePrefix}${line}`)
     // Try to extract line number from "file:line:col: message" format
     const m = line.match(/:(\d+)(?::(\d+))?:/)
     if (m && source) {
@@ -559,6 +560,12 @@ async function dev(projectDir) {
 
   // HTTP server: serves dist/ and handles /_arc/reload SSE
   const server = http.createServer((req, res) => {
+    if (req.url === '/_arc/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ status: 'ok', mode: 'dev' }))
+      return
+    }
+
     if (req.url === '/_arc/reload') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -627,7 +634,8 @@ async function dev(projectDir) {
         html = html.replace('</body>', `${RELOAD_SCRIPT}\n</body>`)
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
         res.end(html)
-      } catch {
+      } catch (fallbackErr) {
+        console.error(`arc: dev: SPA fallback failed: ${fallbackErr.message}`)
         res.writeHead(404)
         res.end('Not found')
       }
@@ -669,12 +677,14 @@ async function dev(projectDir) {
         _building = true
         _pendingRebuild = false
         console.log(`arc: ${changedFile} changed, rebuilding...`)
+        const _t0 = Date.now()
         try {
           await build(projectDir)
+          const _dur = Date.now() - _t0
           for (const client of [...reloadClients]) {
             try { client.write('data: reload\n\n') } catch { reloadClients.delete(client) }
           }
-          console.log(`arc: reload → ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''}`)
+          console.log(`arc: rebuilt in ${_dur}ms → reload sent to ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''}`)
         } catch (e) {
           try { formatError(e, null, changedFile) } catch (e2) { console.error(e2) }
         } finally {

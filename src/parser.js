@@ -3,6 +3,10 @@
 const { T, STRUCTURE_ELEMENTS } = require('./tokens')
 const N = require('./ast')
 
+// Hoisted regexes used in parseStyleValue — avoids per-token allocation
+const _CSS_UNIT_RE = /^(px|em|rem|%|vh|vw|vmin|vmax|svh|dvh|ch|ex|fr|deg|rad|ms|s)$/
+const _CSS_NUM_RE = /^\d/
+
 class Parser {
   constructor(tokens, filename = '<input>') {
     this.tokens = tokens  // keep all tokens, handle newlines in context
@@ -1058,8 +1062,8 @@ class Parser {
       const prev = parts[parts.length - 1]
       const val = String(t.value ?? t.type)
       // Attach unit suffix (px, em, rem, %, vh, vw, etc.) directly to preceding number
-      const isUnit = /^(px|em|rem|%|vh|vw|vmin|vmax|svh|dvh|ch|ex|fr|deg|rad|ms|s)$/.test(val)
-      const prevIsNum = prev !== undefined && /^\d/.test(prev)
+      const isUnit = _CSS_UNIT_RE.test(val)
+      const prevIsNum = prev !== undefined && _CSS_NUM_RE.test(prev)
       if (isUnit && prevIsNum) {
         parts[parts.length - 1] = prev + val
       } else {
@@ -1352,7 +1356,7 @@ class Parser {
     if (t.type === T.LBRACE) {
       this.pos++
       const pairs = []
-      while (this.tokens[this.pos]?.type !== T.RBRACE) {
+      while (this.tokens[this.pos]?.type !== T.RBRACE && this.tokens[this.pos]?.type !== T.EOF && this.pos < this.tokens.length - 1) {
         const key = this.eat(T.IDENT).value
         const val = this.eatIf(T.COLON) ? this.eat(T.IDENT).value : key
         pairs.push({ key, val })

@@ -127,6 +127,11 @@ ${edgeFunctionsBlock}
 const server = http.createServer(async (req, res) => {
   let urlPath = (req.url || '/').split('?')[0]
   if (urlPath === '' || urlPath === '/') urlPath = '/'
+  if (urlPath === '/_arc/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ status: 'ok' }))
+    return
+  }
 ${edgeRoutingBlock}
   const asset = ASSETS[urlPath]
   if (asset !== undefined) {
@@ -149,7 +154,7 @@ const PORT = (Number.isInteger(_rawPort) && _rawPort > 0 && _rawPort < 65536) ? 
 server.listen(PORT, () => {
   console.log(\`arc: server running on http://localhost:\${PORT}\`)
 })
-server.on('error', e => { console.error('arc server error:', e.message) })
+server.on('error', e => { console.error('arc server error:', e.message); process.exit(1) })
 `
 
   return [
