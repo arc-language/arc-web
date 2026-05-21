@@ -279,23 +279,70 @@ class JsEmitter {
       ? `return \`${b.bodyTemplate ?? ''}\``
       : `return ${JSON.stringify(b.bodyTemplate ?? '')}.replace(/\\bid="([^"]+)"/g,function(_,id){return 'id="'+id+'_'+${idx}+'"'})`
 
+    const renderFn = `function _renderItem(${item},${idx}){${tplFnBody}}`
+
+    if (b.keyExpr) {
+      // Keyed reconciliation — preserves focus, scroll, and input state for unchanged items
+      return [
+        `(function(){`,
+        escHelper,
+        renderFn,
+        `const _items=${items};`,
+        `if(!Array.isArray(_items)){${el}.innerHTML='';return;}`,
+        // Save focused element id before mutation
+        `const _fa=document.activeElement;const _fid=_fa&&${el}.contains(_fa)?_fa.id:null;`,
+        // Build key→node map from current DOM
+        `const _km=new Map();`,
+        `for(let _c=${el}.firstElementChild;_c;_c=_c.nextElementSibling){`,
+        `  const _k=_c.dataset&&_c.dataset.arcKey;if(_k!==undefined)_km.set(_k,_c);`,
+        `}`,
+        // Render and reconcile
+        `const _kept=new Set();`,
+        `const _newNodes=_items.map(function(${item},${idx}){`,
+        `  const _k=String((${item}&&${item}.key)!=null?(${item}).key:${idx});`,
+        `  const _html=_renderItem(${item},${idx});`,
+        `  if(_km.has(_k)){`,
+        `    const _ex=_km.get(_k);_kept.add(_k);`,
+        `    const _tmp=document.createElement('div');_tmp.innerHTML=_html;`,
+        `    const _nn=_tmp.firstChild;`,
+        `    if(_nn&&_ex.outerHTML!==_nn.outerHTML)_ex.replaceWith(_nn);`,
+        `    return _km.has(_k)?_ex:_nn;`,
+        `  }`,
+        `  const _tmp=document.createElement('div');_tmp.innerHTML=_html;`,
+        `  return _tmp.firstChild;`,
+        `});`,
+        // Remove old nodes not in new set
+        `for(const[_k,_n]of _km){if(!_kept.has(_k)&&_n.parentNode)_n.parentNode.removeChild(_n);}`,
+        // Append/reorder to match new order
+        `_newNodes.forEach(function(_n,_i){`,
+        `  const _cur=${el}.children[_i];if(_cur!==_n)${el}.insertBefore(_n,_cur||null);`,
+        `});`,
+        // Restore focus
+        `if(_fid){const _fe=document.getElementById(_fid);if(_fe)_fe.focus({preventScroll:true});}`,
+        `})();`,
+      ].join('\n')
+    }
+
+    // Non-keyed update — small lists use individual node replacement, large use innerHTML batch
+    // Focus within the list is restored after update
     return [
       `(function(){`,
       escHelper,
+      renderFn,
       `const _items=${items};`,
       `if(!Array.isArray(_items)){${el}.innerHTML='';return;}`,
-      // Small lists: individual nodes (minimal reflow)
-      // Large lists: innerHTML batch (single reflow)
+      `const _fa=document.activeElement;const _fid=_fa&&${el}.contains(_fa)?_fa.id:null;`,
       `if(_items.length<=20){`,
       `  while(${el}.firstChild)${el}.removeChild(${el}.firstChild);`,
       `  _items.forEach(function(${item},${idx}){`,
       `    const _d=document.createElement('div');`,
-      `    _d.innerHTML=(function(${item},${idx}){${tplFnBody}})(${item},${idx});`,
+      `    _d.innerHTML=_renderItem(${item},${idx});`,
       `    while(_d.firstChild)${el}.appendChild(_d.firstChild);`,
       `  });`,
       `}else{`,
-      `  ${el}.innerHTML=_items.map(function(${item},${idx}){${tplFnBody}}).join('');`,
+      `  ${el}.innerHTML=_items.map(function(${item},${idx}){return _renderItem(${item},${idx});}).join('');`,
       `}`,
+      `if(_fid){const _fe=document.getElementById(_fid);if(_fe)_fe.focus({preventScroll:true});}`,
       `})();`,
     ].join('\n')
   }
@@ -643,17 +690,18 @@ class JsEmitter {
     const arms = (stmt.arms ?? []).map(arm => {
       const body = this.emitBody(arm.body?.body ?? arm.body)
       if (!arm.pattern || arm.pattern.type === 'Wildcard') {
-        return `{${body}break;}`
+        return `{${body}}`
       }
       // Identifier binding pattern: always matches, introduces bound variable
       if (arm.pattern.type === 'Identifier') {
         const bindName = arm.pattern.name
         _assertSafeIdent(bindName, 'match binding')
-        return `{const ${bindName}=${subj};${body}break;}`
+        return `{const ${bindName}=${subj};${body}}`
       }
       const test = this.emitPattern(arm.pattern, subj)
-      return `if(${test}){${body}break;}`
+      return `if(${test}){${body}}`
     })
+    // Last arm without condition becomes else{body}; conditional arms chain with else if
     return `{const ${subj}=${cond};${arms.join('else ')}}`
   }
 

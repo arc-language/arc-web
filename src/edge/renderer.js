@@ -61,7 +61,7 @@ class EdgeRenderer {
     parts.push(this.emitHtmlFiller(liveBindings))
 
     // Emit WinterCG fetch handler
-    parts.push(this.emitFetchHandler(baseCss, clientJs))
+    parts.push(this.emitFetchHandler())
 
     return parts.join('\n')
   }
@@ -104,7 +104,9 @@ class EdgeRenderer {
     const liveVarsUsed = new Set()
     const bindingExprs = liveBindings.map(b => {
       const exprStr = b.expr
-      const m = exprStr.match(/^([a-z_][a-z0-9_]*)\b/i)
+      // Strip leading @ for AtProperty expressions before extracting the var name
+      const raw = exprStr.replace(/^@/, '')
+      const m = raw.match(/^([a-z_][a-z0-9_]*)\b/i)
       if (m) liveVarsUsed.add(m[1])
       return { id: b.id, exprStr }
     })
@@ -117,7 +119,7 @@ class EdgeRenderer {
       `  _m['${id}'] = _esc(String(${exprStr} ?? ''))`
     ).join('\n')
 
-    const spanIds = bindingExprs.map(({ id }) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&')).join('|')
+    const spanIds = bindingExprs.map(({ id }) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
     const regexSrc = spanIds.length > 0
       ? `'<span id="(?:' + ${JSON.stringify(spanIds)} + ')" aria-live="polite"></\\\\/span>'`
       : `'(?!)'`
@@ -128,7 +130,7 @@ class EdgeRenderer {
       `}`,
       ``,
       `function _fillHtml(data) {`,
-      `  const { ${[...liveVarsUsed].map(v => `${v} = undefined`).join(', ')} } = data`,
+      `  const { ${[...liveVarsUsed].filter(v => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(v)).map(v => `${v} = undefined`).join(', ')} } = data`,
       `  const _m = Object.create(null)`,
       mapEntries,
       `  const _re = new RegExp(${regexSrc}, 'g')`,
@@ -144,7 +146,7 @@ class EdgeRenderer {
     ].join('\n')
   }
 
-  emitFetchHandler(_baseCss, _clientJs) {  // args unused — values already embedded via JSON.stringify above
+  emitFetchHandler() {
     return [
       `// WinterCG fetch handler (Cloudflare Workers / Deno Deploy / Bun)`,
       `export default {`,

@@ -1,5 +1,5 @@
 // Arc Form — validated forms with field-level errors
-// Usage: import { createForm, Field, FormError } from "arc/form"
+// Usage: import { createForm, Field, SubmitButton, FormError } from "arc/form"
 //
 // Example:
 //   const loginForm = createForm({
@@ -10,7 +10,7 @@
 //   form on:submit={ loginForm.submit(fn values => doLogin(values)) }
 //     Field form={ loginForm } name="email" label="Email"
 //     Field form={ loginForm } name="password" label="Password" type="password"
-//     button type="submit" "Log in"
+//     SubmitButton form={ loginForm } "Log in"
 
 // Validators — pure functions, return error string or none
 fn _required(value) {
@@ -209,12 +209,11 @@ widget Field
       placeholder={ @placeholder ?? "" }
       aria-labelledby={ @label ? "label-" + @name : none }
       aria-invalid={ isTouched && error ? "true" : "false" }
-      aria-describedby={ isTouched && error ? "error-" + @name : none }
+      aria-describedby={"error-" + @name}
       on:input={ fn e => @form.setValue(@name, e.target.value) }
       on:blur={ fn() => @form.touch(@name) }
       class={ isTouched && error ? "field-error" : "" }
-    if isTouched && error
-      span id={"error-" + @name} class="field-error-msg" role="alert" "{error}"
+    span id={"error-" + @name} class="field-error-msg" role="alert" aria-live="polite" "{isTouched && error ? error : ""}"
 
   design
     .field-label
@@ -223,10 +222,26 @@ widget Field
       fg: #374151
     .field-error-msg
       size: 12px
-      fg: #dc2626
+      fg: #b91c1c
     input.field-error
-      border: 1px #dc2626
-      outline-color: #dc2626
+      border: 1px #b91c1c
+      outline-color: #b91c1c
+
+// SubmitButton widget — submit button that auto-disables during submission
+// Usage: SubmitButton form={ loginForm } "Log in"
+widget SubmitButton
+  // Attrs: form (handle from createForm), (slot for children)
+  button
+    type="submit"
+    disabled={ @form.isSubmitting }
+    aria-busy={ @form.isSubmitting ? "true" : "false" }
+    class={ @form.isSubmitting ? "btn-submitting" : "" }
+    slot
+
+  design
+    .btn-submitting
+      opacity: 0.6
+      cursor: not-allowed
 
 // FormError widget — shows a top-level form error message
 widget FormError

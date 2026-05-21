@@ -13,34 +13,25 @@ class Parser {
     this.pos = 0
     this.filename = filename
     this.hoistedDecls = []  // @state/@computed/@build found inside templates
-    this._peekCache = new Map()  // (pos << 8 | offset) → token, avoids O(n) scan per call
+
+    // Pre-compute non-whitespace token array for O(1) peek().
+    // _nwsTokens[i] is the i-th significant (non-WS) token.
+    // _nwsAt[rawPos] maps each raw token position to its index in _nwsTokens.
+    this._nwsTokens = tokens.filter(t => t.type !== T.NEWLINE && t.type !== T.INDENT && t.type !== T.DEDENT)
+    this._nwsAt = new Int32Array(tokens.length + 1)
+    let _nwsIdx = 0
+    for (let _i = 0; _i < tokens.length; _i++) {
+      this._nwsAt[_i] = _nwsIdx
+      if (tokens[_i].type !== T.NEWLINE && tokens[_i].type !== T.INDENT && tokens[_i].type !== T.DEDENT) _nwsIdx++
+    }
+    this._nwsAt[tokens.length] = _nwsIdx
   }
 
   // ── Utilities ──────────────────────────────────────────────────────────────
 
   peek(offset = 0) {
-    const key = (this.pos << 8) | offset
-    const cached = this._peekCache.get(key)
-    if (cached !== undefined) return cached
-
-    let i = this.pos
-    let count = 0
-    while (i < this.tokens.length) {
-      const t = this.tokens[i]
-      if (t.type === T.NEWLINE || t.type === T.INDENT || t.type === T.DEDENT) {
-        i++
-        continue
-      }
-      if (count === offset) {
-        this._peekCache.set(key, t)
-        return t
-      }
-      count++
-      i++
-    }
-    const eof = this.tokens[this.tokens.length - 1]
-    this._peekCache.set(key, eof)
-    return eof
+    const nwsIdx = this._nwsAt[Math.min(this.pos, this.tokens.length)] + offset
+    return this._nwsTokens[nwsIdx] ?? this._nwsTokens[this._nwsTokens.length - 1]
   }
 
   peekRaw(offset = 0) {
@@ -54,7 +45,6 @@ class Parser {
   advance() {
     const t = this.tokens[this.pos]
     if (this.pos < this.tokens.length - 1) this.pos++
-    this._peekCache.clear()
     return t
   }
 
@@ -90,7 +80,6 @@ class Parser {
         this.pos++
       }
       this.pos++
-      this._peekCache.clear()
       return p
     }
     return null
@@ -103,14 +92,12 @@ class Parser {
       this.error(msg ?? `Expected ${type}, got ${t.type} (${JSON.stringify(t.value)})`, t)
     }
     this.pos++
-    this._peekCache.clear()
     return t
   }
 
   eatIf(type) {
     this.skipWhitespace()
     if (this.tokens[this.pos]?.type === type) {
-      this._peekCache.clear()
       return this.tokens[this.pos++]
     }
     return null

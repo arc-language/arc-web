@@ -474,8 +474,14 @@ class HtmlEmitter {
 
     // Reactive for — emit a container, JS will manage children
     const listId = this.getReactiveId(`list_${collStr}`)
+
+    // Extract key= attr from first body node (for keyed diffing)
+    const firstChild = node.body?.[0]
+    const keyAttr = (firstChild?.type === 'Element') ? firstChild.attrs?.key : null
+    const keyExpr = keyAttr ? this.exprToString(keyAttr) : null
+
     // Emit body as a JS template-literal source with item expressions inlined
-    const bodyTpl = this.emitForBodyTemplate(node.body, node.itemName ?? 'item', node.indexName ?? 'i')
+    const bodyTpl = this.emitForBodyTemplate(node.body, node.itemName ?? 'item', node.indexName ?? 'i', keyExpr)
     this.stateBindings.push({
       id: listId,
       expr: collStr,
@@ -484,6 +490,7 @@ class HtmlEmitter {
       indexName: node.indexName,
       bodyTemplate: bodyTpl,
       bodyIsTemplate: true,
+      keyExpr,
       line: node.line
     })
 
@@ -498,15 +505,32 @@ class HtmlEmitter {
 
   // Emit a for-loop body as a JS template-literal source string.
   // Item property expressions are inlined as ${_esc(item.field)} — no global reactive spans needed.
-  emitForBodyTemplate(bodyNodes, itemName, indexName) {
+  // When keyExpr is provided, strips key= from the root element and injects data-arc-key instead.
+  emitForBodyTemplate(bodyNodes, itemName, indexName, keyExpr) {
     const prev = this._forItemName
     this._forItemName = itemName
     this._forIndexName = indexName
     this._inForTemplate = true
-    const html = this.emitChildren(bodyNodes)
+
+    // Strip key= from root element attrs before emitting, then inject data-arc-key
+    let nodes = bodyNodes
+    if (keyExpr && bodyNodes?.[0]?.type === 'Element' && bodyNodes[0].attrs?.key) {
+      const { key: _k, ...rest } = bodyNodes[0].attrs
+      nodes = [{ ...bodyNodes[0], attrs: rest }, ...bodyNodes.slice(1)]
+    }
+
+    let html = this.emitChildren(nodes)
     this._inForTemplate = false
     this._forItemName = prev
     this._forIndexName = undefined
+
+    // Inject data-arc-key on the root element when key= was specified
+    if (keyExpr) {
+      const keyVal = `\${_esc(String(${keyExpr}??''))}`
+      // Insert data-arc-key after the first tag opening (e.g., <div class="..." → <div data-arc-key="..." class="...")
+      html = html.replace(/^(<\w[^>]*)>/, `$1 data-arc-key="${keyVal}">`)
+    }
+
     // Escape backticks and bare $ in the static HTML portions, then return as template-literal source
     return html.replace(/`/g, '\\`').replace(/\$(?!\{)/g, '\\$')
   }
