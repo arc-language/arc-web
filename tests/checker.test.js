@@ -549,6 +549,228 @@ page "T"
   })
 })
 
+describe('Checker — direct AST construction for dead-code path coverage', () => {
+  const { Checker } = require('../src/checker')
+  const N = require('../src/ast')
+
+  test('Scope.get walks up parent chain when key not in own', () => {
+    // Test the Scope class directly
+    const checker = new Checker('test')
+    // Build nested scopes through checkBody indirectly
+    const program = N.Program([], [
+      N.ServerFn('fn1', [N.Param('x', null, null, false, 0)], null,
+        { type: 'BlockStatement', body: [
+          // Reading x from outer scope inside an inner block
+          N.ExprStatement(N.Identifier('x', 0), 0)
+        ], line: 0 }, 0),
+      N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+    ], 0)
+    const result = checker.check(program)
+    assert.equal(result.errors.length, 0)
+  })
+
+  test('checkStmt with BlockStatement at statement level', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.ServerFn('fn1', [], null, {
+          type: 'BlockStatement',
+          body: [
+            // Inner BlockStatement
+            { type: 'BlockStatement', body: [
+              N.ExprStatement(N.Identifier('undefinedVar', 0), 0)
+            ], line: 0 }
+          ],
+          line: 0
+        }, 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    // Should report undefinedVar
+    assert.ok(result.errors.some(e => e.message.includes('undefinedVar')),
+      `Expected undefinedVar error: ${result.errors.map(e => e.message).join(', ')}`)
+  })
+
+  test('checkStmt with ThrowExpr directly in body checks argument', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.ServerFn('fn1', [], null, {
+          type: 'BlockStatement',
+          body: [
+            // ThrowExpr directly as a statement (not wrapped in ExprStatement)
+            { type: 'ThrowExpr', argument: N.Identifier('undeclaredErr', 0), line: 0 }
+          ],
+          line: 0
+        }, 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.ok(result.errors.some(e => e.message.includes('undeclaredErr')),
+      `Expected undeclaredErr error: ${result.errors.map(e => e.message).join(', ')}`)
+  })
+
+  test('checkStmt with nested FnDecl declares the name in scope', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.ServerFn('outer', [], null, {
+          type: 'BlockStatement',
+          body: [
+            N.FnDecl('inner', [N.Param('a', null, null, false, 0)], null,
+              { type: 'BlockStatement', body: [
+                N.ReturnStatement(N.Identifier('a', 0), 0)
+              ], line: 0 }, false, 0)
+          ],
+          line: 0
+        }, 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.equal(result.errors.length, 0,
+      `Expected no errors, got: ${result.errors.map(e => e.message).join(', ')}`)
+  })
+
+  test('checkWidget creates scope for widget params', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.WidgetDecl('Card', [N.Param('title', null, null, false, 0)], [
+          // body using @title (widget attr) — should not error in widget
+          N.InterpolationNode(N.AtProperty('title', 0), 0)
+        ], null, 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.equal(result.errors.length, 0)
+  })
+
+  test('checkLocalDecl with init expression', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.VarDecl('const', 'x', null, N.Identifier('undeclaredVal', 0), 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.ok(result.errors.some(e => e.message.includes('undeclaredVal')),
+      `Expected error: ${result.errors.map(e => e.message).join(', ')}`)
+  })
+
+  test('checkExpr with RangeExpr checks start and end', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.BuildDecl('r', null, N.RangeExpr(
+          N.Identifier('startVal', 0),
+          N.Identifier('endVal', 0),
+          false, 0), 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    const errs = result.errors.map(e => e.message)
+    assert.ok(errs.some(m => m.includes('startVal')))
+    assert.ok(errs.some(m => m.includes('endVal')))
+  })
+
+  test('checkExpr with UnaryExpr using argument (alt field name) instead of operand', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.BuildDecl('r', null, {
+          type: 'UnaryExpr',
+          op: '!',
+          argument: N.Identifier('undeclared', 0),  // using "argument" field
+          line: 0
+        }, 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.ok(result.errors.some(e => e.message.includes('undeclared')),
+      `Expected undeclared error`)
+  })
+
+  test('checkExpr with TemplateLiteral expression part is checked', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.BuildDecl('r', null, N.TemplateLiteral([
+          N.Literal('Hello ', '"..."', 0),
+          N.Identifier('undeclaredName', 0),
+        ], 0), 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.ok(result.errors.some(e => e.message.includes('undeclaredName')))
+  })
+
+  test('checkExpr with BlockStatement traverses body', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.BuildDecl('r', null, {
+          type: 'BlockStatement',
+          body: [N.ExprStatement(N.Identifier('undeclaredBlock', 0), 0)],
+          line: 0
+        }, 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.ok(result.errors.some(e => e.message.includes('undeclaredBlock')))
+  })
+
+  test('checkExpr with await marks warning in non-async context', () => {
+    const checker = new Checker('test')
+    // @state init expression with await — not in async context, generates warning
+    const program = {
+      declarations: [
+        N.StateDecl('x', null, { type: 'AwaitExpr', argument: N.Literal(1, '1', 0), line: 0 }, 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.ok(result.warnings.some(w => w.message.includes('await')),
+      `Expected await warning`)
+  })
+
+  test('checkClassDecl with field that has init expression', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.ClassDecl('Box', [
+          N.ClassField('count', null, N.Identifier('undeclaredInit', 0), false, 0),
+        ], [], 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.ok(result.errors.some(e => e.message.includes('undeclaredInit')))
+  })
+
+  test('checkExpr with SpreadElement checks argument', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.BuildDecl('r', null, N.ArrayLiteral([
+          N.SpreadElement(N.Identifier('undeclaredArr', 0), 0)
+        ], 0), 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.ok(result.errors.some(e => e.message.includes('undeclaredArr')))
+  })
+})
+
 describe('Checker — clean examples', () => {
   const fs = require('fs')
   const examples = ['hello', 'counter', 'blog', 'dashboard', 'patterns', 'live', 'chat']

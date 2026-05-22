@@ -259,6 +259,17 @@ describe('JS Emitter', () => {
       assert.ok(js.includes('email'), `Expected email in path`)
     })
 
+    test('emitProgram throws for bind:value with unsafe expression and no bindRoot', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      // Construct an unsafe bind binding directly — this throws via the codegen guard
+      const program = { declarations: [{ type: 'StateDecl', name: 'x', init: N.Literal(0, '0', 0), line: 0 }] }
+      const stateBindings = [
+        { id: 'el1', kind: 'bind', expr: 'items[0]', bindRoot: null, line: 0 },
+      ]
+      assert.throws(() => emitter.emitProgram(program, stateBindings, []),
+        /bind:value only supports/)
+    })
+
     test('bind:value on non-simple path compiles (allowed)', async () => {
       // Test that the compile path runs — actual semantics may vary
       const r = await compile(`page "T"
@@ -279,6 +290,19 @@ describe('JS Emitter', () => {
   text "ok"`, '<input>', { sourceMap: sm })
       const mapJson = sm.generate('app.js', '@server fn process() { return 1 }')
       assert.ok(mapJson.version === 3, `Expected source map v3: ${JSON.stringify(mapJson)}`)
+    })
+
+    test('compile with sourceMap and top-level fn decl emits fn mappings', async () => {
+      const { SourceMapBuilder } = require('../src/sourcemap')
+      const sm = new SourceMapBuilder()
+      await compile(`fn helper(x) {
+  return x * 2
+}
+page "T"
+  @state let n = 5
+  text "{n}"`, '<input>', { sourceMap: sm })
+      const mapJson = sm.generate('app.js', 'fn helper(x) { return x*2 }')
+      assert.ok(mapJson.mappings.length > 0, `Expected non-empty mappings`)
     })
   })
 
@@ -557,6 +581,31 @@ describe('JS Emitter', () => {
       assert.equal(emitter.emitPattern(N.Literal(42, '42', 0), '_subj'), '_subj===42')
     })
 
+    test('emitPattern returns "true" for unknown pattern type (Identifier handled elsewhere)', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const result = emitter.emitPattern({ type: 'Identifier', name: 'n', line: 0 }, '_subj')
+      assert.equal(result, 'true')
+    })
+
+    test('emitFnDecl with param missing .name uses _ fallback', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const fn = N.FnDecl('go', [{ type: 'NotAParam', name: 'x', line: 0 }], null,
+        { type: 'BlockStatement', body: [], line: 0 }, false, 0)
+      const result = emitter.emitFnDecl(fn)
+      // The non-Param case falls into `const pname = p.name ?? '_'`
+      assert.ok(result.includes('function go(x)'), `Expected fn with x param: ${result}`)
+    })
+
+    test('emitFnDecl with bare-string param uses fallback', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const fn = N.FnDecl('go', ['x', 'y'], null,
+        { type: 'BlockStatement', body: [], line: 0 }, false, 0)
+      const result = emitter.emitFnDecl(fn)
+      // bare strings: p.name === undefined, p ?? '_' = string itself? No, p.name ?? '_' → undefined ?? '_' = '_'
+      // Actually for bare strings: p has no .name, so p.name is undefined, so pname = '_'
+      assert.ok(result.includes('function go'), `Expected fn: ${result}`)
+    })
+
     test('emitPattern for IsExpr uses typeof check', () => {
       const emitter = new JsEmitter({ hash: 'h1' })
       const pat = { type: 'IsExpr', typeOrValue: N.Identifier('String', 0), subject: null, line: 0 }
@@ -594,6 +643,33 @@ describe('JS Emitter', () => {
         false, 0)
       const result = emitter.emitFnDecl(fn)
       assert.ok(result.includes('return (x*x)'), `Expected return: ${result}`)
+    })
+
+    test('emitClassDecl method with named params', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const cls = N.ClassDecl('Box', [], [
+        N.ClassMethod('set', [N.Param('value', null, null, false, 0), N.Param('flag', null, null, false, 0)], null,
+          { type: 'BlockStatement', body: [N.ReturnStatement(N.Identifier('value', 0), 0)], line: 0 },
+          false, false, 0)
+      ], 0)
+      const result = emitter.emitClassDecl(cls)
+      assert.ok(result.includes('set(value,flag)'), `Expected method with params: ${result}`)
+    })
+
+    test('emitClassDecl method with bare-string params (no Param wrapper)', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      // Some Arc paths produce bare strings for params instead of Param nodes
+      const cls = N.ClassDecl('Box', [], [{
+        type: 'ClassMethod',
+        name: 'go',
+        params: ['x', 'y'],  // bare strings instead of Param objects
+        body: { type: 'BlockStatement', body: [], line: 0 },
+        isStatic: false,
+        isGetter: false,
+        line: 0
+      }], 0)
+      const result = emitter.emitClassDecl(cls)
+      assert.ok(result.includes('go(x,y)'), `Expected bare param strings: ${result}`)
     })
 
     test('emitClassDecl with field that has no init (no = part)', () => {

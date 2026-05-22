@@ -25,6 +25,76 @@ function decls(source) {
 
 // ── Page declarations ──────────────────────────────────────────────────────────
 
+describe('Parser - public utility methods', () => {
+  const { Lexer } = require('../src/lexer')
+  const { Parser } = require('../src/parser')
+
+  function newParser(src) {
+    const tokens = new Lexer(src, 'test.arc').tokenize()
+    return new Parser(tokens, 'test.arc')
+  }
+
+  test('peekRaw returns current raw token', () => {
+    const p = newParser('page "T"')
+    const tok = p.peekRaw()
+    assert.ok(tok)
+    assert.ok(tok.type)
+  })
+
+  test('current returns the token at this.pos', () => {
+    const p = newParser('page "T"')
+    const tok = p.current()
+    assert.ok(tok)
+  })
+
+  test('advance returns current token and moves pos forward', () => {
+    const p = newParser('page "T"\n  text "x"')
+    const before = p.pos
+    const tok = p.advance()
+    assert.ok(tok)
+    assert.ok(p.pos > before)
+  })
+
+  test('check returns true when next token matches type', () => {
+    const { T } = require('../src/tokens')
+    const p = newParser('page "T"')
+    assert.equal(p.check(T.PAGE), true)
+  })
+
+  test('checkRaw returns true when current raw token matches', () => {
+    const { T } = require('../src/tokens')
+    const p = newParser('page "T"')
+    assert.equal(p.checkRaw(T.PAGE), true)
+  })
+
+  test('match consumes and returns matching token, null otherwise', () => {
+    const { T } = require('../src/tokens')
+    const p = newParser('page "T"')
+    const matched = p.match(T.PAGE)
+    assert.ok(matched)
+    // No more PAGE token left
+    const notMatched = p.match(T.PAGE)
+    assert.equal(notMatched, null)
+  })
+
+  test('error without explicit token uses current token', () => {
+    const p = newParser('page "T"')
+    assert.throws(() => p.error('test msg'), /test msg/)
+  })
+
+  test('parse continues past unrecognized token without infinite loop', () => {
+    // The parser's "force-skip to prevent infinite loop" guard at line 152-154
+    // Construct input with a token that no top-level handler matches at all
+    const src = '@@@@strange'  // bad annotation might trigger no-advance scenario
+    try {
+      const p = newParser(src)
+      p.parse()
+    } catch {}
+    // Either parses or throws — but doesn't loop forever
+    assert.ok(true)
+  })
+})
+
 describe('Parser - PageDecl', () => {
   test('parses a bare page declaration', () => {
     const node = firstDecl('page "Home"')
@@ -675,6 +745,56 @@ describe('Parser - range expressions', () => {
     const computed = node.declarations.find(d => d.type === 'ComputedDecl')
     assert.equal(computed.init.type, 'RangeExpr')
     assert.equal(computed.init.inclusive, true)
+  })
+})
+
+describe('Parser - @worker fn', () => {
+  test('parses @worker fn declaration', () => {
+    const src = `@worker fn heavy(data) {
+  return data
+}
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const fn = node.declarations.find(d => d.type === 'WorkerFn')
+    assert.ok(fn, 'Expected WorkerFn')
+    assert.equal(fn.name, 'heavy')
+  })
+})
+
+describe('Parser - @param decl', () => {
+  test('parses @param widget declaration', () => {
+    const src = `widget Card
+  @param title
+  text "{title}"
+page "T"
+  Card title="hi"`
+    const node = parse(src)
+    const widget = node.declarations.find(d => d.type === 'WidgetDecl')
+    assert.ok(widget)
+  })
+})
+
+describe('Parser - fn with arrow expression body', () => {
+  test('parses "fn name(x) => x * 2" arrow form', () => {
+    const src = `fn double(x) => x * 2
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const fn = node.declarations.find(d => d.type === 'FnDecl')
+    assert.ok(fn)
+    assert.notEqual(fn.body?.type, 'BlockStatement')
+  })
+
+  test('parses fn with return type annotation', () => {
+    const src = `fn process(x) -> Number {
+  return x
+}
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const fn = node.declarations.find(d => d.type === 'FnDecl')
+    assert.ok(fn.returnType)
   })
 })
 

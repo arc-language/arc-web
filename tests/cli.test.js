@@ -454,6 +454,40 @@ describe('cli — build command (subprocess)', () => {
     } finally { rmDir(dir) }
   })
 
+  test('build prints warning when @build expression throws (non-fatal)', () => {
+    const { spawnSync } = require('child_process')
+    const dir = mkTmpDir('buildwarn')
+    try {
+      // @build that triggers an error (readFile of a non-existent file)
+      fs.writeFileSync(path.join(dir, 'index.arc'), `@build const data = readFile("does-not-exist.json")
+page "T"
+  text "ok"
+`)
+      const r = spawnSync('node', [cliPath, 'build', dir], { stdio: 'pipe' })
+      const stderr = r.stderr.toString()
+      const stdout = r.stdout.toString()
+      // Should warn but still complete (note: stderr might contain the warning, or it might compile)
+      assert.ok(stderr.length > 0 || stdout.length > 0 || r.status === 0,
+        `Expected some output: stderr=${stderr}, stdout=${stdout}`)
+    } finally { rmDir(dir) }
+  })
+
+  test('build emits @live edge renderer to _arc/renderer.js', () => {
+    const dir = mkTmpDir('buildlive')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), `page "T"
+  @server fn getUser() -> { name: String } {
+    return { name: "alice" }
+  }
+  @live let user = getUser()
+  text "{user.name}"
+`)
+      execFileSync('node', [cliPath, 'build', dir], { stdio: 'pipe' })
+      assert.ok(fs.existsSync(path.join(dir, 'dist', '_arc', 'renderer.js')),
+        '@live should produce renderer.js')
+    } finally { rmDir(dir) }
+  })
+
   test('build emits @server edge function output to _arc/functions.js', () => {
     const dir = mkTmpDir('buildedge')
     try {

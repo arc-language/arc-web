@@ -690,6 +690,123 @@ describe('CSS Emitter', () => {
       assert.equal(result, '')
     })
 
+    test('width property uses expandCalc directly (literal property name)', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      // Use 'width' as the literal property name (not 'w' shorthand)
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleRule',
+            selector: '.box',
+            props: [{ type: 'StyleProp', name: 'width', value: '100% - 32px', line: 1 }],
+            children: [],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      assert.ok(css.includes('calc(100% - 32px)'), `Expected calc(): ${css}`)
+    })
+
+    test('height property uses expandCalc directly', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleRule',
+            selector: '.box',
+            props: [{ type: 'StyleProp', name: 'height', value: '50vh', line: 1 }],
+            children: [],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      assert.ok(css.includes('height: 50vh'))
+    })
+
+    test('CSS property with vendor prefix needed (e.g. appearance)', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      // Find a property that needs a prefix. Common candidates: appearance, user-select
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleRule',
+            selector: '.btn',
+            props: [{ type: 'StyleProp', name: 'appearance', value: 'none', line: 1 }],
+            children: [],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      // Either has the property or has a -webkit-appearance prefix (or both)
+      assert.ok(css.includes('appearance: none'))
+    })
+
+    test('emitConditionNested with rule that has empty decls returns empty inner', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleRule',
+            selector: '.card',
+            props: [{ type: 'StyleProp', name: 'p', value: '16px', line: 1 }],
+            children: [{
+              type: 'StyleCondition',
+              kind: 'mobile',
+              query: null,
+              rules: [{
+                type: 'StyleRule',
+                selector: '&:focus',
+                props: [],  // Empty props
+                children: [],
+                line: 1
+              }],
+              line: 1
+            }],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      assert.ok(css.length > 0, `Expected output: ${css}`)
+    })
+
+    test('nested style condition with pseudo-class selector (::before)', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleRule',
+            selector: '.card',
+            props: [{ type: 'StyleProp', name: 'p', value: '16px', line: 1 }],
+            children: [{
+              type: 'StyleCondition',
+              kind: 'mobile',
+              query: null,
+              rules: [{
+                type: 'StyleRule',
+                selector: '::before',
+                props: [{ type: 'StyleProp', name: 'content', value: '""', line: 1 }],
+                children: [],
+                line: 1
+              }],
+              line: 1
+            }],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      assert.ok(css.includes('::before'), `Expected ::before in: ${css}`)
+    })
+
     test('emitCondition with unknown kind returns empty', () => {
       const emitter = new CssEmitter({ hash: 'h1' })
       const result = emitter.emitCondition({
