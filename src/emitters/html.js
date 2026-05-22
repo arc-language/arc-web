@@ -265,7 +265,9 @@ class HtmlEmitter {
       return this.emitTooltipAttr(node, String(tipText))
     }
 
-    // Single pass: handle bind: and on: attrs together
+    // Single pass: collect bind:/on: bindings AND pre-filter static attrs for HTML output.
+    // This eliminates the second traversal in buildAttrs which would otherwise re-scan all attrs.
+    const staticAttrs = {}
     for (const [key, value] of Object.entries(attrs)) {
       if (key.startsWith('bind:')) {
         if (!id) id = this.getReactiveId(`bind_${tag}_${node.line}`)
@@ -285,10 +287,14 @@ class HtmlEmitter {
             this.stateBindings.push({ id, expr: boundName, kind: 'bind', line: node.line })
           }
         }
+        // bind: attrs are JS-only — don't include in HTML output
       } else if (key.startsWith('on:')) {
         if (!id) id = this.getReactiveId(`ev_${tag}_${node.line}`)
         const event = key.slice(3)
         this.eventBindings.push({ elementId: id, event, handler: value, line: node.line })
+        // on: attrs are JS-only — don't include in HTML output
+      } else {
+        staticAttrs[key] = value
       }
     }
 
@@ -300,7 +306,7 @@ class HtmlEmitter {
       ? [...(baseClasses ?? []), ...classes].map(c => `${c}_${this.componentHash}`)
       : []
 
-    const attrStr = this.buildAttrs(id, scopedClasses, attrs, node)
+    const attrStr = this.buildAttrs(id, scopedClasses, staticAttrs, node)
 
     if (VOID_ELEMENTS.has(htmlTag)) {
       return `<${htmlTag}${attrStr}>`
@@ -320,10 +326,8 @@ class HtmlEmitter {
     }
 
     for (const [key, rawValue] of Object.entries(attrs)) {
-      // Skip reactive attrs — handled by JS emitter
-      if (SKIP_ATTRS.has(key) || key.startsWith('on:') || key.startsWith('bind:')) continue
-      // Tooltip attribute handled in emitElement — skip here
-      if (key === 'tooltip') continue
+      // Skip attrs consumed upstream (tooltip handled in emitElement; SKIP_ATTRS for safety)
+      if (SKIP_ATTRS.has(key) || key === 'tooltip') continue
 
       // Resolve AST node to its static value when possible
       const value = (rawValue && typeof rawValue === 'object' && rawValue.type)

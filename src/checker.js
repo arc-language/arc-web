@@ -1,5 +1,24 @@
 'use strict'
 
+// Linked scope chain — O(1) child creation vs O(N) Map copy.
+// Writes go to the local frame only; lookups walk the chain.
+class Scope {
+  constructor(parent = null) {
+    this._own = new Map()
+    this._parent = parent
+  }
+  has(k) {
+    return this._own.has(k) || (this._parent !== null && this._parent.has(k))
+  }
+  get(k) {
+    return this._own.has(k) ? this._own.get(k) : this._parent?.get(k)
+  }
+  set(k, v) {
+    this._own.set(k, v)
+    return this
+  }
+}
+
 // Arc semantic checker.
 // Runs after parsing — catches errors the parser can't see:
 //   - Undefined variables in expressions and templates
@@ -41,7 +60,7 @@ class Checker {
 
   check(program) {
     // Collect all declared names at program level
-    const declared = new Map() // name → node type
+    const declared = new Scope() // name → node type
 
     for (const decl of program.declarations) {
       this.checkDecl(decl, declared)
@@ -102,7 +121,7 @@ class Checker {
     }
 
     // Check body with params in scope
-    const localScope = new Map(declared)
+    const localScope = new Scope(declared)
     for (const p of decl.params ?? []) {
       const pname = p.name ?? p
       if (pname) localScope.set(pname, 'Param')
@@ -125,13 +144,13 @@ class Checker {
       }
     }
     // Check methods with class fields in scope
-    const classScope = new Map(declared)
+    const classScope = new Scope(declared)
     for (const field of decl.fields ?? []) {
       if (field.name) classScope.set(field.name, 'ClassField')
       if (field.init) this.checkExpr(field.init, classScope, {})
     }
     for (const method of decl.methods ?? []) {
-      const methodScope = new Map(classScope)
+      const methodScope = new Scope(classScope)
       for (const p of method.params ?? []) {
         const pname = p.name ?? p
         if (pname) methodScope.set(pname, 'Param')
@@ -145,7 +164,7 @@ class Checker {
   }
 
   checkWidget(decl, declared) {
-    const localScope = new Map(declared)
+    const localScope = new Scope(declared)
     for (const p of decl.params ?? []) {
       const pname = p.name ?? p
       if (pname) localScope.set(pname, 'Param')
@@ -226,7 +245,7 @@ class Checker {
 
   checkForNode(node, declared) {
     this.checkExpr(node.collection, declared, {})
-    const innerScope = new Map(declared)
+    const innerScope = new Scope(declared)
     if (node.itemName) innerScope.set(node.itemName, 'ForVar')
     if (node.indexName) innerScope.set(node.indexName, 'ForVar')
     this.checkTemplateBody(node.body ?? [], innerScope)
@@ -234,7 +253,7 @@ class Checker {
 
   checkBody(body, declared, ctx = {}) {
     const stmts = body?.body ?? (Array.isArray(body) ? body : [])
-    const localScope = new Map(declared)
+    const localScope = new Scope(declared)
     for (const stmt of stmts) {
       this.checkStmt(stmt, localScope, ctx)
     }
@@ -260,7 +279,7 @@ class Checker {
         break
       case 'ForStatement': {
         if (stmt.collection) this.checkExpr(stmt.collection, declared, ctx)
-        const forScope = new Map(declared)
+        const forScope = new Scope(declared)
         if (stmt.itemName) forScope.set(stmt.itemName, 'ForVar')
         if (stmt.indexName) forScope.set(stmt.indexName, 'ForVar')
         this.checkBody(stmt.body, forScope, ctx)
@@ -280,7 +299,7 @@ class Checker {
       case 'MatchStatement': {
         this.checkExpr(stmt.subject, declared, ctx)
         for (const arm of stmt.arms ?? []) {
-          const armScope = new Map(declared)
+          const armScope = new Scope(declared)
           if (arm.pattern?.type === 'IsPattern' && arm.pattern.binding) {
             armScope.set(arm.pattern.binding, 'MatchBinding')
           } else if (arm.pattern?.type === 'Identifier' && arm.pattern.name !== '_') {
@@ -296,7 +315,7 @@ class Checker {
       case 'TryCatch':
         this.checkBody(stmt.tryBody, declared, ctx)
         if (stmt.catchBody) {
-          const catchScope = new Map(declared)
+          const catchScope = new Scope(declared)
           if (stmt.catchParam) catchScope.set(stmt.catchParam, 'CatchParam')
           this.checkBody(stmt.catchBody, catchScope, ctx)
         }
@@ -390,7 +409,7 @@ class Checker {
         break
 
       case 'ArrowFn': {
-        const arrowScope = new Map(declared)
+        const arrowScope = new Scope(declared)
         for (const p of expr.params ?? []) {
           const pname = p.name ?? p
           if (pname) arrowScope.set(pname, 'Param')
@@ -417,7 +436,7 @@ class Checker {
         this.checkExpr(expr.subject, declared, ctx)
         for (const arm of expr.arms ?? []) {
           // Pattern may bind a name (e.g. `x is Number => x * 2`)
-          const armScope = new Map(declared)
+          const armScope = new Scope(declared)
           if (arm.pattern?.type === 'IsPattern' && arm.pattern.binding) {
             armScope.set(arm.pattern.binding, 'MatchBinding')
           } else if (arm.pattern?.type === 'Identifier' && arm.pattern.name !== '_') {
