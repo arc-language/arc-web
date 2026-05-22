@@ -15,8 +15,8 @@
 
 widget Icon
   // Attrs: name, size, color, class, label
-  const sz = @size ?? 24
-  const clr = @color ?? "currentColor"
+  const sz = Math.max(1, Math.min(999, Number(@size ?? 24) || 24))
+  const clr = String(@color ?? "currentColor").replace(RegExp("[^a-zA-Z0-9#.(), %-]", "g"), "")
   const svgPath = icons[@name]
 
   if svgPath

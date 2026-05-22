@@ -79,7 +79,10 @@ class Parser {
     const p = this.peek()
     if (types.includes(p.type)) {
       // advance to that token
+      const MAX_ITER = 100000
+      let iter = 0
       while (this.tokens[this.pos].type !== p.type || this.tokens[this.pos] !== p) {
+        if (++iter > MAX_ITER) throw this.error('Parser: match() exceeded iteration limit — possible malformed input', p)
         this.pos++
       }
       this.pos++
@@ -954,15 +957,23 @@ class Parser {
   }
 
   parseStyleCondition() {
-    const tok = this.tokens[this.pos++]
+    const tok = this.tokens[this.pos]
+    if (!tok || tok.type === T.EOF) return N.StyleCondition('', null, [], tok?.line ?? 0)
+    this.pos++
     const annotation = tok.value // @mobile, @dark, @container, etc.
 
     let query = null
     if (this.tokens[this.pos]?.type === T.LT || this.tokens[this.pos]?.type === T.GT) {
       // @container < 480px
-      const op = this.tokens[this.pos++].value
-      const size = this.tokens[this.pos++].value + (this.tokens[this.pos]?.value ?? '')
+      const opTok = this.tokens[this.pos]
+      if (!opTok || opTok.type === T.EOF) return N.StyleCondition(annotation.slice(1), null, [], tok.line)
       this.pos++
+      const op = opTok.value
+      const sizeTok = this.tokens[this.pos]
+      if (!sizeTok || sizeTok.type === T.EOF) return N.StyleCondition(annotation.slice(1), null, [], tok.line)
+      this.pos++
+      const size = sizeTok.value + (this.tokens[this.pos]?.value ?? '')
+      if (this.tokens[this.pos] && this.tokens[this.pos].type !== T.EOF) this.pos++
       query = `${op} ${size}`
     }
 

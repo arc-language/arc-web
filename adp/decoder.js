@@ -26,10 +26,11 @@ class Decoder {
   }
 
   decode() {
-    return this.readValue()
+    return this.readValue(0)
   }
 
-  readValue() {
+  readValue(depth) {
+    if (depth > 64) throw new Error('ADP decode: maximum nesting depth (64) exceeded')
     if (this.pos >= this.buf.length) throw new Error(`ADP decode: unexpected end of buffer at pos ${this.pos}`)
     const tag = this.buf[this.pos++]
 
@@ -47,7 +48,7 @@ class Decoder {
         const v = (this.buf[this.pos] << 24) | (this.buf[this.pos+1] << 16) |
                   (this.buf[this.pos+2] << 8) | this.buf[this.pos+3]
         this.pos += 4
-        return v  // signed int32 is intentional
+        return v | 0  // ensure signed int32
       }
 
       case TAG.FLOAT64: {
@@ -64,7 +65,7 @@ class Decoder {
         const len = this.readVarInt()
         if (len > 100000) throw new Error(`ADP decode: array length too large: ${len}`)
         const arr = new Array(len)
-        for (let i = 0; i < len; i++) arr[i] = this.readValue()
+        for (let i = 0; i < len; i++) arr[i] = this.readValue(depth + 1)
         return arr
       }
 
@@ -74,7 +75,7 @@ class Decoder {
         const obj = {}
         for (let i = 0; i < count; i++) {
           const key = this.readString()
-          const val = this.readValue()
+          const val = this.readValue(depth + 1)
           if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
           obj[key] = val
         }

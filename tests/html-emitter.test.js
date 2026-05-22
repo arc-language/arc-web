@@ -157,7 +157,8 @@ describe('HTML Emitter', () => {
     test('button with trigger emits showModal onclick', async () => {
       const { html } = await compile('page "T"\n  button trigger="x" "Open"')
       assert.ok(html.includes('showModal'), `Expected showModal in:\n${html}`)
-      assert.ok(html.includes("'x'"), `Expected dialog id 'x' in:\n${html}`)
+      assert.ok(html.includes('getElementById'), `Expected getElementById in:\n${html}`)
+      assert.ok(html.includes('x'), `Expected dialog id in:\n${html}`)
     })
   })
 

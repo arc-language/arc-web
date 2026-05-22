@@ -253,11 +253,20 @@ class HtmlEmitter {
     for (const [key, value] of Object.entries(attrs)) {
       if (key.startsWith('bind:')) {
         if (!id) id = this.getReactiveId(`bind_${tag}_${node.line}`)
-        const boundName = value?.type === 'Identifier' ? value.name
-          : value?.type === 'AtProperty' ? value.name
-          : (typeof value === 'string' ? value : null)
-        if (boundName) {
-          this.stateBindings.push({ id, expr: boundName, kind: 'bind', line: node.line })
+        if (value?.type === 'MemberExpr') {
+          // Dotted path: user.name → expr="user.name", bindRoot="user"
+          const exprStr = this.exprToString(value)
+          const bindRoot = this._extractRootIdent(value)
+          if (bindRoot) {
+            this.stateBindings.push({ id, expr: exprStr, bindRoot, kind: 'bind', line: node.line })
+          }
+        } else {
+          const boundName = value?.type === 'Identifier' ? value.name
+            : value?.type === 'AtProperty' ? value.name
+            : (typeof value === 'string' ? value : null)
+          if (boundName) {
+            this.stateBindings.push({ id, expr: boundName, kind: 'bind', line: node.line })
+          }
         }
       } else if (key.startsWith('on:')) {
         if (!id) id = this.getReactiveId(`ev_${tag}_${node.line}`)
@@ -305,16 +314,16 @@ class HtmlEmitter {
         ? (this.isStaticExpr(rawValue) ? this.evalStaticExpr(rawValue) : rawValue)
         : rawValue
 
-      // <dialog> trigger: trigger="id" → onclick that calls showModal()
+      // <dialog> trigger: trigger="id" → onclick that calls showModal() then focuses first focusable child
       if (key === 'trigger') {
-        const dialogId = this.escape(String(value))
-        parts.push(`onclick="var _d=document.getElementById('${dialogId}');if(_d)_d.showModal()"`)
+        const safeId = JSON.stringify(String(value)).replace(/"/g, '&quot;')
+        parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)_f.focus();}"`)
         continue
       }
       // <dialog> close: close="id" → onclick that calls close()
       if (key === 'close') {
-        const dialogId = this.escape(String(value))
-        parts.push(`onclick="var _d=document.getElementById('${dialogId}');if(_d)_d.close()"`)
+        const safeId = JSON.stringify(String(value)).replace(/"/g, '&quot;')
+        parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d)_d.close()"`)
         continue
       }
       // Native dialog attrs (legacy)
@@ -502,6 +511,8 @@ class HtmlEmitter {
   // When keyExpr is provided, strips key= from the root element and injects data-arc-key instead.
   emitForBodyTemplate(bodyNodes, itemName, indexName, keyExpr) {
     const prev = this._forItemName
+    const prevIndex = this._forIndexName
+    const prevInFor = this._inForTemplate
     this._forItemName = itemName
     this._forIndexName = indexName
     this._inForTemplate = true
@@ -514,19 +525,23 @@ class HtmlEmitter {
     }
 
     let html = this.emitChildren(nodes)
-    this._inForTemplate = false
+    this._inForTemplate = prevInFor
     this._forItemName = prev
-    this._forIndexName = undefined
+    this._forIndexName = prevIndex
 
-    // Inject data-arc-key on the root element when key= was specified
+    // Escape backticks and bare $ in the static HTML portions, then return as template-literal source
+    html = html.replace(/`/g, '\\`').replace(/\$(?!\{)/g, '\\$')
+
+    // Inject data-arc-key AFTER the backtick-escape pass so keyExpr is not double-escaped
     if (keyExpr) {
-      const keyVal = `\${_esc(String(${keyExpr}??''))}`
-      // Insert data-arc-key after the first tag opening (e.g., <div class="..." → <div data-arc-key="..." class="...")
+      // Sanitize keyExpr: escape any backticks/backslashes that would break the outer template literal
+      const safeKeyExpr = keyExpr.replace(/\\/g, '\\\\').replace(/`/g, '\\`')
+      const keyVal = `\${_esc(String(${safeKeyExpr}??''))}`
+      // Insert data-arc-key after the first tag opening
       html = html.replace(/^(<\w[^>]*)>/, `$1 data-arc-key="${keyVal}">`)
     }
 
-    // Escape backticks and bare $ in the static HTML portions, then return as template-literal source
-    return html.replace(/`/g, '\\`').replace(/\$(?!\{)/g, '\\$')
+    return html
   }
 
   emitMatchTemplate(node) {
@@ -571,7 +586,9 @@ class HtmlEmitter {
     const rawLabel = node.attrs?.label
     const label = rawLabel ? (rawLabel.type ? this.evalStaticExpr(rawLabel) : rawLabel) : null
     const ariaLabel = label ? ` aria-label="${this.escape(String(label))}"` : ` aria-label="${this.escape(String(id))}"`
-    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${ariaLabel} autofocus>${children}</dialog>`
+    // Note: autofocus is intentionally omitted — autofocus on <dialog> is ignored by spec.
+    // The trigger= onclick handler focuses the first focusable child after showModal().
+    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${ariaLabel}>${children}</dialog>`
   }
 
   emitTooltip(node) {
@@ -689,6 +706,11 @@ class HtmlEmitter {
       case '%': return l % r
       default:  return undefined
     }
+  }
+
+  _extractRootIdent(expr) {
+    while (expr?.type === 'MemberExpr') expr = expr.object
+    return expr?.type === 'Identifier' ? expr.name : null
   }
 
   exprToString(expr) {

@@ -82,6 +82,9 @@ async function handleEdgeFunction(urlPath, req, res) {
       return true
     }
     const body = rawBody
+    headers['X-Content-Type-Options'] = headers['X-Content-Type-Options'] ?? 'nosniff'
+    headers['X-Frame-Options'] = headers['X-Frame-Options'] ?? 'SAMEORIGIN'
+    headers['Content-Security-Policy'] = headers['Content-Security-Policy'] ?? "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'"
     res.writeHead(status, headers)
     res.end(body)
   } catch (e) {

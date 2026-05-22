@@ -1,5 +1,7 @@
 'use strict'
 
+const _SAFE_BINARY_OPS = new Set(['+','-','*','/','%','**','==','!=','<','>','<=','>=','===','!==','instanceof','in'])
+const _SAFE_UNARY_OPS = new Set(['!','-','+','~','typeof','void'])
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 function _assertSafeIdent(val, context) {
   if (typeof val !== 'string' || !_SAFE_IDENT.test(val)) {
@@ -159,15 +161,32 @@ class JsEmitter {
 
     // bind:value two-way bindings
     for (const b of stateBindings.filter(b => b.kind === 'bind')) {
-      if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(b.expr)) {
-        throw new Error(`Arc codegen: bind:value only supports simple state variable names, got: ${JSON.stringify(b.expr)}`)
+      const setterCall = b.bindRoot
+        ? (() => {
+            // Dotted path: generate a deep immutable update
+            // e.g. user.name → _set_user({...user, name: _bv})
+            // e.g. user.profile.email → _set_user({...user, profile:{...user.profile, email:_bv}})
+            _assertSafeIdent(b.bindRoot, 'bind root')
+            const parts2 = b.expr.split('.')
+            const root = parts2[0]
+            const keys = parts2.slice(1)
+            let setter = `_bv`
+            for (let i = keys.length - 1; i >= 0; i--) {
+              const path = [root, ...keys.slice(0, i)].join('.')
+              setter = `{...((${path})??{}),${JSON.stringify(keys[i])}:${setter}}`
+            }
+            return `_set_${root}(${setter})`
+          })()
+        : `_set_${b.expr}(_bv)`
+      if (!b.bindRoot && !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(b.expr)) {
+        throw new Error(`Arc codegen: bind:value only supports simple variable names or dotted paths, got: ${JSON.stringify(b.expr)}`)
       }
       parts.push(
         `(function(){const _be=_el_${b.id};if(!_be)return;` +
         `const _bevt=_be.tagName==='SELECT'||_be.type==='checkbox'||_be.type==='radio'?'change':'input';` +
         `_be.addEventListener(_bevt,function(e){` +
         `const _bv=_be.type==='checkbox'||_be.type==='radio'?e.target.checked:_be.type==='number'?parseFloat(e.target.value):e.target.value;` +
-        `if(_be.type!=='number'||!isNaN(_bv))_set_${b.expr}(_bv);` +
+        `if(_be.type!=='number'||!isNaN(_bv))${setterCall};` +
         `});})();`
       )
     }
@@ -401,10 +420,13 @@ class JsEmitter {
           return `\${${this.emitExpr(p)}}`
         }).join('') + '`'
 
-      case 'BinaryExpr':
+      case 'BinaryExpr': {
+        if (!_SAFE_BINARY_OPS.has(expr.op)) throw new Error(`Arc codegen: unsafe BinaryExpr operator: ${JSON.stringify(expr.op)}`)
         return `(${this.emitExpr(expr.left)}${expr.op}${this.emitExpr(expr.right)})`
+      }
 
       case 'UnaryExpr':
+        if (!_SAFE_UNARY_OPS.has(expr.op)) throw new Error(`Arc codegen: unsafe UnaryExpr operator: ${JSON.stringify(expr.op)}`)
         return `(${expr.op}${this.emitExpr(expr.operand)})`
 
       case 'LogicalExpr':
