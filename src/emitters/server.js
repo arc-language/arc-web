@@ -70,12 +70,13 @@ class ServerEmitter {
 
   emitProgram(program) {
     const serverFns = program.declarations.filter(d => d.type === 'ServerFn')
-    if (serverFns.length === 0) return { edgeFunctions: '', clientStubs: '' }
+    if (serverFns.length === 0) return { edgeFunctions: '', clientStubs: '', handlerNames: [] }
 
     const edgeFunctions = this.emitEdgeFunctions(serverFns)
     const clientStubs = this.emitClientStubs(serverFns)
+    const handlerNames = serverFns.map(f => `_handler_${f.name}`)
 
-    return { edgeFunctions, clientStubs }
+    return { edgeFunctions, clientStubs, handlerNames }
   }
 
   // ── Edge functions ─────────────────────────────────────────────────────────

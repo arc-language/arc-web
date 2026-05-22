@@ -11,7 +11,9 @@ function getContentType(p) {
   return 'application/octet-stream'
 }
 
-function generate({ html = '', css = '', js = '', edgeFunctions = '', projectName = 'arc-app' }) {
+const _SAFE_HANDLER_NAME_CF = /^_handler_[a-zA-Z_$][a-zA-Z0-9_$]*$/
+
+function generate({ html = '', css = '', js = '', edgeFunctions = '', projectName = 'arc-app', handlerNames = null }) {
   const assets = { '/': html }
   if (css) assets['/styles.css'] = css
   if (js) assets['/app.js'] = js
@@ -20,10 +22,13 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', projectNam
     .map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)}`)
     .join(',\n')
 
-  // Build allowlist from declared @server function names
-  const edgeFnNames = edgeFunctions
-    ? [...edgeFunctions.matchAll(/^async function (_handler_\w+)\s*\(/mg)].map(m => m[1])
-    : []
+  // Prefer explicit handlerNames from compiler AST; fall back to text scan for deploy-from-files case
+  const edgeFnNames = handlerNames
+    ? handlerNames.filter(h => _SAFE_HANDLER_NAME_CF.test(h))
+    : edgeFunctions
+      ? [...edgeFunctions.matchAll(/^async function (_handler_\w+)\s*\(/mg)].map(m => m[1])
+          .filter(h => _SAFE_HANDLER_NAME_CF.test(h))
+      : []
   const edgeFunctionsBlock = edgeFunctions
     ? `
 // Edge functions (from @server declarations)

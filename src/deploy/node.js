@@ -1,6 +1,8 @@
 'use strict'
 
-function generate({ html = '', css = '', js = '', edgeFunctions = '', projectName = 'arc-app' }) {
+const _SAFE_HANDLER_NAME = /^_handler_[a-zA-Z_$][a-zA-Z0-9_$]*$/
+
+function generate({ html = '', css = '', js = '', edgeFunctions = '', projectName = 'arc-app', handlerNames = null }) {
   const assets = { '/': html }
   if (css) assets['/styles.css'] = css
   if (js) assets['/app.js'] = js
@@ -9,12 +11,13 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', projectNam
     .map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)}`)
     .join(',\n')
 
-  // Extract unique handler function names from the edge functions string
-  const _SAFE_HANDLER_NAME = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
-  const handlerMatches = edgeFunctions
-    ? [...new Set((edgeFunctions.match(/function (_handler_\w+)/g) ?? []).map(m => m.slice('function '.length)))]
-        .filter(h => _SAFE_HANDLER_NAME.test(h))
-    : []
+  // Prefer explicit handlerNames from compiler AST; fall back to text scan for deploy-from-files case
+  const handlerMatches = handlerNames
+    ? handlerNames.filter(h => _SAFE_HANDLER_NAME.test(h))
+    : edgeFunctions
+      ? [...new Set([...edgeFunctions.matchAll(/^async function (_handler_\w+)\s*\(/mg)].map(m => m[1]))]
+          .filter(h => _SAFE_HANDLER_NAME.test(h))
+      : []
 
   const handlerMapEntries = handlerMatches
     .map(h => `  ${JSON.stringify(h.slice('_handler_'.length))}: ${h}`)

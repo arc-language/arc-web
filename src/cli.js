@@ -148,7 +148,7 @@ async function compile(source, filename = '<input>', options = {}) {
 
   // 8. @server function compilation
   const serverEmitter = new ServerEmitter({ hash })
-  const { edgeFunctions, clientStubs } = serverEmitter.emitProgram(program)
+  const { edgeFunctions, clientStubs, handlerNames } = serverEmitter.emitProgram(program)
 
   // 9. JS emit (client-side: reactive bindings + @server client stubs + ADP mini-runtime)
   const jsEmitter = new JsEmitter({ hash, sourceMap: options.sourceMap ?? null })
@@ -172,7 +172,7 @@ async function compile(source, filename = '<input>', options = {}) {
     program, html, css, js, htmlEmitter.stateBindings
   )
 
-  return { html, css, js, edgeFunctions, liveEdgeFunction, program }
+  return { html, css, js, edgeFunctions, liveEdgeFunction, handlerNames, program }
 }
 
 // Inline ADP mini-runtime for browser (encode + decode, ~600 bytes minified)

@@ -468,8 +468,7 @@ class HtmlEmitter {
       const items = this.evalStaticExpr(node.collection)
       if (Array.isArray(items)) {
         return items.map((item, i) => {
-          // Simple static unrolling — inject values
-          return this.emitForBody(node.body, item, i)
+          return this.emitForBody(node.body, item, i, node.itemName ?? 'item', node.indexName ?? 'i')
         }).join('\n')
       }
       return ''
@@ -500,19 +499,22 @@ class HtmlEmitter {
     return `<div id="${listId}" aria-live="polite"></div>`
   }
 
-  emitForBody(bodyNodes, item, index) {
-    // Static unrolling: substitute item references with actual values
-    // For now, emit with data attributes — full static eval is in optimizer
-    return this.emitChildren(bodyNodes)
+  emitForBody(bodyNodes, item, index, itemName = 'item', indexName = 'i') {
+    // Static unrolling: inject item and index into buildContext so evalStaticExpr
+    // can resolve expressions like {post.title} against the actual item data
+    const prevBuildContext = this.buildContext
+    this.buildContext = { ...prevBuildContext, [itemName]: item, [indexName]: index }
+    const html = this.emitChildren(bodyNodes)
+    this.buildContext = prevBuildContext
+    return html
   }
 
   // Emit a for-loop body as a JS template-literal source string.
   // Item property expressions are inlined as ${_esc(item.field)} — no global reactive spans needed.
   // When keyExpr is provided, strips key= from the root element and injects data-arc-key instead.
   emitForBodyTemplate(bodyNodes, itemName, indexName, keyExpr) {
-    const prev = this._forItemName
-    const prevIndex = this._forIndexName
-    const prevInFor = this._inForTemplate
+    if (!this._forStack) this._forStack = []
+    this._forStack.push({ itemName: this._forItemName, indexName: this._forIndexName, inFor: this._inForTemplate })
     this._forItemName = itemName
     this._forIndexName = indexName
     this._inForTemplate = true
@@ -525,9 +527,10 @@ class HtmlEmitter {
     }
 
     let html = this.emitChildren(nodes)
-    this._inForTemplate = prevInFor
-    this._forItemName = prev
-    this._forIndexName = prevIndex
+    const frame = this._forStack.pop()
+    this._forItemName = frame.itemName
+    this._forIndexName = frame.indexName
+    this._inForTemplate = frame.inFor
 
     // Escape backticks and bare $ in the static HTML portions, then return as template-literal source
     html = html.replace(/`/g, '\\`').replace(/\$(?!\{)/g, '\\$')
@@ -709,8 +712,17 @@ class HtmlEmitter {
   }
 
   _extractRootIdent(expr) {
+    // OptionalChain in a bind:value path would generate invalid setter code — reject it
+    if (this._hasOptionalChain(expr)) return null
     while (expr?.type === 'MemberExpr') expr = expr.object
     return expr?.type === 'Identifier' ? expr.name : null
+  }
+
+  _hasOptionalChain(expr) {
+    if (!expr) return false
+    if (expr.type === 'OptionalChain') return true
+    if (expr.type === 'MemberExpr') return this._hasOptionalChain(expr.object)
+    return false
   }
 
   exprToString(expr) {
