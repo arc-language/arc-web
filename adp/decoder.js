@@ -117,7 +117,12 @@ class Decoder {
     while (true) {
       if (this.pos >= this.buf.length) throw new Error('ADP decode: unexpected end of buffer in varint')
       const byte = this.buf[this.pos++]
-      result |= (byte & 0x7f) << shift
+      // Use multiplication for high shifts to avoid bitwise OR precision loss beyond 31 bits
+      if (shift < 28) {
+        result |= (byte & 0x7f) << shift
+      } else {
+        result += (byte & 0x7f) * Math.pow(2, shift)
+      }
       if (!(byte & 0x80)) break
       shift += 7
       if (shift > 35) throw new Error('ADP decode: varint overflow')

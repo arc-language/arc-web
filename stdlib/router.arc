@@ -132,12 +132,9 @@ window.addEventListener("popstate", fn() {
 })
 
 // Router widget — renders the first matching route
+// Usage: populate routes via @build or @state before mounting this widget.
 widget Router
   @state let routes = []
-
-  fn register(path, component) {
-    routes = [...routes, { path, component }]
-  }
 
   for route in routes {
     const result = matchRoute(route.path, _routerPath)

@@ -397,7 +397,7 @@ class HtmlEmitter {
       }
       const id = this.getReactiveId(exprStr)
       this.stateBindings.push({ id, expr: exprStr, line: node.line })
-      return `<span id="${id}" aria-live="polite"></span>`
+      return `<span id="${id}" data-arc-live></span>`
     }).join('')
   }
 
@@ -415,10 +415,10 @@ class HtmlEmitter {
       return `\${_esc(String(${exprStr}??''))}`
     }
 
-    // Reactive — emit a span placeholder
+    // Reactive — emit a span placeholder (no aria-live: avoid announcing every tiny text update)
     const id = this.getReactiveId(exprStr)
     this.stateBindings.push({ id, expr: exprStr, line: node.line })
-    return `<span id="${id}" aria-live="polite"></span>`
+    return `<span id="${id}" data-arc-live></span>`
   }
 
   emitIf(node) {

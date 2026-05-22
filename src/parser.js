@@ -590,17 +590,21 @@ class Parser {
           continue
         }
 
-        // Bare boolean attribute (like required, disabled, lazy)
+        // Bare boolean attribute (like required, disabled, checked, lazy)
+        // Consume it only when the following token indicates more attrs (IDENT, EQ, COLON)
+        // or end-of-attrs (NEWLINE, INDENT, DEDENT, EOF, STRING, LBRACE).
+        // Never consume if followed by DEDENT/EOF — that would be a child element.
         if (/^[a-z]/.test(t.value)) {
-          // Check it looks like an attribute (not a child element)
           const afterNext = this.tokens[this.pos + 1]
-          if (!afterNext || afterNext.type === T.NEWLINE || afterNext.type === T.INDENT ||
-              afterNext.type === T.IDENT || afterNext.type === T.EQ || afterNext.type === T.COLON) {
-            // Looks like an attribute
-            if (afterNext?.type !== T.INDENT && afterNext?.type !== T.NEWLINE) {
-              // Only consume as attr if followed by another attr or nothing
-              // (not if followed by a child element — handled above)
-            }
+          const isEndOfAttrs = !afterNext || afterNext.type === T.NEWLINE ||
+            afterNext.type === T.DEDENT || afterNext.type === T.EOF ||
+            afterNext.type === T.STRING || afterNext.type === T.LBRACE
+          const isMoreAttrs = afterNext?.type === T.IDENT || afterNext?.type === T.EQ ||
+            afterNext?.type === T.COLON || afterNext?.type === T.INDENT
+          if (isEndOfAttrs || isMoreAttrs) {
+            attrs[t.value] = true
+            this.pos++
+            continue
           }
         }
         break

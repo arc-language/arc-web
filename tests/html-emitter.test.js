@@ -192,7 +192,7 @@ describe('HTML Emitter', () => {
   @state let x = 0
   text "{x}"`
       const { html } = await compile(src)
-      assert.match(html, /<span id="_a\d+" aria-live="polite"><\/span>/, `Expected reactive span in:\n${html}`)
+      assert.match(html, /<span id="_a\d+" data-arc-live><\/span>/, `Expected reactive span in:\n${html}`)
     })
   })
 

@@ -93,6 +93,15 @@ class BuildExecutor {
       }
 
       case 'BinaryExpr': {
+        // Short-circuit && and || before evaluating both sides
+        if (expr.op === '&&') {
+          const left = await this.evalExpr(expr.left, locals)
+          return left ? this.evalExpr(expr.right, locals) : left
+        }
+        if (expr.op === '||') {
+          const left = await this.evalExpr(expr.left, locals)
+          return left ? left : this.evalExpr(expr.right, locals)
+        }
         const left = await this.evalExpr(expr.left, locals)
         const right = await this.evalExpr(expr.right, locals)
         return this.applyBinary(expr.op, left, right)
@@ -218,7 +227,18 @@ class BuildExecutor {
         if (typeof args[0] !== 'function') throw new Error('@build Array.find: callback must be a function')
         for (const item of arr) { if (await args[0](item)) return item } return undefined
       }
-      case 'sort':    return [...arr].sort(args[0])
+      case 'sort': {
+        const sorted = [...arr].sort(args[0])
+        // Detect async comparator: Array.sort expects a sync comparator returning a number.
+        // Arc arrow functions are async — if the first comparison returns a Promise, throw a clear error.
+        if (sorted.length >= 2 && args[0]) {
+          const probe = args[0](sorted[0], sorted[1])
+          if (probe && typeof probe === 'object' && typeof probe.then === 'function') {
+            throw new Error('@build Array.sort: comparator must be synchronous (async comparators silently produce wrong order). Use a sync comparison function.')
+          }
+        }
+        return sorted
+      }
       case 'slice':   return arr.slice(...args)
       case 'concat':  return arr.concat(...args)
       case 'flat':    return arr.flat(args[0] ?? 1)
@@ -264,8 +284,6 @@ class BuildExecutor {
       case '>':  return l > r
       case '<=': return l <= r
       case '>=': return l >= r
-      case '&&': return l && r
-      case '||': return l || r
       default: throw new Error(`Operator ${op} not supported at build time`)
     }
   }

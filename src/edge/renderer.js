@@ -113,9 +113,12 @@ class EdgeRenderer {
 
     // Build a map of span id → replacement value, then do a single-pass regex replace
     // instead of O(N) replaceAll calls over the full HTML string
-    const mapEntries = bindingExprs.map(({ id, exprStr }) =>
-      `  _m['${id}'] = _esc(String(${exprStr} ?? ''))`
-    ).join('\n')
+    // exprStr comes from stateBindings — escape backticks/backslashes so it can't
+    // break the surrounding template literal in the generated edge function.
+    const mapEntries = bindingExprs.map(({ id, exprStr }) => {
+      const safeExpr = exprStr.replace(/\\/g, '\\\\').replace(/`/g, '\\`')
+      return `  _m['${id}'] = _esc(String(${safeExpr} ?? ''))`
+    }).join('\n')
 
     const spanIds = bindingExprs.map(({ id }) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
 
@@ -145,7 +148,7 @@ class EdgeRenderer {
 
     return [
       escFn,
-      `const _SPAN_RE = new RegExp('<span id="(' + ${JSON.stringify(spanIds)} + ')" aria-live="polite"><\\/span>', 'g')`,
+      `const _SPAN_RE = new RegExp('<span id="(' + ${JSON.stringify(spanIds)} + ')" data-arc-live><\\/span>', 'g')`,
       ``,
       `function _fillHtml(data) {`,
       `  const { ${[...liveVarsUsed].filter(v => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(v) && v !== '__proto__' && v !== 'constructor' && v !== 'prototype').map(v => `${v} = undefined`).join(', ')} } = data`,
