@@ -632,6 +632,35 @@ page "T"
       assert.equal(emitter.emitExpr(null), '')
     })
 
+    test('evalStaticExpr returns undefined for BinaryExpr with unknown left', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.BinaryExpr('+', N.Identifier('unknown', 0), N.Literal(2, '2', 0), 0)
+      assert.equal(emitter.evalStaticExpr(expr), undefined)
+    })
+
+    test('evalStaticExpr returns undefined for TemplateLiteral with unknown part', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const tpl = N.TemplateLiteral([N.Identifier('unknown', 0)], 0)
+      assert.equal(emitter.evalStaticExpr(tpl), undefined)
+    })
+
+    test('evalStaticExpr returns undefined for MemberExpr with null object', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { user: null } })
+      const expr = N.MemberExpr(N.Identifier('user', 0), N.Identifier('name', 0), false, 0)
+      assert.equal(emitter.evalStaticExpr(expr), undefined)
+    })
+
+    test('emitWidgetInvocation with dynamic attr expression (not static)', async () => {
+      // Use a widget invoked with a @state-driven attr — dynamic, not static
+      const { html } = await compile(`widget Badge
+  span "{@label}"
+page "T"
+  @state let n = 5
+  Badge label={n}
+`)
+      assert.ok(html.includes('<span'), `Expected widget span in:\n${html}`)
+    })
+
     test('emitExpr for unknown type returns empty string', () => {
       const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
       assert.equal(emitter.emitExpr({ type: 'Weird', line: 0 }), '')

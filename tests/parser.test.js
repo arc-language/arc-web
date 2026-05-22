@@ -652,6 +652,30 @@ describe('Parser - ImportDecl', () => {
   })
 })
 
+describe('Parser - style rules with combinators', () => {
+  test('parses & selector for self-reference', () => {
+    const src = `page "T"
+  text "x"
+  design
+    .card
+      &:hover
+        bg: red`
+    const node = parse(src)
+    assert.ok(node)
+  })
+
+  test('parses nested .child rule', () => {
+    const src = `page "T"
+  text "x"
+  design
+    .parent
+      .child
+        bg: blue`
+    const node = parse(src)
+    assert.ok(node)
+  })
+})
+
 describe('Parser - shortcut element syntax', () => {
   test('.classname shortcut creates a div with that class', () => {
     const src = 'page "T"\n  .myclass\n    text "hi"'
@@ -799,8 +823,8 @@ page "T"
 })
 
 describe('Parser - async fn declaration', () => {
-  test('parses async keyword on top-level fn', () => {
-    const src = `async fn load() {
+  test('parses "fn async name" syntax', () => {
+    const src = `fn async load() {
   return 1
 }
 page "T"
@@ -808,6 +832,7 @@ page "T"
     const node = parse(src)
     const fn = node.declarations.find(d => d.type === 'FnDecl')
     assert.ok(fn, 'should produce FnDecl')
+    assert.equal(fn.isAsync, true)
   })
 })
 
