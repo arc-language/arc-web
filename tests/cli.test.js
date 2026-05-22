@@ -1,0 +1,496 @@
+'use strict'
+
+const { test, describe } = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('fs')
+const path = require('path')
+const os = require('os')
+
+const {
+  compile,
+  resolveImports,
+  composeClientJs,
+  hashString,
+  injectAssets,
+  fmt,
+  findArcFiles,
+  newProject,
+} = require('../src/cli')
+
+const TMPDIR = os.tmpdir()
+
+function mkTmpDir(name) {
+  const dir = fs.mkdtempSync(path.join(TMPDIR, `arc-test-${name}-`))
+  return dir
+}
+
+function rmDir(dir) {
+  try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
+}
+
+describe('cli — hashString', () => {
+  test('returns a non-negative 32-bit integer', () => {
+    const h = hashString('test.arc')
+    assert.ok(Number.isInteger(h))
+    assert.ok(h >= 0)
+    assert.ok(h <= 0xffffffff)
+  })
+
+  test('returns the same hash for the same input (deterministic)', () => {
+    assert.equal(hashString('hello'), hashString('hello'))
+  })
+
+  test('returns different hashes for different inputs', () => {
+    assert.notEqual(hashString('hello'), hashString('world'))
+  })
+
+  test('handles empty string', () => {
+    const h = hashString('')
+    assert.ok(Number.isInteger(h))
+  })
+})
+
+describe('cli — injectAssets', () => {
+  test('injects <script src="app.js"> before </body> when JS is non-empty', () => {
+    const html = '<html><body>hi</body></html>'
+    const result = injectAssets(html, 'const x = 1;')
+    assert.ok(result.includes('<script src="app.js" defer></script>'))
+    assert.ok(result.includes('</body>'))
+  })
+
+  test('does not inject script when JS is empty', () => {
+    const html = '<html><body>hi</body></html>'
+    const result = injectAssets(html, '')
+    assert.equal(result, html)
+  })
+
+  test('does not inject script when JS is only whitespace', () => {
+    const html = '<html><body>hi</body></html>'
+    const result = injectAssets(html, '   \n  ')
+    assert.equal(result, html)
+  })
+})
+
+describe('cli — fmt', () => {
+  test('formats bytes under 1024 as raw bytes', () => {
+    assert.equal(fmt(0), '0 bytes')
+    assert.equal(fmt(500), '500 bytes')
+    assert.equal(fmt(1023), '1023 bytes')
+  })
+
+  test('formats 1024+ bytes as KB with 1 decimal', () => {
+    assert.equal(fmt(1024), '1.0 KB')
+    assert.equal(fmt(2048), '2.0 KB')
+    assert.equal(fmt(1536), '1.5 KB')
+  })
+})
+
+describe('cli — composeClientJs', () => {
+  test('returns empty when all parts are empty', () => {
+    assert.equal(composeClientJs('', '', ''), '')
+  })
+
+  test('returns only reactive when no stubs/realtime', () => {
+    const reactive = 'const _x = 1;'
+    const result = composeClientJs(reactive, '', '')
+    assert.equal(result, reactive)
+  })
+
+  test('includes ADP runtime when stubs are present', () => {
+    const result = composeClientJs('', 'const stub = () => {}', '')
+    assert.ok(result.includes('_adpEncode'), `Expected ADP runtime in result`)
+    assert.ok(result.includes('const stub'))
+  })
+
+  test('includes ADP runtime when realtime is present', () => {
+    const result = composeClientJs('', '', 'const _rt = new WebSocket()')
+    assert.ok(result.includes('_adpEncode'))
+    assert.ok(result.includes('_rt'))
+  })
+
+  test('combines all parts in order: runtime, stubs, reactive, realtime', () => {
+    const result = composeClientJs('REACT', 'STUBS', 'REALT')
+    const runtimePos = result.indexOf('_adpEncode')
+    const stubsPos = result.indexOf('STUBS')
+    const reactPos = result.indexOf('REACT')
+    const realtPos = result.indexOf('REALT')
+    assert.ok(runtimePos < stubsPos)
+    assert.ok(stubsPos < reactPos)
+    assert.ok(reactPos < realtPos)
+  })
+})
+
+describe('cli — findArcFiles', () => {
+  test('finds .arc files recursively in a directory', () => {
+    const dir = mkTmpDir('findarc')
+    try {
+      fs.writeFileSync(path.join(dir, 'a.arc'), 'page "A"')
+      fs.writeFileSync(path.join(dir, 'b.arc'), 'page "B"')
+      fs.mkdirSync(path.join(dir, 'sub'))
+      fs.writeFileSync(path.join(dir, 'sub', 'c.arc'), 'page "C"')
+      const found = findArcFiles(dir)
+      assert.equal(found.length, 3)
+      assert.ok(found.some(f => f.endsWith('a.arc')))
+      assert.ok(found.some(f => f.endsWith('c.arc')))
+    } finally { rmDir(dir) }
+  })
+
+  test('skips node_modules and dist directories', () => {
+    const dir = mkTmpDir('findskip')
+    try {
+      fs.writeFileSync(path.join(dir, 'main.arc'), 'page "A"')
+      fs.mkdirSync(path.join(dir, 'node_modules'))
+      fs.writeFileSync(path.join(dir, 'node_modules', 'skip.arc'), 'page "X"')
+      fs.mkdirSync(path.join(dir, 'dist'))
+      fs.writeFileSync(path.join(dir, 'dist', 'also_skip.arc'), 'page "X"')
+      const found = findArcFiles(dir)
+      assert.equal(found.length, 1)
+      assert.ok(found[0].endsWith('main.arc'))
+    } finally { rmDir(dir) }
+  })
+
+  test('returns empty array for unreadable directory', () => {
+    const found = findArcFiles('/nonexistent/path/that/does/not/exist')
+    assert.deepEqual(found, [])
+  })
+
+  test('ignores non-.arc files', () => {
+    const dir = mkTmpDir('nonarc')
+    try {
+      fs.writeFileSync(path.join(dir, 'a.arc'), 'page "A"')
+      fs.writeFileSync(path.join(dir, 'b.js'), 'const x = 1')
+      fs.writeFileSync(path.join(dir, 'c.txt'), 'hello')
+      const found = findArcFiles(dir)
+      assert.equal(found.length, 1)
+    } finally { rmDir(dir) }
+  })
+})
+
+describe('cli — resolveImports', () => {
+  test('resolves named widget imports from another .arc file', async () => {
+    const dir = mkTmpDir('imports')
+    try {
+      fs.writeFileSync(path.join(dir, 'card.arc'), `widget Card
+  div
+    text "{@label}"
+`)
+      fs.writeFileSync(path.join(dir, 'main.arc'), `import { Card } from "./card"
+page "T"
+  Card label="Hi"
+`)
+      const r = await compile(
+        fs.readFileSync(path.join(dir, 'main.arc'), 'utf8'),
+        path.join(dir, 'main.arc'),
+        { projectDir: dir }
+      )
+      assert.ok(r.html.includes('Hi'), `Expected Card widget content in:\n${r.html}`)
+    } finally { rmDir(dir) }
+  })
+
+  test('warns on missing import (does not throw)', async () => {
+    const dir = mkTmpDir('missingimp')
+    try {
+      fs.writeFileSync(path.join(dir, 'main.arc'), `import { Card } from "./nonexistent"
+page "T"
+  text "ok"
+`)
+      // Should compile without throwing; the import is silently skipped
+      const r = await compile(
+        fs.readFileSync(path.join(dir, 'main.arc'), 'utf8'),
+        path.join(dir, 'main.arc'),
+        { projectDir: dir }
+      )
+      assert.ok(r.html.includes('ok'))
+    } finally { rmDir(dir) }
+  })
+
+  test('skips stdlib imports (arc/...)', async () => {
+    const dir = mkTmpDir('stdlib')
+    try {
+      fs.writeFileSync(path.join(dir, 'main.arc'), `import { format } from "arc/date"
+page "T"
+  text "ok"
+`)
+      const r = await compile(
+        fs.readFileSync(path.join(dir, 'main.arc'), 'utf8'),
+        path.join(dir, 'main.arc'),
+        { projectDir: dir }
+      )
+      assert.ok(r.html.includes('ok'))
+    } finally { rmDir(dir) }
+  })
+
+  test('blocks imports that escape project root', async () => {
+    const dir = mkTmpDir('escape')
+    try {
+      fs.writeFileSync(path.join(dir, 'main.arc'), `import { Card } from "../../../etc/passwd"
+page "T"
+  text "ok"
+`)
+      const r = await compile(
+        fs.readFileSync(path.join(dir, 'main.arc'), 'utf8'),
+        path.join(dir, 'main.arc'),
+        { projectDir: dir }
+      )
+      // Should compile without errors — the escape attempt is just warned and skipped
+      assert.ok(r.html.includes('ok'))
+    } finally { rmDir(dir) }
+  })
+
+  test('does not re-process an already-visited file (cycle prevention)', async () => {
+    const dir = mkTmpDir('cycle')
+    try {
+      fs.writeFileSync(path.join(dir, 'a.arc'), `import { B } from "./b"
+widget A
+  text "A"
+`)
+      fs.writeFileSync(path.join(dir, 'b.arc'), `import { A } from "./a"
+widget B
+  text "B"
+`)
+      fs.writeFileSync(path.join(dir, 'main.arc'), `import { A } from "./a"
+page "T"
+  A
+`)
+      const r = await compile(
+        fs.readFileSync(path.join(dir, 'main.arc'), 'utf8'),
+        path.join(dir, 'main.arc'),
+        { projectDir: dir }
+      )
+      assert.ok(r.html.includes('A'))
+    } finally { rmDir(dir) }
+  })
+})
+
+describe('cli — newProject', () => {
+  test('creates default template project files', () => {
+    const dir = mkTmpDir('newproj')
+    const projDir = path.join(dir, 'myapp')
+    try {
+      const cwd = process.cwd()
+      process.chdir(dir)
+      try {
+        newProject('myapp')
+      } finally {
+        process.chdir(cwd)
+      }
+      assert.ok(fs.existsSync(path.join(projDir, 'index.arc')))
+      assert.ok(fs.existsSync(path.join(projDir, 'package.json')))
+      assert.ok(fs.existsSync(path.join(projDir, '.gitignore')))
+      const pkg = JSON.parse(fs.readFileSync(path.join(projDir, 'package.json'), 'utf8'))
+      assert.equal(pkg.name, 'myapp')
+    } finally { rmDir(dir) }
+  })
+
+  test('creates counter template when specified', () => {
+    const dir = mkTmpDir('newctr')
+    const projDir = path.join(dir, 'ctr-app')
+    try {
+      const cwd = process.cwd()
+      process.chdir(dir)
+      try {
+        newProject('ctr-app', 'counter')
+      } finally {
+        process.chdir(cwd)
+      }
+      const arc = fs.readFileSync(path.join(projDir, 'index.arc'), 'utf8')
+      assert.ok(arc.includes('@state let count'), `Expected counter @state in:\n${arc}`)
+    } finally { rmDir(dir) }
+  })
+
+  test('creates blog template when specified', () => {
+    const dir = mkTmpDir('newblog')
+    const projDir = path.join(dir, 'blog-app')
+    try {
+      const cwd = process.cwd()
+      process.chdir(dir)
+      try {
+        newProject('blog-app', 'blog')
+      } finally {
+        process.chdir(cwd)
+      }
+      const arc = fs.readFileSync(path.join(projDir, 'index.arc'), 'utf8')
+      assert.ok(arc.includes('@build const posts'), `Expected blog @build in:\n${arc}`)
+    } finally { rmDir(dir) }
+  })
+
+  test('sanitizes project name in package.json (lowercase, valid chars)', () => {
+    const dir = mkTmpDir('newsanitize')
+    const projDir = path.join(dir, 'My_App!Name')
+    try {
+      const cwd = process.cwd()
+      process.chdir(dir)
+      try {
+        newProject('My_App!Name')
+      } finally {
+        process.chdir(cwd)
+      }
+      const pkg = JSON.parse(fs.readFileSync(path.join(projDir, 'package.json'), 'utf8'))
+      // Should be lowercased, special chars replaced with -
+      assert.ok(/^[a-z0-9-]+$/.test(pkg.name), `Expected valid name, got: ${pkg.name}`)
+    } finally { rmDir(dir) }
+  })
+})
+
+describe('cli — build command (subprocess)', () => {
+  const { execFileSync } = require('child_process')
+  const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+
+  test('builds a minimal Arc project to dist/', () => {
+    const dir = mkTmpDir('build')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "Hello"\n  text "world"')
+      execFileSync('node', [cliPath, 'build', dir], { stdio: 'pipe' })
+      assert.ok(fs.existsSync(path.join(dir, 'dist', 'index.html')))
+      const html = fs.readFileSync(path.join(dir, 'dist', 'index.html'), 'utf8')
+      assert.ok(html.includes('Hello'))
+      assert.ok(html.includes('world'))
+    } finally { rmDir(dir) }
+  })
+
+  test('build exits non-zero on checker error', () => {
+    const dir = mkTmpDir('builderr')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "{undeclaredVariable}"')
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'build', dir], { stdio: 'pipe' }),
+        /Command failed/
+      )
+    } finally { rmDir(dir) }
+  })
+
+  test('build exits non-zero when dir has no .arc files', () => {
+    const dir = mkTmpDir('buildempty')
+    try {
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'build', dir], { stdio: 'pipe' }),
+        /Command failed/
+      )
+    } finally { rmDir(dir) }
+  })
+
+  test('build emits @server edge function output to _arc/functions.js', () => {
+    const dir = mkTmpDir('buildedge')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), `page "T"
+  @server fn greet() {
+    return "hi"
+  }
+  text "ok"
+`)
+      execFileSync('node', [cliPath, 'build', dir], { stdio: 'pipe' })
+      assert.ok(fs.existsSync(path.join(dir, 'dist', '_arc', 'functions.js')))
+    } finally { rmDir(dir) }
+  })
+})
+
+describe('cli — check command (subprocess)', () => {
+  const { execFileSync } = require('child_process')
+  const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+
+  test('check passes on a clean file', () => {
+    const dir = mkTmpDir('check')
+    try {
+      const file = path.join(dir, 'clean.arc')
+      fs.writeFileSync(file, 'page "T"\n  text "ok"')
+      const out = execFileSync('node', [cliPath, 'check', file], { stdio: 'pipe' }).toString()
+      assert.ok(out.includes('clean.arc') || out.includes('✓'))
+    } finally { rmDir(dir) }
+  })
+
+  test('check exits non-zero on an undefined variable', () => {
+    const dir = mkTmpDir('checkerr')
+    try {
+      const file = path.join(dir, 'bad.arc')
+      fs.writeFileSync(file, 'page "T"\n  text "{undeclared}"')
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'check', file], { stdio: 'pipe' }),
+        /Command failed/
+      )
+    } finally { rmDir(dir) }
+  })
+
+  test('check with no args scans current directory', () => {
+    const dir = mkTmpDir('checkcwd')
+    try {
+      fs.writeFileSync(path.join(dir, 'a.arc'), 'page "A"\n  text "ok"')
+      const out = execFileSync('node', [cliPath, 'check'], { stdio: 'pipe', cwd: dir }).toString()
+      assert.ok(out.includes('a.arc') || out.includes('✓'))
+    } finally { rmDir(dir) }
+  })
+})
+
+describe('cli — version and help', () => {
+  const { execFileSync } = require('child_process')
+  const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+
+  test('--version prints the package version', () => {
+    const out = execFileSync('node', [cliPath, '--version'], { stdio: 'pipe' }).toString()
+    assert.ok(/^\d+\.\d+\.\d+/.test(out.trim()), `Expected version string, got: ${out}`)
+  })
+
+  test('no arg prints help text mentioning subcommands', () => {
+    const out = execFileSync('node', [cliPath], { stdio: 'pipe' }).toString()
+    assert.ok(out.includes('build'))
+    assert.ok(out.includes('check'))
+    assert.ok(out.includes('new'))
+    assert.ok(out.includes('deploy'))
+  })
+})
+
+describe('cli — new command (subprocess)', () => {
+  const { execFileSync } = require('child_process')
+  const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+
+  test('new without name exits non-zero', () => {
+    assert.throws(
+      () => execFileSync('node', [cliPath, 'new'], { stdio: 'pipe' }),
+      /Command failed/
+    )
+  })
+
+  test('new with unknown template exits non-zero', () => {
+    const dir = mkTmpDir('newbad')
+    try {
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'new', 'app', '--template', 'unknown'], { stdio: 'pipe', cwd: dir }),
+        /Command failed/
+      )
+    } finally { rmDir(dir) }
+  })
+})
+
+describe('cli — deploy command (subprocess)', () => {
+  const { execFileSync } = require('child_process')
+  const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+
+  test('deploy with unknown target exits non-zero', () => {
+    const dir = mkTmpDir('deploybad')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "ok"')
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'deploy', dir, '--target', 'unknown'], { stdio: 'pipe' }),
+        /Command failed/
+      )
+    } finally { rmDir(dir) }
+  })
+
+  test('deploy --target node generates server.js', () => {
+    const dir = mkTmpDir('deploynode')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "ok"')
+      execFileSync('node', [cliPath, 'deploy', dir, '--target', 'node'], { stdio: 'pipe' })
+      assert.ok(fs.existsSync(path.join(dir, 'server.js')))
+    } finally { rmDir(dir) }
+  })
+
+  test('deploy --target cloudflare generates worker.js and wrangler.toml', () => {
+    const dir = mkTmpDir('deploycf')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "ok"')
+      execFileSync('node', [cliPath, 'deploy', dir, '--target', 'cloudflare'], { stdio: 'pipe' })
+      assert.ok(fs.existsSync(path.join(dir, 'worker.js')))
+      assert.ok(fs.existsSync(path.join(dir, 'wrangler.toml')))
+    } finally { rmDir(dir) }
+  })
+})

@@ -876,4 +876,18 @@ function findArcFiles(dir) {
   return results
 }
 
-module.exports = { compile }
+module.exports = {
+  compile,
+  resolveImports,
+  composeClientJs,
+  hashString,
+  injectAssets,
+  fmt,
+  findArcFiles,
+  newProject,
+  check,
+  build,
+  deploy,
+  formatError,
+  showSourceContext,
+}

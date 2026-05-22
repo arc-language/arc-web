@@ -3,6 +3,8 @@
 const { test, describe } = require('node:test')
 const assert = require('node:assert/strict')
 const { compile } = require('../src/cli')
+const { JsEmitter } = require('../src/emitters/js')
+const N = require('../src/ast')
 
 describe('JS Emitter', () => {
 
@@ -425,7 +427,119 @@ describe('JS Emitter', () => {
       assert.ok(r.edgeFunctions.includes('break'), `Expected break statement`)
     })
 
-    test('class declaration compiles to JS class', async () => {
+    test('class declaration via direct emitter — emits JS class syntax', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const classDecl = N.ClassDecl('Counter', [
+        N.ClassField('count', null, N.Literal(0, '0', 0), false, 0),
+      ], [
+        N.ClassMethod('increment', [], null,
+          { type: 'BlockStatement', body: [
+            N.ReturnStatement(N.Literal(1, '1', 0), 0)
+          ], line: 0 }, false, false, 0)
+      ], 0)
+      const result = emitter.emitStmt(classDecl)
+      assert.ok(result.includes('class Counter'), `Expected class Counter in: ${result}`)
+      assert.ok(result.includes('increment'), `Expected method name in: ${result}`)
+      assert.ok(result.includes('count=0'), `Expected field init in: ${result}`)
+    })
+
+    test('class declaration with static field via direct emitter', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const classDecl = N.ClassDecl('Foo', [
+        N.ClassField('VERSION', null, N.Literal(1, '1', 0), true, 0),
+      ], [], 0)
+      const result = emitter.emitStmt(classDecl)
+      assert.ok(result.includes('static VERSION'), `Expected static field: ${result}`)
+    })
+
+    test('class declaration with getter via direct emitter', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const classDecl = N.ClassDecl('Box', [], [
+        N.ClassMethod('value', [], null,
+          { type: 'BlockStatement', body: [N.ReturnStatement(N.Literal(42, '42', 0), 0)], line: 0 },
+          false, true, 0)
+      ], 0)
+      const result = emitter.emitStmt(classDecl)
+      assert.ok(result.includes('get value'), `Expected getter syntax: ${result}`)
+    })
+
+    test('fn declaration with rest param via direct emitter', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const fnDecl = N.FnDecl('sum',
+        [N.Param('args', null, null, true, 0)],
+        null,
+        { type: 'BlockStatement', body: [N.ReturnStatement(N.Literal(0, '0', 0), 0)], line: 0 },
+        false,
+        0)
+      const result = emitter.emitStmt(fnDecl)
+      assert.ok(result.includes('function sum(...args)'), `Expected rest param: ${result}`)
+    })
+
+    test('fn declaration with default param via direct emitter', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const fnDecl = N.FnDecl('greet',
+        [N.Param('name', null, N.Literal('guest', '"guest"', 0), false, 0)],
+        null,
+        { type: 'BlockStatement', body: [N.ReturnStatement(N.Identifier('name', 0), 0)], line: 0 },
+        false,
+        0)
+      const result = emitter.emitStmt(fnDecl)
+      assert.ok(result.includes('name="guest"'), `Expected default value: ${result}`)
+    })
+
+    test('async fn declaration emits async prefix', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const fnDecl = N.FnDecl('load', [], null,
+        { type: 'BlockStatement', body: [N.ReturnStatement(N.Literal(0, '0', 0), 0)], line: 0 },
+        true,
+        0)
+      const result = emitter.emitStmt(fnDecl)
+      assert.ok(result.includes('async function load'), `Expected async prefix: ${result}`)
+    })
+
+    test('fn declaration with expression body emits return', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const fnDecl = N.FnDecl('double',
+        [N.Param('x', null, null, false, 0)],
+        null,
+        N.BinaryExpr('*', N.Identifier('x', 0), N.Literal(2, '2', 0), 0),
+        false,
+        0)
+      const result = emitter.emitStmt(fnDecl)
+      assert.ok(result.includes('return'), `Expected return for expr body: ${result}`)
+      assert.ok(result.includes('x*2') || result.includes('x * 2'))
+    })
+
+    test('match statement via direct emitter emits const subj + if/else', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const stmt = N.MatchStatement(N.Identifier('x', 0), [
+        N.MatchArm(N.Literal(0, '0', 0),
+          { type: 'BlockStatement', body: [
+            N.ExprStatement(N.AssignExpr('=', N.Identifier('y', 0), N.Literal(1, '1', 0), 0), 0)
+          ], line: 0 }, 0),
+        N.MatchArm({ type: 'Wildcard', line: 0 },
+          { type: 'BlockStatement', body: [
+            N.ExprStatement(N.AssignExpr('=', N.Identifier('y', 0), N.Literal(2, '2', 0), 0), 0)
+          ], line: 0 }, 0),
+      ], 0)
+      const result = emitter.emitStmt(stmt)
+      assert.ok(result.includes('const _ms'), `Expected match subject const: ${result}`)
+      assert.ok(result.includes('if('), `Expected if dispatch: ${result}`)
+    })
+
+    test('match statement with identifier binding pattern', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const stmt = N.MatchStatement(N.Identifier('x', 0), [
+        N.MatchArm(N.Identifier('n', 0),
+          { type: 'BlockStatement', body: [
+            N.ExprStatement(N.Identifier('n', 0), 0)
+          ], line: 0 }, 0),
+      ], 0)
+      const result = emitter.emitStmt(stmt)
+      assert.ok(result.includes('const n='), `Expected binding: ${result}`)
+    })
+
+    test('class declaration compiles to JS class (via compile)', async () => {
       const { js } = await compile(`class Counter {
   @count = 0
   fn increment() { return 1 }

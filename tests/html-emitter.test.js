@@ -3,6 +3,8 @@
 const { test, describe } = require('node:test')
 const assert = require('node:assert/strict')
 const { compile } = require('../src/cli')
+const { HtmlEmitter } = require('../src/emitters/html')
+const N = require('../src/ast')
 
 describe('HTML Emitter', () => {
 
@@ -380,6 +382,167 @@ page "T"
     text "{item}"`
       const { html } = await compile(src)
       assert.ok(html.includes('aria-live'), `Expected aria-live list container in:\n${html}`)
+    })
+  })
+
+  describe('helper functions via direct emitter', () => {
+    test('isStaticExpr returns true for Literal nodes', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.isStaticExpr(N.Literal(42, '42', 0)), true)
+    })
+
+    test('isStaticExpr returns true for @build identifier in buildContext', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { count: 10 } })
+      assert.equal(emitter.isStaticExpr(N.Identifier('count', 0)), true)
+    })
+
+    test('isStaticExpr returns false for undeclared identifier', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.isStaticExpr(N.Identifier('unknown', 0)), false)
+    })
+
+    test('isStaticExpr returns true for BinaryExpr of two literals', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.BinaryExpr('+', N.Literal(1, '1', 0), N.Literal(2, '2', 0), 0)
+      assert.equal(emitter.isStaticExpr(expr), true)
+    })
+
+    test('isStaticExpr returns true for TemplateLiteral with all static parts', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const tpl = N.TemplateLiteral([N.Literal('hi', '"hi"', 0)], 0)
+      assert.equal(emitter.isStaticExpr(tpl), true)
+    })
+
+    test('isStaticExpr returns true for MemberExpr on static object', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { user: { name: 'A' } } })
+      const expr = N.MemberExpr(N.Identifier('user', 0), N.Identifier('name', 0), false, 0)
+      assert.equal(emitter.isStaticExpr(expr), true)
+    })
+
+    test('evalStaticExpr on Literal returns its value', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.evalStaticExpr(N.Literal(42, '42', 0)), 42)
+    })
+
+    test('evalStaticExpr on BinaryExpr computes the result', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.BinaryExpr('+', N.Literal(2, '2', 0), N.Literal(3, '3', 0), 0)
+      assert.equal(emitter.evalStaticExpr(expr), 5)
+    })
+
+    test('evalStaticExpr on MemberExpr reads from buildContext', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { user: { name: 'Alice' } } })
+      const expr = N.MemberExpr(N.Identifier('user', 0), N.Identifier('name', 0), false, 0)
+      assert.equal(emitter.evalStaticExpr(expr), 'Alice')
+    })
+
+    test('evalStaticExpr on TemplateLiteral concatenates', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { name: 'World' } })
+      const tpl = N.TemplateLiteral([
+        N.Literal('Hello ', '"Hello "', 0),
+        N.Identifier('name', 0),
+        N.Literal('!', '"!"', 0),
+      ], 0)
+      assert.equal(emitter.evalStaticExpr(tpl), 'Hello World!')
+    })
+
+    test('applyOp arithmetic operations', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.applyOp('+', 1, 2), 3)
+      assert.equal(emitter.applyOp('-', 5, 2), 3)
+      assert.equal(emitter.applyOp('*', 3, 4), 12)
+      assert.equal(emitter.applyOp('/', 10, 2), 5)
+      assert.equal(emitter.applyOp('%', 10, 3), 1)
+      assert.equal(emitter.applyOp('unknown', 1, 2), undefined)
+    })
+
+    test('exprToString for Literal renders JSON', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.exprToString(N.Literal(42, '42', 0)), '42')
+      assert.equal(emitter.exprToString(N.Literal('hi', '"hi"', 0)), '"hi"')
+    })
+
+    test('exprToString for AtProperty prefixes with @', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.exprToString(N.AtProperty('count', 0)), '@count')
+    })
+
+    test('exprToString for MemberExpr (dotted)', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.MemberExpr(N.Identifier('user', 0), N.Identifier('name', 0), false, 0)
+      assert.equal(emitter.exprToString(expr), 'user.name')
+    })
+
+    test('exprToString for MemberExpr (computed [])', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.MemberExpr(N.Identifier('arr', 0), N.Literal(0, '0', 0), true, 0)
+      assert.equal(emitter.exprToString(expr), 'arr[0]')
+    })
+
+    test('exprToString for BinaryExpr wraps in parens', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.BinaryExpr('+', N.Identifier('a', 0), N.Identifier('b', 0), 0)
+      assert.equal(emitter.exprToString(expr), '(a+b)')
+    })
+
+    test('exprToString for OptionalChain uses ?.', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = { type: 'OptionalChain',
+        object: N.Identifier('user', 0),
+        property: N.Identifier('name', 0),
+        line: 0 }
+      assert.equal(emitter.exprToString(expr), 'user?.name')
+    })
+
+    test('exprToString for NullCoalesce uses ??', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.NullCoalesce(N.Identifier('a', 0), N.Literal('b', '"b"', 0), 0)
+      assert.equal(emitter.exprToString(expr), '(a??"b")')
+    })
+
+    test('exprToString for TernaryExpr renders ? :', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.TernaryExpr(
+        N.Identifier('cond', 0),
+        N.Literal('a', '"a"', 0),
+        N.Literal('b', '"b"', 0),
+        0)
+      assert.equal(emitter.exprToString(expr), '(cond?"a":"b")')
+    })
+
+    test('exprToString for ArrayLiteral renders [...]', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.ArrayLiteral([N.Literal(1, '1', 0), N.Literal(2, '2', 0)], 0)
+      assert.equal(emitter.exprToString(expr), '[1,2]')
+    })
+
+    test('exprToString for unknown node type returns undefined', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.exprToString({ type: 'Weird', line: 0 }), 'undefined')
+    })
+
+    test('exprToString for CallExpr renders fn(args)', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.CallExpr(N.Identifier('fn', 0), [N.Literal(1, '1', 0)], 0)
+      assert.equal(emitter.exprToString(expr), 'fn(1)')
+    })
+
+    test('exprToString for UnaryExpr', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.UnaryExpr('!', N.Identifier('x', 0), 0)
+      assert.equal(emitter.exprToString(expr), '(!x)')
+    })
+
+    test('exprToString for LogicalExpr', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.LogicalExpr('&&', N.Identifier('a', 0), N.Identifier('b', 0), 0)
+      assert.equal(emitter.exprToString(expr), '(a&&b)')
+    })
+
+    test('exprToString for AwaitExpr', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = { type: 'AwaitExpr', argument: N.Identifier('p', 0), line: 0 }
+      assert.equal(emitter.exprToString(expr), 'await p')
     })
   })
 
