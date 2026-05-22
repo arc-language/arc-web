@@ -3,6 +3,15 @@
 const _ESC_RE = /[&<>"']/g
 const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }
 
+// U+2028/U+2029 are JS line terminators — must be escaped when embedded in inline event handlers
+const _LS2028 = '\u2028', _LS2029 = '\u2029'
+function _safeInlineId(val) {
+  return JSON.stringify(String(val))
+    .split(_LS2028).join('\\u2028')
+    .split(_LS2029).join('\\u2029')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 // Maps Arc element names to HTML element names
 const ELEMENT_MAP = {
   // Arc layout primitives → semantic/div HTML
@@ -176,8 +185,9 @@ class HtmlEmitter {
   }
 
   emitWidgetInvocation(widgetDecl, attrs, slotChildren) {
-    // Save and replace currentAttrs for this widget invocation
+    // Save and replace currentAttrs/slotChildren for this widget invocation
     const outerAttrs = this.currentAttrs
+    const outerSlot = this.slotChildren
     // Resolve attr values: string literals, static exprs
     const resolvedAttrs = {}
     for (const [k, v] of Object.entries(attrs ?? {})) {
@@ -192,6 +202,7 @@ class HtmlEmitter {
     this.slotChildren = slotChildren ?? []
     const result = this.emitChildren(widgetDecl.body)
     this.currentAttrs = outerAttrs
+    this.slotChildren = outerSlot
     return result
   }
 
@@ -208,7 +219,12 @@ class HtmlEmitter {
 
   emitChildren(children) {
     if (!children || children.length === 0) return ''
-    return children.map(c => this.emitNode(c)).filter(Boolean).join('\n')
+    const parts = []
+    for (const c of children) {
+      const s = this.emitNode(c)
+      if (s) parts.push(s)
+    }
+    return parts.join('\n')
   }
 
   emitNode(node) {
@@ -316,13 +332,13 @@ class HtmlEmitter {
 
       // <dialog> trigger: trigger="id" → onclick that calls showModal() then focuses first focusable child
       if (key === 'trigger') {
-        const safeId = JSON.stringify(String(value)).split(String.fromCharCode(0x2028)).join('\\u2028').split(String.fromCharCode(0x2029)).join('\\u2029').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+        const safeId = _safeInlineId(value)
         parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)_f.focus();}"`)
         continue
       }
       // <dialog> close: close="id" → onclick that calls close()
       if (key === 'close') {
-        const safeId = JSON.stringify(String(value)).split(String.fromCharCode(0x2028)).join('\\u2028').split(String.fromCharCode(0x2029)).join('\\u2029').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+        const safeId = _safeInlineId(value)
         parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d)_d.close()"`)
         continue
       }

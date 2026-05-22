@@ -156,7 +156,7 @@ ${edgeRoutingBlock}
     return
   }
 
-  res.writeHead(404)
+  res.writeHead(404, { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'SAMEORIGIN' })
   res.end('Not found')
 })
 

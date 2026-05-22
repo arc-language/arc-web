@@ -9,6 +9,7 @@ jobs:
   test:
     name: Tests (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         node: [20, 22]
@@ -30,5 +31,8 @@ jobs:
         run: find tests -name '*.test.js' | xargs node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=70
         if: matrix.node == 22
       - name: Build smoke test
-        run: node src/cli.js build examples/counter
         if: matrix.node == 22
+        run: |
+          node src/cli.js build examples/counter
+          test -s examples/counter/dist/index.html
+          grep -q '<!DOCTYPE html>' examples/counter/dist/index.html

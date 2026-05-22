@@ -629,7 +629,12 @@ class JsEmitter {
   emitBody(stmts) {
     if (!stmts) return ''
     if (!Array.isArray(stmts)) return this.emitStmt(stmts)
-    return stmts.map(s => this.emitStmt(s)).join('\n')
+    const parts = []
+    for (const s of stmts) {
+      const r = this.emitStmt(s)
+      if (r) parts.push(r)
+    }
+    return parts.join('\n')
   }
 
   emitStmt(stmt) {

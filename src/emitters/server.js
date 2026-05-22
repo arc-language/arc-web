@@ -10,6 +10,8 @@
 
 const { JsEmitter } = require('./js')
 
+const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
+
 // Inlined ADP encode/decode for generated edge workers (no require() in CF Workers ESM)
 const ADP_EDGE_RUNTIME = `
 // ADP encode/decode — inlined by Arc compiler (singletons avoid per-call allocation)
@@ -100,8 +102,7 @@ class ServerEmitter {
   }
 
   emitEdgeHandler(fn) {
-    const SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
-    if (!SAFE_IDENT.test(fn.name)) throw new Error(`Arc codegen: unsafe @server fn name: ${JSON.stringify(fn.name)}`)
+    if (!_SAFE_IDENT.test(fn.name)) throw new Error(`Arc codegen: unsafe @server fn name: ${JSON.stringify(fn.name)}`)
     const params = (fn.params ?? []).map(p => p.name ?? p).join(', ')
     const body = fn.body?.type === 'BlockStatement'
       ? this.jsEmitter.emitBody(fn.body.body)
@@ -109,7 +110,7 @@ class ServerEmitter {
     // Extract only own-property values to prevent prototype pollution via destructuring
     const paramExtract = (fn.params ?? []).map(p => {
       const name = p.name ?? p
-      if (!SAFE_IDENT.test(name)) throw new Error(`Arc codegen: unsafe @server param name: ${JSON.stringify(name)}`)
+      if (!_SAFE_IDENT.test(name)) throw new Error(`Arc codegen: unsafe @server param name: ${JSON.stringify(name)}`)
       return `const ${name} = Object.prototype.hasOwnProperty.call(_body,'${name}') ? _body['${name}'] : undefined`
     }).join('; ')
 

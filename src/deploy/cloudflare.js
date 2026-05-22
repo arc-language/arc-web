@@ -46,8 +46,8 @@ async function handleEdgeFunction(path, request) {
   try {
     return await fn(request)
   } catch (e) {
-    console.error('[arc] edge function error:', e)
-    return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    console.error('[arc] edge function error:', e instanceof Error ? e.message : String(e))
+    return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' } })
   }
 }
 `
@@ -84,6 +84,11 @@ export default {
     const url = new URL(request.url)
     let path = url.pathname
     if (path === '' || path === '/') path = '/'
+    if (path === '/_arc/health') {
+      return new Response(JSON.stringify({ status: 'ok', runtime: 'cloudflare-workers' }), {
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
 ${edgeRoutingBlock}
     const asset = ASSETS[path]
     if (asset !== undefined) {
@@ -91,14 +96,16 @@ ${edgeRoutingBlock}
       return new Response(asset, {
         headers: {
           'Content-Type': contentType,
+          'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",
           'X-Content-Type-Options': 'nosniff',
           'X-Frame-Options': 'SAMEORIGIN',
           'Referrer-Policy': 'strict-origin-when-cross-origin',
+          'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
         },
       })
     }
 
-    return new Response('Not found', { status: 404 })
+    return new Response('Not found', { status: 404, headers: { 'X-Content-Type-Options': 'nosniff' } })
   },
 }
 `

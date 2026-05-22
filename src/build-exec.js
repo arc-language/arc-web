@@ -159,7 +159,7 @@ class BuildExecutor {
     if (callee.type === 'Identifier' && callee.name === 'readFile') {
       if (!expr.args || expr.args.length === 0) throw new Error('@build readFile: requires a path argument')
       const filePath = await this.evalExpr(expr.args[0], locals)
-      return this.doReadFile(filePath)
+      return await this.doReadFile(filePath)
     }
 
     // Array.from(iterable)
@@ -228,16 +228,14 @@ class BuildExecutor {
         for (const item of arr) { if (await args[0](item)) return item } return undefined
       }
       case 'sort': {
-        const sorted = [...arr].sort(args[0])
-        // Detect async comparator: Array.sort expects a sync comparator returning a number.
-        // Arc arrow functions are async — if the first comparison returns a Promise, throw a clear error.
-        if (sorted.length >= 2 && args[0]) {
-          const probe = args[0](sorted[0], sorted[1])
+        // Probe comparator before sorting to detect async comparators early
+        if (arr.length >= 2 && args[0]) {
+          const probe = args[0](arr[0], arr[1])
           if (probe && typeof probe === 'object' && typeof probe.then === 'function') {
             throw new Error('@build Array.sort: comparator must be synchronous (async comparators silently produce wrong order). Use a sync comparison function.')
           }
         }
-        return sorted
+        return [...arr].sort(args[0])
       }
       case 'slice':   return arr.slice(...args)
       case 'concat':  return arr.concat(...args)
@@ -388,7 +386,7 @@ class BuildExecutor {
   // Sensitive filename patterns that @build readFile must never expose
   static _SENSITIVE_FILE_RE = /(?:^|[/\\])(?:\.env(?:\..+)?|\.envrc|\.netrc|credentials(?:\.json)?|secrets(?:\.json)?|\.aws[/\\]credentials|\.ssh[/\\]id_[a-z]+(?:\.pub)?|.*\.pem|.*\.key|.*\.p12|.*\.pfx|.*\.cer|.*\.crt)$/i
 
-  doReadFile(filePath) {
+  async doReadFile(filePath) {
     if (BuildExecutor._SENSITIVE_FILE_RE.test(filePath)) {
       throw new Error(`@build readFile: refusing to read sensitive file: ${path.basename(filePath)}`)
     }
@@ -404,10 +402,10 @@ class BuildExecutor {
       throw new Error(`@build readFile: path escapes project root: ${filePath}`)
     }
     let stat
-    try { stat = fs.statSync(resolved) } catch (e) { throw new Error(`@build readFile: cannot read '${filePath}': ${e.code ?? e.message}`) }
+    try { stat = await fs.promises.stat(resolved) } catch (e) { throw new Error(`@build readFile: cannot read '${filePath}': ${e.code ?? e.message}`) }
     if (stat.size > 10 * 1024 * 1024) throw new Error(`@build readFile: file too large (max 10MB): ${filePath}`)
     let content
-    try { content = fs.readFileSync(resolved, 'utf8') } catch (e) { throw new Error(`@build readFile: cannot read '${filePath}': ${e.code ?? e.message}`) }
+    try { content = await fs.promises.readFile(resolved, 'utf8') } catch (e) { throw new Error(`@build readFile: cannot read '${filePath}': ${e.code ?? e.message}`) }
     if (filePath.endsWith('.json')) {
       try { return JSON.parse(content) } catch { throw new Error(`@build readFile: invalid JSON in ${filePath}`) }
     }

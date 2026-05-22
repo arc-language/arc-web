@@ -333,28 +333,20 @@ class CssEmitter {
         const expanded = SHORTHANDS[name](value)
         if (!expanded) continue
 
+        const _trackAnim = (line) => {
+          if (!line.startsWith('animation:')) return
+          const animName = line.slice(line.indexOf(':') + 1).trimStart().split(/\s+/)[0]
+          if (KEYFRAMES[animName]) this.usedKeyframes.add(animName)
+        }
+
         // Handle animation shorthand — might produce multiple properties
         if (!expanded.includes(';')) {
           // Single declaration — avoid split/map/filter allocation
           const line = expanded.trim()
-          if (line) {
-            declarations.push(line)
-            if (line.startsWith('animation:')) {
-              const colon = line.indexOf(':')
-              const animName = line.slice(colon + 1).trimStart().split(/\s+/)[0]
-              if (KEYFRAMES[animName]) this.usedKeyframes.add(animName)
-            }
-          }
+          if (line) { declarations.push(line); _trackAnim(line) }
         } else {
           const lines = expanded.split(';').map(l => l.trim()).filter(Boolean)
-          for (const line of lines) {
-            declarations.push(line)
-            if (line.startsWith('animation:')) {
-              const colon = line.indexOf(':')
-              const animName = line.slice(colon + 1).trimStart().split(/\s+/)[0]
-              if (KEYFRAMES[animName]) this.usedKeyframes.add(animName)
-            }
-          }
+          for (const line of lines) { declarations.push(line); _trackAnim(line) }
         }
         continue
       }

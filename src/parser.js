@@ -13,6 +13,13 @@ const _PSEUDO_SHORTHANDS = Object.freeze({ hover: ':hover', focus: ':focus-visib
 // Annotations allowed inside template blocks — Set for O(1) vs O(7) Array.includes
 const _TEMPLATE_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker'])
 
+// Hoisted operator Sets for hot expression-parsing loops — avoids per-call array allocation
+const _ASSIGN_OPS = new Set([T.EQ, T.PLUS_EQ, T.MINUS_EQ, T.STAR_EQ, T.SLASH_EQ])
+const _EQUALITY_OPS = new Set([T.EQEQ, T.BANGEQ, T.IS])
+const _CMP_OPS = new Set([T.LT, T.GT, T.LTEQ, T.GTEQ])
+const _ADDSUB_OPS = new Set([T.PLUS, T.MINUS])
+const _MULDIV_OPS = new Set([T.STAR, T.SLASH, T.PERCENT, T.STARSTAR])
+
 class Parser {
   constructor(tokens, filename = '<input>') {
     this.tokens = tokens  // keep all tokens, handle newlines in context
@@ -1403,7 +1410,7 @@ class Parser {
   parseAssignment() {
     const left = this.parsePipeline()
     const t = this.tokens[this.pos]
-    if (t && [T.EQ, T.PLUS_EQ, T.MINUS_EQ, T.STAR_EQ, T.SLASH_EQ].includes(t.type)) {
+    if (t && _ASSIGN_OPS.has(t.type)) {
       this.pos++
       const right = this.parseAssignment()
       return N.AssignExpr(t.value, left, right, t.line)
@@ -1462,7 +1469,7 @@ class Parser {
 
   parseEquality() {
     let left = this.parseComparison()
-    while ([T.EQEQ, T.BANGEQ, T.IS].includes(this.tokens[this.pos]?.type)) {
+    while (_EQUALITY_OPS.has(this.tokens[this.pos]?.type)) {
       const tok = this.tokens[this.pos++]
       if (tok.type === T.IS) {
         const typeOrValue = this.parseUnary()
@@ -1476,7 +1483,7 @@ class Parser {
 
   parseComparison() {
     let left = this.parseAddSub()
-    while ([T.LT, T.GT, T.LTEQ, T.GTEQ].includes(this.tokens[this.pos]?.type)) {
+    while (_CMP_OPS.has(this.tokens[this.pos]?.type)) {
       const tok = this.tokens[this.pos++]
       left = N.BinaryExpr(tok.value, left, this.parseAddSub(), tok.line)
     }
@@ -1485,7 +1492,7 @@ class Parser {
 
   parseAddSub() {
     let left = this.parseMulDiv()
-    while ([T.PLUS, T.MINUS].includes(this.tokens[this.pos]?.type)) {
+    while (_ADDSUB_OPS.has(this.tokens[this.pos]?.type)) {
       const tok = this.tokens[this.pos++]
       left = N.BinaryExpr(tok.value, left, this.parseMulDiv(), tok.line)
     }
@@ -1494,7 +1501,7 @@ class Parser {
 
   parseMulDiv() {
     let left = this.parseUnary()
-    while ([T.STAR, T.SLASH, T.PERCENT, T.STARSTAR].includes(this.tokens[this.pos]?.type)) {
+    while (_MULDIV_OPS.has(this.tokens[this.pos]?.type)) {
       const tok = this.tokens[this.pos++]
       left = N.BinaryExpr(tok.value, left, this.parseUnary(), tok.line)
     }

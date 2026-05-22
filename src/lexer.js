@@ -5,6 +5,12 @@ const { T, KEYWORDS, Token } = require('./tokens')
 // String escape sequences — hoisted to avoid per-character object allocation
 const _STR_ESCAPES = { n: '\n', t: '\t', r: '\r', '\\': '\\', '"': '"', "'": "'", '{': '{' }
 
+// Hoisted character-class tests for hot lexer loops
+const _RE_DIGIT_UNDERSCORE = /[0-9_]/
+const _RE_DIGIT = /[0-9]/
+const _RE_IDENT_CONT = /[a-zA-Z0-9_$]/
+const _RE_AT_CONT = /[a-zA-Z0-9_]/
+
 // Lexer modes — Arc has three syntactic regions
 const MODE = {
   TOP: 'TOP',           // top-level: imports, @annotations, widget/page declarations
@@ -142,12 +148,12 @@ class Lexer {
 
   tokenizeNumber() {
     const start = this.pos - 1
-    while (this.pos < this.source.length && /[0-9_]/.test(this.source[this.pos])) {
+    while (this.pos < this.source.length && _RE_DIGIT_UNDERSCORE.test(this.source[this.pos])) {
       this.advance()
     }
-    if (this.source[this.pos] === '.' && /[0-9]/.test(this.source[this.pos + 1])) {
+    if (this.source[this.pos] === '.' && _RE_DIGIT.test(this.source[this.pos + 1])) {
       this.advance()
-      while (this.pos < this.source.length && /[0-9_]/.test(this.source[this.pos])) {
+      while (this.pos < this.source.length && _RE_DIGIT_UNDERSCORE.test(this.source[this.pos])) {
         this.advance()
       }
     }
@@ -157,7 +163,7 @@ class Lexer {
 
   tokenizeIdent(first) {
     const start = this.pos - 1  // first char already consumed
-    while (this.pos < this.source.length && /[a-zA-Z0-9_$]/.test(this.source[this.pos])) {
+    while (this.pos < this.source.length && _RE_IDENT_CONT.test(this.source[this.pos])) {
       this.advance()
     }
     const value = this.source.slice(start, this.pos)
@@ -172,7 +178,7 @@ class Lexer {
   tokenizeAtSign() {
     // @ can start: @state, @build, @computed, @server, @worker, @get, @ident
     const start = this.pos - 1  // @ already consumed
-    while (this.pos < this.source.length && /[a-zA-Z0-9_]/.test(this.source[this.pos])) {
+    while (this.pos < this.source.length && _RE_AT_CONT.test(this.source[this.pos])) {
       this.advance()
     }
     this.emit(T.AT_IDENT, this.source.slice(start, this.pos))

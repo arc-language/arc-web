@@ -1,6 +1,8 @@
 'use strict'
 
-function generate({ html = '', css = '', js = '', edgeFunctions = '', projectName = 'arc-app' }) {
+const _SAFE_HANDLER_NAME_DENO = /^_handler_[a-zA-Z_$][a-zA-Z0-9_$]*$/
+
+function generate({ html = '', css = '', js = '', edgeFunctions = '', projectName = 'arc-app', handlerNames = null }) {
   const assets = { '/': html }
   if (css) assets['/styles.css'] = css
   if (js) assets['/app.js'] = js
@@ -9,10 +11,17 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', projectNam
     .map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)}`)
     .join(',\n')
 
-  const handlerNames = edgeFunctions
-    ? [...new Set((edgeFunctions.match(/function (_handler_\w+)/g) ?? []).map(m => m.slice('function '.length)))]
-    : []
-  const handlerMapEntries = handlerNames.map(h => `  '${h.slice('_handler_'.length)}': ${h}`).join(',\n')
+  // Prefer explicit handlerNames from compiler AST; fall back to text scan for deploy-from-files case
+  const handlerMatches = handlerNames
+    ? handlerNames.filter(h => _SAFE_HANDLER_NAME_DENO.test(h))
+    : edgeFunctions
+      ? [...new Set([...edgeFunctions.matchAll(/^async function (_handler_\w+)\s*\(/mg)].map(m => m[1]))]
+          .filter(h => _SAFE_HANDLER_NAME_DENO.test(h))
+      : []
+
+  const handlerMapEntries = handlerMatches
+    .map(h => `  '${h.slice('_handler_'.length)}': ${h}`)
+    .join(',\n')
 
   const edgeFunctionsBlock = edgeFunctions
     ? `
@@ -29,12 +38,13 @@ async function handleEdgeFunction(path: string, req: Request): Promise<Response>
   if (!Object.prototype.hasOwnProperty.call(_ARC_HANDLERS, segment)) return new Response('Edge function not found', { status: 404 })
   const fn = _ARC_HANDLERS[segment]
   if (typeof fn !== 'function') return new Response('Edge function not found', { status: 404 })
-  const cl = parseInt(req.headers.get('content-length') ?? '0', 10)
-  if (cl > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
+  const buf = await req.arrayBuffer()
+  if (buf.byteLength > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
   try {
-    return await fn(req)
+    const arcReq = new Request(req.url, { method: req.method, headers: req.headers, body: buf.byteLength > 0 ? buf : null })
+    return await fn(arcReq)
   } catch (e) {
-    console.error('[arc] edge function error:', e)
+    console.error('[arc] edge function error:', e instanceof Error ? e.message : String(e))
     return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 }
@@ -74,20 +84,28 @@ serve(async (req: Request): Promise<Response> => {
   const url = new URL(req.url)
   let path = url.pathname
   if (path === '' || path === '/') path = '/'
+  if (path === '/_arc/health') {
+    return new Response(JSON.stringify({ status: 'ok' }), {
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
 ${edgeRoutingBlock}
   const asset = ASSETS[path]
   if (asset !== undefined) {
     return new Response(asset, {
       headers: {
         'Content-Type': getContentType(path),
+        'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'SAMEORIGIN',
         'Referrer-Policy': 'strict-origin-when-cross-origin',
+        'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+        'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
       },
     })
   }
 
-  return new Response('Not found', { status: 404 })
+  return new Response('Not found', { status: 404, headers: { 'X-Content-Type-Options': 'nosniff' } })
 })
 `
 

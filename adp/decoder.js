@@ -140,13 +140,21 @@ async function fetchAdp(url, options = {}) {
   if (typeof fetch === 'undefined') {
     throw new Error('ADP fetchAdp: fetch API not available (requires Node.js 18+ or a browser)')
   }
-  const res = await fetch(url, {
-    ...options,
-    headers: { 'Accept': 'application/x-adp', ...(options.headers ?? {}) }
-  })
-  if (!res.ok) throw new Error(`ADP fetch ${url}: ${res.status}`)
-  const buf = await res.arrayBuffer()
-  return decode(new Uint8Array(buf))
+  const ctrl = new AbortController()
+  const tid = setTimeout(() => ctrl.abort(), options.timeout ?? 30000)
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: ctrl.signal,
+      headers: { 'Accept': 'application/x-adp', ...(options.headers ?? {}) }
+    })
+    if (!res.ok) throw new Error(`ADP fetch ${url}: ${res.status}`)
+    const buf = await res.arrayBuffer()
+    if (buf.byteLength > 10 * 1024 * 1024) throw new Error(`ADP fetch ${url}: response too large`)
+    return decode(new Uint8Array(buf))
+  } finally {
+    clearTimeout(tid)
+  }
 }
 
 // Schema-aware decode: maps enum indices back to string values
