@@ -264,4 +264,65 @@ page "T"
     })
   })
 
+  describe('external link attributes', () => {
+    test('external https link gets target=_blank', async () => {
+      const src = `page "T"
+  link href="https://example.com" "Visit"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('target="_blank"'), `Expected target=_blank in:\n${html}`)
+    })
+
+    test('external https link gets rel=noopener noreferrer', async () => {
+      const src = `page "T"
+  link href="https://example.com" "Visit"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('rel="noopener noreferrer"'), `Expected rel in:\n${html}`)
+    })
+
+    test('internal relative link does not get target=_blank', async () => {
+      const src = `page "T"
+  link href="/about" "About"`
+      const { html } = await compile(src)
+      assert.ok(!html.includes('target="_blank"'), `Should not have target=_blank for relative link:\n${html}`)
+    })
+  })
+
+  describe('icon aria-hidden', () => {
+    test('icon element without aria-label gets aria-hidden=true', async () => {
+      const src = `page "T"
+  icon name="star"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('aria-hidden="true"'), `Expected aria-hidden in:\n${html}`)
+    })
+
+    test('multiple icon elements each get aria-hidden', async () => {
+      const src = `page "T"
+  row
+    icon name="star"
+    icon name="heart"`
+      const { html } = await compile(src)
+      const count = (html.match(/aria-hidden="true"/g) ?? []).length
+      assert.ok(count >= 2, `Expected 2 aria-hidden attrs, got ${count}:\n${html}`)
+    })
+  })
+
+  describe('reactive template literal span placeholders', () => {
+    test('@state variable in text template emits reactive span', async () => {
+      const src = `page "T"
+  @state let name = "World"
+  text "Hello {name}"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('data-arc-live'), `Expected reactive span in:\n${html}`)
+    })
+
+    test('reactive span has a stable id attribute', async () => {
+      const src = `page "T"
+  @state let count = 0
+  text "Count: {count}"`
+      const { html } = await compile(src)
+      const match = html.match(/id="([^"]+)" data-arc-live/)
+      assert.ok(match, `Expected id on reactive span in:\n${html}`)
+    })
+  })
+
 })

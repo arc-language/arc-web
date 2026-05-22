@@ -317,7 +317,8 @@ class BuildExecutor {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new Error(`@build fetch: only http/https allowed, got ${parsed.protocol}`)
     }
-    const hostname = parsed.hostname.toLowerCase()
+    // URL.hostname for IPv6 includes brackets (e.g. "[::1]") — strip them for consistent checks
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
     // Block IPv4 private/loopback/unspecified ranges
     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
         hostname === '100.100.100.200' || // Alibaba Cloud instance metadata
@@ -327,7 +328,6 @@ class BuildExecutor {
       throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
     }
     // Block IPv6 private/loopback/link-local/ULA/IPv4-mapped ranges
-    // Note: URL.hostname strips brackets for IPv6, so checks must be bracket-free
     if (hostname === '::1' ||
         hostname.startsWith('fc') || hostname.startsWith('fd') ||
         hostname.startsWith('fe80') ||

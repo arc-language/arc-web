@@ -236,6 +236,138 @@ page "T"
   })
 })
 
+describe('Checker — statement checking', () => {
+  test('while loop with undeclared condition var is an error', () => {
+    assert.ok(hasError(`
+@server fn process() {
+  while undeclaredCond {
+  }
+}
+page "T"
+  text "ok"
+`, 'Undefined variable "undeclaredCond"'))
+  })
+
+  test('while loop with declared var is clean', () => {
+    assert.ok(clean(`
+@server fn process(x) {
+  while x > 0 {
+  }
+}
+page "T"
+  text "ok"
+`))
+  })
+
+  test('until loop with undeclared condition is an error', () => {
+    assert.ok(hasError(`
+@server fn process() {
+  until undeclaredFlag {
+  }
+}
+page "T"
+  text "ok"
+`, 'Undefined variable "undeclaredFlag"'))
+  })
+
+  test('loop statement (infinite) is clean', () => {
+    assert.ok(clean(`
+@server fn process() {
+  loop {
+    break
+  }
+}
+page "T"
+  text "ok"
+`))
+  })
+
+  test('try/catch registers catch param in catch body scope', () => {
+    assert.ok(clean(`
+@server fn process(x) {
+  try {
+    const result = x
+  } catch e {
+    const msg = e
+  }
+}
+page "T"
+  text "ok"
+`))
+  })
+
+  test('catch param not visible outside catch body is an error', () => {
+    assert.ok(hasError(`
+@server fn process(x) {
+  try {
+    const result = x
+  } catch e {
+  }
+  const bad = e
+}
+page "T"
+  text "ok"
+`, 'Undefined variable "e"'))
+  })
+
+  test('match statement in fn body is clean', () => {
+    assert.ok(clean(`
+@server fn process(x) {
+  match x {
+    0 => 0
+    _ => x
+  }
+}
+page "T"
+  text "ok"
+`))
+  })
+
+  test('local var declaration inside fn body is clean', () => {
+    assert.ok(clean(`
+@server fn process(x) {
+  let result = x
+  let doubled = result
+}
+page "T"
+  text "ok"
+`))
+  })
+
+  test('local var declaration with undeclared init is an error', () => {
+    assert.ok(hasError(`
+@server fn process() {
+  let result = undeclaredVar
+}
+page "T"
+  text "ok"
+`, 'Undefined variable "undeclaredVar"'))
+  })
+
+  test('for statement puts item and index into body scope', () => {
+    assert.ok(clean(`
+@server fn process(items) {
+  for i, item in items {
+    const v = item
+    const idx = i
+  }
+}
+page "T"
+  text "ok"
+`))
+  })
+
+  test('await in @server fn generates a warning', () => {
+    assert.ok(hasWarning(`
+@server fn process(x) {
+  await x
+}
+page "T"
+  text "ok"
+`, '"await" used outside async context'))
+  })
+})
+
 describe('Checker — clean examples', () => {
   const fs = require('fs')
   const examples = ['hello', 'counter', 'blog', 'dashboard', 'patterns', 'live', 'chat']

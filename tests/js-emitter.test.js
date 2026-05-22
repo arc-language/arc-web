@@ -238,4 +238,98 @@ describe('JS Emitter', () => {
     })
   })
 
+  describe('expression emitter — complex expressions', () => {
+    test('template literal in @computed concatenation is reactive', async () => {
+      const { js } = await compile(`page "T"
+  @state let name = "World"
+  @computed let greeting = "Hello " + name
+  text "{greeting}"`)
+      assert.ok(js.includes('_name'), `Expected _name reference in:\n${js}`)
+    })
+
+    test('null coalesce ?? emits correct JS', async () => {
+      const { js } = await compile(`page "T"
+  @state let val = none
+  @computed let display = val ?? "default"
+  text "{display}"`)
+      assert.ok(js.includes('??'), `Expected ?? operator in:\n${js}`)
+    })
+
+    test('pipeline |> emits function call form', async () => {
+      const { js } = await compile(`page "T"
+  @state let count = 5
+  @computed let positive = count |> Math.abs
+  text "{positive}"`)
+      assert.ok(js.includes('Math.abs'), `Expected Math.abs reference in:\n${js}`)
+    })
+
+    test('range expression emits Array.from', async () => {
+      const { js } = await compile(`page "T"
+  @state let n = 5
+  @computed let nums = 0..n
+  text "{nums}"`)
+      assert.ok(js.includes('Array.from'), `Expected Array.from for range in:\n${js}`)
+    })
+
+    test('is String expression emits typeof check', async () => {
+      const { js } = await compile(`page "T"
+  @state let val = ""
+  @computed let isStr = val is String
+  text "{isStr}"`)
+      assert.ok(js.includes("typeof") && js.includes("'string'"), `Expected typeof string check in:\n${js}`)
+    })
+
+    test('ResultOk Ok(x) emits {ok:true,value:...}', async () => {
+      const { js } = await compile(`page "T"
+  @state let x = 5
+  @computed let r = Ok(x)
+  text "{r}"`)
+      assert.ok(js.includes('ok:true'), `Expected ok:true in:\n${js}`)
+    })
+
+    test('ResultErr Err("msg") emits {ok:false,error:...}', async () => {
+      const { js } = await compile(`page "T"
+  @state let x = 0
+  @computed let r = Err("oops")
+  text "{r}"`)
+      assert.ok(js.includes('ok:false'), `Expected ok:false in:\n${js}`)
+    })
+
+    test('match expression emits IIFE with Symbol sentinel', async () => {
+      const { js } = await compile(`page "T"
+  @state let x = 0
+  @computed let label = match x {
+    0 => "zero"
+    _ => "other"
+  }
+  text "{label}"`)
+      assert.ok(js.includes('Symbol()'), `Expected Symbol sentinel in match IIFE:\n${js}`)
+    })
+
+    test('ternary expression emits JS ternary', async () => {
+      const { js } = await compile(`page "T"
+  @state let show = true
+  @computed let msg = show ? "yes" : "no"
+  text "{msg}"`)
+      assert.ok(js.includes('"yes"') && js.includes('"no"'), `Expected ternary values in:\n${js}`)
+    })
+
+    test('arrow function in event handler emits arrow syntax', async () => {
+      const { js } = await compile(`page "T"
+  @state let items = []
+  button on:click={ @items = [1,2,3].map(x => x * 2) } "go"`)
+      assert.ok(js.includes('=>'), `Expected arrow function in:\n${js}`)
+    })
+
+    test('keyed for loop emits keyed reconciliation code', async () => {
+      const { js } = await compile(`page "T"
+  @state let items = []
+  for item in items
+    div key=item.id
+      text "{item.name}"`)
+      assert.ok(js.includes('arcKey') || js.includes('_km') || js.includes('data-arc-key'),
+        `Expected keyed reconciliation in:\n${js}`)
+    })
+  })
+
 })

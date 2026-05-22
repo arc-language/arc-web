@@ -1542,6 +1542,12 @@ class Parser {
       } else if (t.type === T.LPAREN) {
         const args = this.parseCallArgs()
         expr = N.CallExpr(expr, args, t.line)
+      } else if (t.type === T.DOTDOT) {
+        this.pos++
+        expr = N.RangeExpr(expr, this.parsePrimary(), false, t.line)
+      } else if (t.type === T.DOTDOTEQ) {
+        this.pos++
+        expr = N.RangeExpr(expr, this.parsePrimary(), true, t.line)
       } else break
     }
     return expr

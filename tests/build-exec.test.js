@@ -501,3 +501,164 @@ describe('Error cases', () => {
     await assert.rejects(() => e.evalExpr(call), /Array\.fill not supported/)
   })
 })
+
+// ── evalCall — fetch, readFile, object methods ────────────────────────────────
+
+describe('BuildExecutor.evalCall — fetch and readFile', () => {
+  test('fetch() with no args throws', async () => {
+    const e = exec()
+    const call = N.CallExpr(N.Identifier('fetch', 0), [], 0)
+    await assert.rejects(() => e.evalExpr(call), /requires a URL argument/)
+  })
+
+  test('readFile() with no args throws', async () => {
+    const e = exec()
+    const call = N.CallExpr(N.Identifier('readFile', 0), [], 0)
+    await assert.rejects(() => e.evalExpr(call), /requires a path argument/)
+  })
+
+  test('calling unsupported method on plain object throws', async () => {
+    const e = exec()
+    e.context.obj = { val: 42 }
+    const call = N.CallExpr(
+      N.MemberExpr(ident('obj'), N.Identifier('unsupportedMethod', 0), false, 0),
+      [], 0
+    )
+    await assert.rejects(() => e.evalExpr(call), /not allowed at build time/)
+  })
+
+  test('calling allowed method toString on object works', async () => {
+    const e = exec()
+    e.context.obj = { val: 42 }
+    const call = N.CallExpr(
+      N.MemberExpr(ident('obj'), N.Identifier('toString', 0), false, 0),
+      [], 0
+    )
+    const result = await e.evalExpr(call)
+    assert.equal(result, '[object Object]')
+  })
+})
+
+// ── doFetch — SSRF protection ─────────────────────────────────────────────────
+
+// doFetch throws synchronously for invalid URLs — use assert.throws (not rejects)
+describe('BuildExecutor.doFetch — SSRF protection', () => {
+  test('rejects file: protocol', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('file:///etc/passwd'), /only http\/https allowed/)
+  })
+
+  test('rejects ftp: protocol', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('ftp://example.com/data'), /only http\/https allowed/)
+  })
+
+  test('rejects invalid URL', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('not-a-url'), /invalid URL/)
+  })
+
+  test('rejects localhost', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('http://localhost/api'), /internal addresses not allowed/)
+  })
+
+  test('rejects 127.0.0.1', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('http://127.0.0.1/api'), /internal addresses not allowed/)
+  })
+
+  test('rejects 192.168.x.x private range', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('http://192.168.1.100/api'), /internal addresses not allowed/)
+  })
+
+  test('rejects 10.x.x.x private range', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('http://10.0.0.1/api'), /internal addresses not allowed/)
+  })
+
+  test('rejects 172.16.x.x private range', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('http://172.16.0.1/api'), /internal addresses not allowed/)
+  })
+
+  test('rejects GCP metadata endpoint', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('http://metadata.google.internal/'), /internal addresses not allowed/)
+  })
+
+  test('rejects IPv6 loopback [::1]', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('http://[::1]/api'), /internal addresses not allowed/)
+  })
+
+  test('rejects IPv6 ULA range [fc00::1]', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('http://[fc00::1]/api'), /internal addresses not allowed/)
+  })
+
+  test('rejects IPv6 link-local [fe80::1]', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('http://[fe80::1]/api'), /internal addresses not allowed/)
+  })
+})
+
+// ── doReadFile — security ─────────────────────────────────────────────────────
+
+describe('BuildExecutor.doReadFile — security', () => {
+  test('rejects .env files', async () => {
+    const e = new BuildExecutor(TMPDIR)
+    await assert.rejects(() => e.doReadFile('.env'), /sensitive file/)
+  })
+
+  test('rejects .env.production', async () => {
+    const e = new BuildExecutor(TMPDIR)
+    await assert.rejects(() => e.doReadFile('.env.production'), /sensitive file/)
+  })
+
+  test('rejects .pem files', async () => {
+    const e = new BuildExecutor(TMPDIR)
+    await assert.rejects(() => e.doReadFile('server.pem'), /sensitive file/)
+  })
+
+  test('rejects path escaping project root via ../..', async () => {
+    const e = new BuildExecutor(TMPDIR)
+    await assert.rejects(() => e.doReadFile('../../etc/passwd'), /escapes project root/)
+  })
+
+  test('reads a text file within project root', async () => {
+    const e = new BuildExecutor(TMPDIR)
+    const tmpFile = path.join(TMPDIR, 'testproof-valid.txt')
+    fs.writeFileSync(tmpFile, 'hello world')
+    try {
+      const result = await e.doReadFile(tmpFile)
+      assert.equal(result, 'hello world')
+    } finally {
+      fs.unlinkSync(tmpFile)
+    }
+  })
+
+  test('parses JSON files automatically', async () => {
+    const e = new BuildExecutor(TMPDIR)
+    const tmpFile = path.join(TMPDIR, 'testproof-data.json')
+    fs.writeFileSync(tmpFile, '{"name":"test","count":42}')
+    try {
+      const result = await e.doReadFile(tmpFile)
+      assert.deepEqual(result, { name: 'test', count: 42 })
+    } finally {
+      fs.unlinkSync(tmpFile)
+    }
+  })
+
+  test('rejects invalid JSON in .json files', async () => {
+    const e = new BuildExecutor(TMPDIR)
+    const tmpFile = path.join(TMPDIR, 'testproof-bad.json')
+    fs.writeFileSync(tmpFile, 'not valid json {{')
+    try {
+      await assert.rejects(() => e.doReadFile(tmpFile), /invalid JSON/)
+    } finally {
+      fs.unlinkSync(tmpFile)
+    }
+  })
+})
