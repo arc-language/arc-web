@@ -363,6 +363,43 @@ page "T"
     })
   })
 
+  describe('match template node', () => {
+    test('static @build match resolves and includes matching arm', async () => {
+      const src = `page "T"
+  @build const mode = "dark"
+  match mode {
+    "dark" => text "Dark Mode"
+    _ => text "Other"
+  }`
+      const { html } = await compile(src)
+      // At minimum the matching arm content appears in output
+      assert.ok(html.includes('Dark Mode'), `Expected dark arm in:\n${html}`)
+    })
+
+    test('static @build match with no matching arm falls through to wildcard', async () => {
+      const src = `page "T"
+  @build const mode = "unknown"
+  match mode {
+    "dark" => text "Dark"
+    _ => text "Default"
+  }`
+      const { html } = await compile(src)
+      assert.ok(html.includes('Default'), `Expected wildcard arm in:\n${html}`)
+    })
+
+    test('reactive match template emits aria-live container', async () => {
+      const src = `page "T"
+  @state let mode = "dark"
+  match mode {
+    "dark" => text "Dark"
+    "light" => text "Light"
+    _ => text "Default"
+  }`
+      const { html } = await compile(src)
+      assert.ok(html.includes('aria-live'), `Expected aria-live for reactive match:\n${html}`)
+    })
+  })
+
   describe('for template nodes', () => {
     test('static for with @build array unrolls to multiple HTML items', async () => {
       const src = `page "T"
@@ -543,6 +580,145 @@ page "T"
       const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
       const expr = { type: 'AwaitExpr', argument: N.Identifier('p', 0), line: 0 }
       assert.equal(emitter.exprToString(expr), 'await p')
+    })
+
+    test('_extractRootIdent returns name for simple Identifier', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter._extractRootIdent(N.Identifier('foo', 0)), 'foo')
+    })
+
+    test('_extractRootIdent walks through MemberExpr chain', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.MemberExpr(
+        N.MemberExpr(N.Identifier('user', 0), N.Identifier('profile', 0), false, 0),
+        N.Identifier('name', 0), false, 0)
+      assert.equal(emitter._extractRootIdent(expr), 'user')
+    })
+
+    test('_extractRootIdent returns null when path has OptionalChain', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = {
+        type: 'MemberExpr',
+        object: { type: 'OptionalChain', object: N.Identifier('user', 0), property: N.Identifier('profile', 0), line: 0 },
+        property: N.Identifier('name', 0),
+        computed: false,
+        line: 0
+      }
+      assert.equal(emitter._extractRootIdent(expr), null)
+    })
+
+    test('_hasOptionalChain detects optional chain', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter._hasOptionalChain({ type: 'OptionalChain' }), true)
+      assert.equal(emitter._hasOptionalChain(N.Identifier('x', 0)), false)
+    })
+
+    test('emitExpr for Literal returns escaped string', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.emitExpr(N.Literal('a<b', '"a<b"', 0)), 'a&lt;b')
+    })
+
+    test('emitExpr for TemplateLiteral with all literal parts', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const tpl = N.TemplateLiteral([
+        N.Literal('Hello ', '"Hello "', 0),
+        N.Literal('World', '"World"', 0),
+      ], 0)
+      assert.equal(emitter.emitExpr(tpl), 'Hello World')
+    })
+
+    test('emitExpr for null returns empty string', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.emitExpr(null), '')
+    })
+
+    test('emitExpr for unknown type returns empty string', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.emitExpr({ type: 'Weird', line: 0 }), '')
+    })
+
+    test('emitFor unrolls static collection directly via emitNode', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { items: ['a', 'b', 'c'] } })
+      const forNode = N.ForNode(null, 'item', N.Identifier('items', 0),
+        [N.InterpolationNode(N.Identifier('item', 0), 0)], 0)
+      const result = emitter.emitNode(forNode)
+      assert.ok(result.includes('a'), `Expected 'a' in:\n${result}`)
+      assert.ok(result.includes('b'))
+      assert.ok(result.includes('c'))
+    })
+
+    test('emitFor returns empty for non-array static collection', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { items: 42 } })
+      const forNode = N.ForNode(null, 'item', N.Identifier('items', 0),
+        [N.InterpolationNode(N.Identifier('item', 0), 0)], 0)
+      const result = emitter.emitNode(forNode)
+      assert.equal(result, '')
+    })
+
+    test('emitIf with static truthy condition emits consequent', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { flag: true } })
+      const ifNode = N.IfNode(N.Identifier('flag', 0),
+        [N.TextNode('yes', 0)],
+        [N.TextNode('no', 0)], 0)
+      const result = emitter.emitNode(ifNode)
+      assert.ok(result.includes('yes'))
+      assert.ok(!result.includes('no'))
+    })
+
+    test('emitIf with static falsy condition emits alternate', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { flag: false } })
+      const ifNode = N.IfNode(N.Identifier('flag', 0),
+        [N.TextNode('yes', 0)],
+        [N.TextNode('no', 0)], 0)
+      const result = emitter.emitNode(ifNode)
+      assert.ok(result.includes('no'))
+      assert.ok(!result.includes('yes'))
+    })
+
+    test('emitIf with static falsy and no alternate emits empty', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { flag: false } })
+      const ifNode = N.IfNode(N.Identifier('flag', 0), [N.TextNode('hi', 0)], null, 0)
+      const result = emitter.emitNode(ifNode)
+      assert.equal(result, '')
+    })
+
+    test('static @build match with no matching arm and no wildcard returns empty', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { mode: 'unknown' } })
+      const node = {
+        type: 'MatchTemplateNode',
+        subject: N.Identifier('mode', 0),
+        arms: [
+          { pattern: N.Literal('a', '"a"', 0), body: N.TextNode('A', 0), line: 0 },
+          { pattern: N.Literal('b', '"b"', 0), body: N.TextNode('B', 0), line: 0 },
+        ],
+        line: 0
+      }
+      const result = emitter.emitNode(node)
+      assert.equal(result, '')
+    })
+
+    test('evalStaticExpr for OptionalChain', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { user: { name: 'A' } } })
+      const expr = { type: 'OptionalChain', object: N.Identifier('user', 0), property: N.Identifier('name', 0), line: 0 }
+      // OptionalChain is not in isStaticExpr, so this returns undefined
+      assert.equal(emitter.evalStaticExpr(expr), undefined)
+    })
+
+    test('exprToString for CallExpr with multiple args', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = N.CallExpr(N.Identifier('fn', 0), [
+        N.Literal(1, '1', 0),
+        N.Literal(2, '2', 0),
+      ], 0)
+      assert.equal(emitter.exprToString(expr), 'fn(1,2)')
+    })
+
+    test('emitUnless always falls to reactive path (UnaryExpr not static)', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { broken: false } })
+      const node = N.UnlessNode(N.Identifier('broken', 0), [N.TextNode('OK', 0)], 0)
+      const result = emitter.emitNode(node)
+      // Unless wraps in UnaryExpr which is not static — emits a reactive aria-live container
+      assert.ok(result.includes('aria-live') || result.includes('OK'), `Got: ${result}`)
     })
   })
 

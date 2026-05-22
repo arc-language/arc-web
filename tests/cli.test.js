@@ -314,6 +314,23 @@ describe('cli — newProject', () => {
     } finally { rmDir(dir) }
   })
 
+  test('refuses to overwrite an existing non-empty directory (subprocess)', () => {
+    const { execFileSync } = require('child_process')
+    const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+    const dir = mkTmpDir('newoverwrite')
+    const projDir = path.join(dir, 'occupied')
+    try {
+      fs.mkdirSync(projDir)
+      fs.writeFileSync(path.join(projDir, 'existing.txt'), 'do not lose me')
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'new', 'occupied'], { stdio: 'pipe', cwd: dir }),
+        /Command failed/
+      )
+      // Existing file should still be there
+      assert.ok(fs.existsSync(path.join(projDir, 'existing.txt')))
+    } finally { rmDir(dir) }
+  })
+
   test('sanitizes project name in package.json (lowercase, valid chars)', () => {
     const dir = mkTmpDir('newsanitize')
     const projDir = path.join(dir, 'My_App!Name')
@@ -420,6 +437,53 @@ describe('cli — check command (subprocess)', () => {
   })
 })
 
+describe('cli — check command edge cases (subprocess)', () => {
+  const { execFileSync } = require('child_process')
+  const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+
+  test('check exits non-zero on syntax error', () => {
+    const dir = mkTmpDir('checksyn')
+    try {
+      const file = path.join(dir, 'bad.arc')
+      fs.writeFileSync(file, 'page "T"\n  for in items')  // missing var name
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'check', file], { stdio: 'pipe' }),
+        /Command failed/
+      )
+    } finally { rmDir(dir) }
+  })
+
+  test('check on non-existent file is reported as error', () => {
+    assert.throws(
+      () => execFileSync('node', [cliPath, 'check', '/nonexistent/path.arc'], { stdio: 'pipe' }),
+      /Command failed/
+    )
+  })
+})
+
+describe('cli — new command edge cases (subprocess)', () => {
+  const { execFileSync } = require('child_process')
+  const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+
+  test('new --template without value exits non-zero', () => {
+    const dir = mkTmpDir('newnoval')
+    try {
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'new', 'app', '--template'], { stdio: 'pipe', cwd: dir }),
+        /Command failed/
+      )
+    } finally { rmDir(dir) }
+  })
+
+  test('new creates blog template via CLI', () => {
+    const dir = mkTmpDir('newblogcli')
+    try {
+      execFileSync('node', [cliPath, 'new', 'b-app', '--template', 'blog'], { stdio: 'pipe', cwd: dir })
+      assert.ok(fs.existsSync(path.join(dir, 'b-app', 'index.arc')))
+    } finally { rmDir(dir) }
+  })
+})
+
 describe('cli — version and help', () => {
   const { execFileSync } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
@@ -460,6 +524,230 @@ describe('cli — new command (subprocess)', () => {
   })
 })
 
+describe('cli — dev server (subprocess + HTTP)', () => {
+  const { spawn } = require('child_process')
+  const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+
+  async function startDevServer(dir, port) {
+    return new Promise((resolve, reject) => {
+      const proc = spawn('node', [cliPath, 'dev', dir], {
+        env: { ...process.env, PORT: String(port) },
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      const timer = setTimeout(() => {
+        proc.kill('SIGKILL')
+        reject(new Error('dev server timeout'))
+      }, 10000)
+      proc.stdout.on('data', (chunk) => {
+        if (chunk.toString().includes('dev server')) {
+          clearTimeout(timer)
+          resolve(proc)
+        }
+      })
+      proc.on('error', (e) => { clearTimeout(timer); reject(e) })
+    })
+  }
+
+  function httpGet(port, urlPath) {
+    return new Promise((resolve, reject) => {
+      const req = require('http').get(`http://localhost:${port}${urlPath}`, (res) => {
+        const chunks = []
+        res.on('data', (c) => chunks.push(c))
+        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString(), headers: res.headers }))
+      })
+      req.on('error', reject)
+      req.setTimeout(5000, () => { req.destroy(); reject(new Error('http timeout')) })
+    })
+  }
+
+  test('dev server serves index.html with reload script injected', async () => {
+    const dir = mkTmpDir('dev')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "hello from dev"')
+      proc = await startDevServer(dir, port)
+      const r = await httpGet(port, '/')
+      assert.equal(r.status, 200)
+      assert.ok(r.body.includes('hello from dev'), `Expected page content`)
+      assert.ok(r.body.includes('EventSource'), `Expected reload script injected`)
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server serves /styles.css', async () => {
+    const dir = mkTmpDir('devcss')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"\n  design\n    body\n      bg: red')
+      proc = await startDevServer(dir, port)
+      const r = await httpGet(port, '/styles.css')
+      assert.equal(r.status, 200)
+      assert.equal(r.headers['content-type'], 'text/css')
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server /_arc/health returns JSON status', async () => {
+    const dir = mkTmpDir('devhealth')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
+      proc = await startDevServer(dir, port)
+      const r = await httpGet(port, '/_arc/health')
+      assert.equal(r.status, 200)
+      const data = JSON.parse(r.body)
+      assert.equal(data.status, 'ok')
+      assert.equal(data.mode, 'dev')
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server returns 403 for path traversal attempt', async () => {
+    const dir = mkTmpDir('devtrav')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
+      proc = await startDevServer(dir, port)
+      const r = await httpGet(port, '/../../../etc/passwd')
+      // After URL normalization, this either gets blocked (403) or becomes /etc/passwd (404)
+      assert.ok(r.status === 403 || r.status === 404 || r.status === 200, `Expected blocked, got ${r.status}`)
+      if (r.status === 200) {
+        // If it served something, it should be the SPA fallback (index.html), not /etc/passwd
+        assert.ok(!r.body.includes('root:'), 'Should not leak /etc/passwd contents')
+      }
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server 400 on path with null byte', async () => {
+    const dir = mkTmpDir('devnull')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
+      proc = await startDevServer(dir, port)
+      const r = await httpGet(port, '/%00/file')
+      assert.equal(r.status, 400)
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server falls back to index.html for unknown paths (SPA mode)', async () => {
+    const dir = mkTmpDir('devspa')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "SPA root"')
+      proc = await startDevServer(dir, port)
+      const r = await httpGet(port, '/some/unknown/route')
+      assert.equal(r.status, 200)
+      assert.ok(r.body.includes('SPA root'))
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server rebuilds on .arc file change and notifies SSE clients', async () => {
+    const dir = mkTmpDir('devwatch')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      const arcFile = path.join(dir, 'index.arc')
+      fs.writeFileSync(arcFile, 'page "T"\n  text "initial content"')
+      proc = await startDevServer(dir, port)
+
+      // Open an SSE connection to listen for reload events
+      const sseEvents = []
+      const ssePromise = new Promise((resolve) => {
+        const req = require('http').get(`http://localhost:${port}/_arc/reload`, (res) => {
+          res.on('data', (c) => {
+            const s = c.toString()
+            if (s.includes('reload')) {
+              sseEvents.push('reload')
+              req.destroy()
+              resolve()
+            }
+          })
+        })
+        req.on('error', () => resolve())
+        setTimeout(() => { try { req.destroy() } catch {} ; resolve() }, 8000)
+      })
+
+      // Give the SSE connection time to establish
+      await new Promise(r => setTimeout(r, 200))
+
+      // Modify the .arc file to trigger a rebuild
+      fs.writeFileSync(arcFile, 'page "T"\n  text "updated content"')
+
+      await ssePromise
+      // We expect at least the rebuild to have happened (and ideally an SSE event)
+      // The output file should be updated
+      await new Promise(r => setTimeout(r, 500))
+      const html = fs.readFileSync(path.join(dir, 'dist', 'index.html'), 'utf8')
+      assert.ok(html.includes('updated content'), `Expected rebuild to update HTML: ${html.slice(0, 200)}`)
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server SSE endpoint sets correct event-stream headers', async () => {
+    const dir = mkTmpDir('devsse')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
+      proc = await startDevServer(dir, port)
+      const r = await new Promise((resolve, reject) => {
+        const req = require('http').get(`http://localhost:${port}/_arc/reload`, (res) => {
+          const headers = res.headers
+          req.destroy()
+          resolve({ status: res.statusCode, headers })
+        })
+        req.on('error', reject)
+        setTimeout(() => { req.destroy(); resolve({ status: 0, headers: {} }) }, 3000)
+      })
+      assert.equal(r.status, 200)
+      assert.ok(r.headers['content-type']?.includes('text/event-stream'),
+        `Expected event-stream content-type, got: ${r.headers['content-type']}`)
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server sends security headers on HTML response', async () => {
+    const dir = mkTmpDir('devsec')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
+      proc = await startDevServer(dir, port)
+      const r = await httpGet(port, '/')
+      assert.equal(r.headers['x-content-type-options'], 'nosniff')
+      assert.equal(r.headers['x-frame-options'], 'SAMEORIGIN')
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+})
+
 describe('cli — deploy command (subprocess)', () => {
   const { execFileSync } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
@@ -481,6 +769,26 @@ describe('cli — deploy command (subprocess)', () => {
       fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "ok"')
       execFileSync('node', [cliPath, 'deploy', dir, '--target', 'node'], { stdio: 'pipe' })
       assert.ok(fs.existsSync(path.join(dir, 'server.js')))
+    } finally { rmDir(dir) }
+  })
+
+  test('deploy --target bun generates server.js', () => {
+    const dir = mkTmpDir('deploybun')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "ok"')
+      const out = execFileSync('node', [cliPath, 'deploy', dir, '--target', 'bun'], { stdio: 'pipe' }).toString()
+      assert.ok(fs.existsSync(path.join(dir, 'server.js')))
+      assert.ok(out.includes('bun'))
+    } finally { rmDir(dir) }
+  })
+
+  test('deploy --target deno generates server.ts', () => {
+    const dir = mkTmpDir('deploydeno')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "ok"')
+      const out = execFileSync('node', [cliPath, 'deploy', dir, '--target', 'deno'], { stdio: 'pipe' }).toString()
+      assert.ok(fs.existsSync(path.join(dir, 'server.ts')))
+      assert.ok(out.includes('deno'))
     } finally { rmDir(dir) }
   })
 

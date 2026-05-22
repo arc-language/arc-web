@@ -581,3 +581,234 @@ describe('Parser - ImportDecl', () => {
     assert.equal(node.source, 'mylib')
   })
 })
+
+describe('Parser - shortcut element syntax', () => {
+  test('.classname shortcut creates a div with that class', () => {
+    const src = 'page "T"\n  .myclass\n    text "hi"'
+    const node = parse(src)
+    const page = node.declarations.find(d => d.type === 'PageDecl')
+    const div = page.body[0]
+    assert.equal(div.tag, 'div')
+    assert.ok(div.classes.includes('myclass'))
+  })
+
+  test('multiple .class.class chains all get added', () => {
+    const src = 'page "T"\n  .a.b.c\n    text "hi"'
+    const node = parse(src)
+    const div = node.declarations.find(d => d.type === 'PageDecl').body[0]
+    assert.ok(div.classes.includes('a'))
+    assert.ok(div.classes.includes('b'))
+    assert.ok(div.classes.includes('c'))
+  })
+
+  test('#id shortcut creates a div with that id', () => {
+    const src = 'page "T"\n  #header\n    text "hi"'
+    const node = parse(src)
+    const div = node.declarations.find(d => d.type === 'PageDecl').body[0]
+    assert.equal(div.tag, 'div')
+    assert.equal(div.id, 'header')
+  })
+
+  test('tag.class syntax (e.g. div.button)', () => {
+    const src = 'page "T"\n  div.button\n    text "hi"'
+    const node = parse(src)
+    const div = node.declarations.find(d => d.type === 'PageDecl').body[0]
+    assert.equal(div.tag, 'div')
+    assert.ok(div.classes.includes('button'))
+  })
+})
+
+describe('Parser - inline style condition syntax', () => {
+  test('parses @container < 480px style condition', () => {
+    const src = `page "T"
+  text "hi"
+  design
+    @container < 480px {
+      p: 8px
+    }
+`
+    const node = parse(src)
+    assert.ok(node, 'should parse without error')
+  })
+
+  test('parses inline @mobile { ... } style condition', () => {
+    const src = `page "T"
+  text "hi"
+  design
+    @mobile { p: 8px }
+`
+    const node = parse(src)
+    assert.ok(node, 'should parse inline @mobile')
+  })
+
+  test('parses @container > 1024px style condition', () => {
+    const src = `page "T"
+  text "hi"
+  design
+    @container > 1024px {
+      p: 32px
+    }
+`
+    const node = parse(src)
+    assert.ok(node)
+  })
+})
+
+describe('Parser - range expressions', () => {
+  test('parses exclusive range 0..n as RangeExpr postfix', () => {
+    const src = `page "T"
+  @state let n = 5
+  @computed let nums = 0..n
+  text "ok"`
+    const node = parse(src)
+    const computed = node.declarations.find(d => d.type === 'ComputedDecl')
+    assert.equal(computed.init.type, 'RangeExpr')
+    assert.equal(computed.init.inclusive, false)
+  })
+
+  test('parses inclusive range 0..=n', () => {
+    const src = `page "T"
+  @state let n = 5
+  @computed let nums = 0..=n
+  text "ok"`
+    const node = parse(src)
+    const computed = node.declarations.find(d => d.type === 'ComputedDecl')
+    assert.equal(computed.init.type, 'RangeExpr')
+    assert.equal(computed.init.inclusive, true)
+  })
+})
+
+describe('Parser - async fn declaration', () => {
+  test('parses async keyword on top-level fn', () => {
+    const src = `async fn load() {
+  return 1
+}
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const fn = node.declarations.find(d => d.type === 'FnDecl')
+    assert.ok(fn, 'should produce FnDecl')
+  })
+})
+
+describe('Parser - return statement variants', () => {
+  test('parses "return value" inside fn body', () => {
+    const src = `@server fn process(x) {
+  return x
+}
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const fn = node.declarations.find(d => d.type === 'ServerFn')
+    const ret = fn.body.body.find(s => s.type === 'ReturnStatement')
+    assert.ok(ret)
+  })
+
+  test('parses bare "return" without value', () => {
+    const src = `@server fn early() {
+  if true {
+    return
+  }
+  return 0
+}
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const fn = node.declarations.find(d => d.type === 'ServerFn')
+    assert.ok(fn)
+  })
+})
+
+describe('Parser - match patterns', () => {
+  test('parses "x is Type" IsPattern in match arm', () => {
+    const src = `page "T"
+  @state let val = 0
+  @computed let result = match val {
+    n is Number => n
+    _ => 0
+  }
+  text "{result}"`
+    const node = parse(src)
+    const computed = node.declarations.find(d => d.type === 'ComputedDecl')
+    const arm = computed.init.arms[0]
+    assert.equal(arm.pattern.type, 'IsPattern')
+    assert.equal(arm.pattern.typeName, 'Number')
+  })
+
+  test('parses object destructure pattern { key: val }', () => {
+    const src = `page "T"
+  @state let val = none
+  @computed let result = match val {
+    { name } => name
+    _ => "none"
+  }
+  text "{result}"`
+    const node = parse(src)
+    const computed = node.declarations.find(d => d.type === 'ComputedDecl')
+    const arm = computed.init.arms[0]
+    assert.equal(arm.pattern.type, 'ObjectPattern')
+  })
+
+  test('parses none pattern', () => {
+    const src = `page "T"
+  @state let val = none
+  @computed let result = match val {
+    none => "nothing"
+    _ => "something"
+  }
+  text "{result}"`
+    const node = parse(src)
+    const computed = node.declarations.find(d => d.type === 'ComputedDecl')
+    const arm = computed.init.arms[0]
+    assert.equal(arm.pattern.value, undefined)
+  })
+})
+
+describe('Parser - class fields with type annotations', () => {
+  test('parses class @field: Type = value', () => {
+    const src = `class Counter {
+  @count: Number = 0
+}
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const cls = node.declarations.find(d => d.type === 'ClassDecl')
+    assert.equal(cls.fields.length, 1)
+    assert.equal(cls.fields[0].name, 'count')
+  })
+
+  test('parses class @field without init', () => {
+    const src = `class Box {
+  @value
+}
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const cls = node.declarations.find(d => d.type === 'ClassDecl')
+    assert.equal(cls.fields.length, 1)
+    assert.equal(cls.fields[0].init, null)
+  })
+
+  test('parses class with @get getter', () => {
+    const src = `class Box {
+  @count = 0
+  @get value() => @count
+}
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const cls = node.declarations.find(d => d.type === 'ClassDecl')
+    assert.ok(cls.methods.some(m => m.isGetter && m.name === 'value'))
+  })
+
+  test('parses static class field', () => {
+    const src = `class Foo {
+  static @VERSION = 1
+}
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const cls = node.declarations.find(d => d.type === 'ClassDecl')
+    assert.ok(cls.fields[0].isStatic)
+  })
+})

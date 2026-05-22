@@ -326,4 +326,179 @@ describe('Optimizer - resolveExpr', () => {
     const expr = N.NullCoalesce(N.Identifier('missing', 0), N.Literal('fallback', 'fallback', 0), 0)
     assert.equal(opt.resolveExpr(expr), 'fallback')
   })
+
+  test('resolves computed MemberExpr with bindings', () => {
+    const opt = new Optimizer({ arr: ['a', 'b', 'c'] })
+    const expr = N.MemberExpr(N.Identifier('arr', 0), N.Literal(1, '1', 0), true, 0)
+    assert.equal(opt.resolveExpr(expr), 'b')
+  })
+
+  test('resolves UnaryExpr ! (logical NOT)', () => {
+    const opt = new Optimizer({ flag: true })
+    const expr = N.UnaryExpr('!', N.Identifier('flag', 0), 0)
+    assert.equal(opt.resolveExpr(expr), false)
+  })
+
+  test('resolves UnaryExpr - (numeric negation)', () => {
+    const opt = new Optimizer({ n: 5 })
+    const expr = N.UnaryExpr('-', N.Identifier('n', 0), 0)
+    assert.equal(opt.resolveExpr(expr), -5)
+  })
+
+  test('resolves TemplateLiteral with mixed literal and dynamic parts', () => {
+    const opt = new Optimizer({ name: 'World' })
+    const tpl = N.TemplateLiteral([
+      N.Literal('Hello ', '"Hello "', 0),
+      N.Identifier('name', 0),
+      N.Literal('!', '"!"', 0),
+    ], 0)
+    assert.equal(opt.resolveExpr(tpl), 'Hello World!')
+  })
+})
+
+describe('Optimizer - for loop with index var unrolling', () => {
+  test('for with index name binds both item and index in body', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const forNode = N.ForNode('i', 'item', N.Identifier('items', 0), [
+      N.InterpolationNode(N.Identifier('i', 0), 0),
+      N.InterpolationNode(N.Identifier('item', 0), 0),
+    ], 0)
+    const opt = new Optimizer({ items: ['a', 'b'] })
+    const result = opt.optimizeForWithBindings(forNode, {})
+    // Should produce 4 nodes (2 items × 2 interpolations each), all TextNodes
+    assert.equal(result.length, 4)
+    assert.equal(result[0].type, 'TextNode')
+    assert.equal(result[0].value, '0')  // index
+    assert.equal(result[1].value, 'a')  // item
+    assert.equal(result[2].value, '1')
+    assert.equal(result[3].value, 'b')
+  })
+
+  test('for loop over non-array collection returns unchanged ForNode', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const forNode = N.ForNode(null, 'item', N.Literal(42, '42', 0), [], 0)
+    const opt = new Optimizer({})
+    const result = opt.optimizeForWithBindings(forNode, {})
+    assert.equal(result.length, 1)
+    assert.equal(result[0].type, 'ForNode')
+  })
+})
+
+describe('Optimizer - substituteExpr', () => {
+  test('substituteExpr returns a Literal when expr resolves', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const opt = new Optimizer({ x: 42 })
+    const result = opt.substituteExpr(N.Identifier('x', 0), { x: 42 })
+    assert.equal(result.type, 'Literal')
+    assert.equal(result.value, 42)
+  })
+
+  test('substituteExpr returns the original expr when it cannot be resolved', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const opt = new Optimizer({})
+    const id = N.Identifier('unknown', 0)
+    const result = opt.substituteExpr(id, {})
+    assert.equal(result.type, 'Identifier')
+    assert.equal(result.name, 'unknown')
+  })
+
+  test('substituteExpr passes primitives through unchanged', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const opt = new Optimizer({})
+    assert.equal(opt.substituteExpr('hello', {}), 'hello')
+    assert.equal(opt.substituteExpr(42, {}), 42)
+    assert.equal(opt.substituteExpr(null, {}), null)
+  })
+})
+
+describe('Optimizer - applyOp arithmetic', () => {
+  test('applyOp covers all arithmetic operators', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const opt = new Optimizer({})
+    assert.equal(opt.applyOp('+', 1, 2), 3)
+    assert.equal(opt.applyOp('-', 5, 2), 3)
+    assert.equal(opt.applyOp('*', 3, 4), 12)
+    assert.equal(opt.applyOp('/', 10, 2), 5)
+    assert.equal(opt.applyOp('%', 10, 3), 1)
+  })
+
+  test('applyOp returns undefined for unknown operator', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const opt = new Optimizer({})
+    assert.equal(opt.applyOp('^^', 1, 2), undefined)
+  })
+})
+
+describe('Optimizer - InterpolationNode substitution inside Element', () => {
+  test('Element with InterpolationNode child gets folded by optimizer when value is known', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const elem = N.Element('span', [], null, {}, [
+      N.InterpolationNode(N.Identifier('name', 0), 0)
+    ], 0)
+    const opt = new Optimizer({ name: 'Alice' })
+    const result = opt.optimizeNodeWithBindings(elem, { name: 'Alice' })
+    assert.equal(result.length, 1)
+    assert.equal(result[0].children[0].type, 'TextNode')
+    assert.equal(result[0].children[0].value, 'Alice')
+  })
+
+  test('TemplateLiteral with all known parts collapses to TextNode', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const tpl = N.TemplateLiteral([
+      N.Literal('Hello ', '"Hello "', 0),
+      N.Identifier('name', 0),
+      N.Literal('!', '"!"', 0),
+    ], 0)
+    const opt = new Optimizer({})
+    const result = opt.optimizeNodeWithBindings(tpl, { name: 'World' })
+    assert.equal(result.length, 1)
+    assert.equal(result[0].type, 'TextNode')
+    assert.equal(result[0].value, 'Hello World!')
+  })
+
+  test('TemplateLiteral with some unknown parts stays as TemplateLiteral', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const tpl = N.TemplateLiteral([
+      N.Literal('Hi ', '"Hi "', 0),
+      N.Identifier('unknown', 0),
+    ], 0)
+    const opt = new Optimizer({})
+    const result = opt.optimizeNodeWithBindings(tpl, {})
+    assert.equal(result[0].type, 'TemplateLiteral')
+  })
+
+  test('InterpolationNode with unknown expression stays as InterpolationNode', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const node = N.InterpolationNode(N.Identifier('unknown', 0), 0)
+    const opt = new Optimizer({})
+    const result = opt.optimizeNodeWithBindings(node, {})
+    assert.equal(result[0].type, 'InterpolationNode')
+  })
+
+  test('IfNode with truthy bound condition keeps consequent', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const ifn = N.IfNode(N.Identifier('flag', 0),
+      [N.TextNode('yes', 0)], [N.TextNode('no', 0)], 0)
+    const opt = new Optimizer({})
+    const result = opt.optimizeNodeWithBindings(ifn, { flag: true })
+    assert.equal(result[0].value, 'yes')
+  })
+
+  test('IfNode with falsy bound condition emits alternate', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const ifn = N.IfNode(N.Identifier('flag', 0),
+      [N.TextNode('yes', 0)], [N.TextNode('no', 0)], 0)
+    const opt = new Optimizer({})
+    const result = opt.optimizeNodeWithBindings(ifn, { flag: false })
+    assert.equal(result[0].value, 'no')
+  })
+
+  test('IfNode with unknown condition stays as IfNode', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const ifn = N.IfNode(N.Identifier('unknown', 0),
+      [N.TextNode('yes', 0)], null, 0)
+    const opt = new Optimizer({})
+    const result = opt.optimizeNodeWithBindings(ifn, {})
+    assert.equal(result[0].type, 'IfNode')
+  })
 })

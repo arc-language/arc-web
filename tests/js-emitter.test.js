@@ -539,6 +539,206 @@ describe('JS Emitter', () => {
       assert.ok(result.includes('const n='), `Expected binding: ${result}`)
     })
 
+    test('emitExpr for OptionalChain emits ?.', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = { type: 'OptionalChain',
+        object: N.Identifier('user', 0),
+        property: N.Identifier('name', 0),
+        line: 0 }
+      assert.equal(emitter.emitExpr(expr), 'user?.name')
+    })
+
+    test('emitExpr for SpreadElement emits ...', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.SpreadElement(N.Identifier('arr', 0), 0)
+      assert.equal(emitter.emitExpr(expr), '...arr')
+    })
+
+    test('emitExpr for AwaitExpr emits await', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = { type: 'AwaitExpr', argument: N.Identifier('p', 0), line: 0 }
+      assert.equal(emitter.emitExpr(expr), 'await p')
+    })
+
+    test('emitExpr for ThrowExpr wraps in IIFE', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.ThrowExpr(N.Literal('error', '"error"', 0), 0)
+      const result = emitter.emitExpr(expr)
+      assert.ok(result.includes('throw new Error'), `Expected throw IIFE: ${result}`)
+    })
+
+    test('emitExpr for TryExpr wraps in try/catch IIFE', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.TryExpr(N.Identifier('x', 0), 0)
+      const result = emitter.emitExpr(expr)
+      assert.ok(result.includes('try{'), `Expected try block: ${result}`)
+      assert.ok(result.includes('catch('), `Expected catch block: ${result}`)
+    })
+
+    test('emitExpr for ObjectLiteral with computed key', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.ObjectLiteral([
+        N.ObjectProp(null, N.Literal(42, '42', 0), false, 0, N.Identifier('key', 0)),
+      ], 0)
+      const result = emitter.emitExpr(expr)
+      assert.ok(result.includes('[key]:42'), `Expected computed key: ${result}`)
+    })
+
+    test('emitExpr for ObjectLiteral with shorthand', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.ObjectLiteral([
+        { type: 'ObjectProp', key: 'name', value: null, shorthand: true, line: 0 }
+      ], 0)
+      const result = emitter.emitExpr(expr)
+      assert.ok(result.includes('{name}') || result === '{name}', `Expected shorthand: ${result}`)
+    })
+
+    test('emitExpr for MemberExpr (computed)', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.MemberExpr(N.Identifier('arr', 0), N.Literal(0, '0', 0), true, 0)
+      assert.equal(emitter.emitExpr(expr), 'arr[0]')
+    })
+
+    test('emitExpr for LogicalExpr emits both sides', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.LogicalExpr('&&', N.Identifier('a', 0), N.Identifier('b', 0), 0)
+      assert.equal(emitter.emitExpr(expr), '(a&&b)')
+    })
+
+    test('emitExpr for AssignExpr on plain identifier emits =', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.AssignExpr('=', N.Identifier('x', 0), N.Literal(1, '1', 0), 0)
+      assert.equal(emitter.emitExpr(expr), '(x=1)')
+    })
+
+    test('emitStmt for VarDecl with const kind', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      // N.VarDecl(kind, name, typeAnnotation, init, line)
+      const stmt = N.VarDecl('const', 'x', null, N.Literal(42, '42', 0), 0)
+      const result = emitter.emitStmt(stmt)
+      assert.ok(result.includes('const x=42'), `Expected const x=42: ${result}`)
+    })
+
+    test('emitStmt for VarDecl with let kind', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const stmt = N.VarDecl('let', 'y', null, N.Literal(10, '10', 0), 0)
+      const result = emitter.emitStmt(stmt)
+      assert.ok(result.includes('let y=10'), `Expected let y=10: ${result}`)
+    })
+
+    test('emitStmt for BreakStatement', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      assert.equal(emitter.emitStmt({ type: 'BreakStatement', line: 0 }), 'break;')
+    })
+
+    test('emitStmt for ContinueStatement', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      assert.equal(emitter.emitStmt({ type: 'ContinueStatement', line: 0 }), 'continue;')
+    })
+
+    test('emitStmt for BlockStatement wraps in braces', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const stmt = { type: 'BlockStatement', body: [
+        N.ExprStatement(N.Literal(1, '1', 0), 0)
+      ], line: 0 }
+      const result = emitter.emitStmt(stmt)
+      assert.ok(result.startsWith('{'))
+      assert.ok(result.endsWith('}'))
+    })
+
+    test('emitStmt for VarDecl with unsafe name throws', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const stmt = N.VarDecl('const', 'bad-name!', null, N.Literal(1, '1', 0), 0)
+      assert.throws(() => emitter.emitStmt(stmt), /unsafe identifier/)
+    })
+
+    test('emitExpr for unsafe BinaryExpr op throws', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.BinaryExpr('XXX_UNSAFE', N.Literal(1, '1', 0), N.Literal(2, '2', 0), 0)
+      assert.throws(() => emitter.emitExpr(expr), /unsafe BinaryExpr operator/)
+    })
+
+    test('emitExpr for unsafe UnaryExpr op throws', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.UnaryExpr('XXX', N.Identifier('x', 0), 0)
+      assert.throws(() => emitter.emitExpr(expr), /unsafe UnaryExpr operator/)
+    })
+
+    test('emitExpr for unhandled expression type throws (compiler bug guard)', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      assert.throws(() => emitter.emitExpr({ type: 'Weird', line: 0 }), /unhandled expression type/)
+    })
+
+    test('emitFnDecl rejects unsafe fn name', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      assert.throws(() => emitter.emitFnDecl({
+        name: 'bad-fn', params: [], body: { type: 'BlockStatement', body: [], line: 0 }
+      }), /unsafe identifier/)
+    })
+
+    test('emitClassDecl rejects unsafe class name', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      assert.throws(() => emitter.emitClassDecl({
+        name: 'Bad-Class!', fields: [], methods: []
+      }), /unsafe identifier/)
+    })
+
+    test('emitClassDecl with static field with init', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const cls = N.ClassDecl('C', [
+        N.ClassField('TYPE', null, N.Literal('user', '"user"', 0), true, 0),
+      ], [], 0)
+      const result = emitter.emitStmt(cls)
+      assert.ok(result.includes('static TYPE="user"'), `Expected static field with init: ${result}`)
+    })
+
+    test('emitClassDecl with static method', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const cls = N.ClassDecl('C', [], [
+        N.ClassMethod('create', [], null,
+          { type: 'BlockStatement', body: [N.ReturnStatement(N.Literal(1, '1', 0), 0)], line: 0 },
+          true, false, 0)
+      ], 0)
+      const result = emitter.emitStmt(cls)
+      assert.ok(result.includes('static create'), `Expected static method: ${result}`)
+    })
+
+    test('pipeline expression where right is a CallExpr emits with extra args', async () => {
+      // Pipeline left |> fn(extra) — fn(left, extra)
+      const { js } = await compile(`page "T"
+  @state let x = 5
+  @computed let r = x |> Math.max(0)
+  text "{r}"`)
+      assert.ok(js.includes('Math.max'), `Expected Math.max call: ${js}`)
+    })
+
+    test('list update with key= triggers keyed reconciliation path', async () => {
+      const { js } = await compile(`page "T"
+  @state let users = []
+  for u in users
+    div key=u.id class="user-row"
+      text "{u.name}"`)
+      assert.ok(js.includes('_km') || js.includes('arcKey'), `Expected keyed code: ${js.slice(0, 300)}`)
+    })
+
+    test('emitStmt for IfStatement with else branch', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const stmt = {
+        type: 'IfStatement',
+        condition: N.Identifier('cond', 0),
+        consequent: { type: 'BlockStatement', body: [
+          N.ExprStatement(N.AssignExpr('=', N.Identifier('a', 0), N.Literal(1, '1', 0), 0), 0)
+        ], line: 0 },
+        alternate: { type: 'BlockStatement', body: [
+          N.ExprStatement(N.AssignExpr('=', N.Identifier('a', 0), N.Literal(2, '2', 0), 0), 0)
+        ], line: 0 },
+        line: 0
+      }
+      const result = emitter.emitStmt(stmt)
+      assert.ok(result.includes('if('))
+      assert.ok(result.includes('else{'))
+    })
+
     test('class declaration compiles to JS class (via compile)', async () => {
       const { js } = await compile(`class Counter {
   @count = 0
