@@ -691,6 +691,137 @@ page "T"
   })
 })
 
+describe('AST constructors — direct usage for full coverage', () => {
+  const N = require('../src/ast')
+
+  test('WorkerFn constructor sets arcTag=worker', () => {
+    const wf = N.WorkerFn('process', [], null, null, 1)
+    assert.equal(wf.type, 'WorkerFn')
+    assert.equal(wf.arcTag, 'worker')
+    assert.equal(wf.name, 'process')
+  })
+
+  test('RawNode constructor sets arcTag=raw', () => {
+    const rn = N.RawNode('<x>', 1)
+    assert.equal(rn.type, 'RawNode')
+    assert.equal(rn.arcTag, 'raw')
+    assert.equal(rn.html, '<x>')
+  })
+
+  test('DestructureParam constructor', () => {
+    const p = N.DestructureParam({ a: 1 }, null, 1)
+    assert.equal(p.type, 'DestructureParam')
+    assert.deepEqual(p.pattern, { a: 1 })
+  })
+})
+
+describe('Parser - type annotations', () => {
+  test('parses primitive type annotation: String, Number, Boolean', () => {
+    const src = '@state let x: String = "hi"\npage "T"\n  text "ok"'
+    const node = parse(src)
+    const state = node.declarations.find(d => d.type === 'StateDecl')
+    assert.ok(state.typeAnnotation)
+    assert.equal(state.typeAnnotation.name, 'String')
+  })
+
+  test('parses array type annotation: User[]', () => {
+    const src = '@state let users: User[] = []\npage "T"\n  text "ok"'
+    const node = parse(src)
+    const state = node.declarations.find(d => d.type === 'StateDecl')
+    assert.equal(state.typeAnnotation.type, 'ArrayType')
+  })
+
+  test('parses generic type annotation: Promise<User>', () => {
+    const src = '@state let p: Promise<User> = none\npage "T"\n  text "ok"'
+    const node = parse(src)
+    const state = node.declarations.find(d => d.type === 'StateDecl')
+    assert.equal(state.typeAnnotation.name, 'Promise')
+    assert.equal(state.typeAnnotation.args.length, 1)
+  })
+
+  test('parses nullable type annotation: String?', () => {
+    const src = '@state let x: String? = none\npage "T"\n  text "ok"'
+    const node = parse(src)
+    const state = node.declarations.find(d => d.type === 'StateDecl')
+    assert.ok(state.typeAnnotation.nullable)
+  })
+
+  test('parses object type literal annotation { name: String }', () => {
+    const src = '@state let u: { name: String } = none\npage "T"\n  text "ok"'
+    const node = parse(src)
+    const state = node.declarations.find(d => d.type === 'StateDecl')
+    assert.equal(state.typeAnnotation.type, 'ObjectType')
+  })
+
+  test('parses union type annotation: "admin" | "user"', () => {
+    const src = '@state let role: admin | user = "admin"\npage "T"\n  text "ok"'
+    const node = parse(src)
+    const state = node.declarations.find(d => d.type === 'StateDecl')
+    assert.equal(state.typeAnnotation.type, 'UnionType')
+  })
+
+  test('parses none as type annotation keyword', () => {
+    const src = '@state let x: none = none\npage "T"\n  text "ok"'
+    const node = parse(src)
+    const state = node.declarations.find(d => d.type === 'StateDecl')
+    assert.equal(state.typeAnnotation.name, 'none')
+  })
+})
+
+describe('Parser - new expression', () => {
+  test('parses new ClassName() expression', () => {
+    const src = `page "T"
+  @state let c = new Counter()
+  text "ok"`
+    const node = parse(src)
+    const state = node.declarations.find(d => d.type === 'StateDecl')
+    assert.equal(state.init.type, 'CallExpr')
+  })
+
+  test('parses new ClassName(args)', () => {
+    const src = `page "T"
+  @state let c = new Counter(0, "title")
+  text "ok"`
+    const node = parse(src)
+    const state = node.declarations.find(d => d.type === 'StateDecl')
+    assert.equal(state.init.type, 'CallExpr')
+    assert.equal(state.init.args.length, 2)
+  })
+})
+
+describe('Parser - template match and raw', () => {
+  test('parses match in template body', () => {
+    const src = `page "T"
+  @state let mode = "dark"
+  match mode
+    "dark" => text "Dark"
+    _ => text "Other"`
+    const node = parse(src)
+    const page = node.declarations.find(d => d.type === 'PageDecl')
+    const match = page.body.find(n => n.type === 'MatchTemplateNode')
+    assert.ok(match, `Expected MatchTemplateNode`)
+  })
+
+  test('parses raw "..." node', () => {
+    const src = `page "T"
+  raw "<custom-html>"`
+    const node = parse(src)
+    const page = node.declarations.find(d => d.type === 'PageDecl')
+    const raw = page.body.find(n => n.type === 'RawNode')
+    assert.ok(raw)
+    assert.equal(raw.html, '<custom-html>')
+  })
+})
+
+describe('Parser - page with meta attributes', () => {
+  test('parses page "Title" lang="fr" meta attribute', () => {
+    const src = 'page "Hi" lang="fr"\n  text "ok"'
+    const node = parse(src)
+    const page = node.declarations.find(d => d.type === 'PageDecl')
+    assert.ok(page.meta && page.meta.lang)
+  })
+})
+
 describe('Parser - return statement variants', () => {
   test('parses "return value" inside fn body', () => {
     const src = `@server fn process(x) {
@@ -716,6 +847,36 @@ page "T"
     const node = parse(src)
     const fn = node.declarations.find(d => d.type === 'ServerFn')
     assert.ok(fn)
+  })
+})
+
+describe('Parser - import aliases and export', () => {
+  test('parses import { foo as bar } syntax', () => {
+    const src = 'import { foo as Bar } from "mod"\npage "T"\n  text "ok"'
+    const node = parse(src)
+    const imp = node.declarations.find(d => d.type === 'ImportDecl')
+    assert.equal(imp.names[0].imported, 'foo')
+    assert.equal(imp.names[0].local, 'Bar')
+  })
+
+  test('parses export of widget declaration', () => {
+    const src = 'export widget Card\n  text "card"\npage "T"\n  text "ok"'
+    const node = parse(src)
+    // ExportDecl wraps a declaration
+    const exp = node.declarations.find(d => d.type === 'ExportDecl')
+    assert.ok(exp)
+  })
+})
+
+describe('Parser - annotated decl error paths', () => {
+  test('unknown @annotation throws', () => {
+    assert.throws(() => parse('@madeUpAnnotation let x = 0\npage "T"\n  text "ok"'),
+      /Unknown annotation/)
+  })
+
+  test('@state without const/let throws', () => {
+    assert.throws(() => parse('@state x = 0\npage "T"\n  text "ok"'),
+      /Expected 'const' or 'let' after @state/)
   })
 })
 

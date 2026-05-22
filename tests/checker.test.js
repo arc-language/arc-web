@@ -443,16 +443,55 @@ page "T"
 })
 
 describe('Checker — expression checking (arrow, coalesce, pipeline, spread)', () => {
-  test('arrow function in @build with declared param is clean', () => {
+  test('arrow function in @computed introduces param binding', () => {
     assert.ok(clean(`
-@build const result = (5).pipe(x => x * 2)
+@state let items = []
+@computed let doubled = items.map(x => x * 2)
 page "T"
-  text "ok"
-`) || hasError(`
-@build const result = (5).pipe(x => x * 2)
+  text "{doubled}"
+`))
+  })
+
+  test('arrow function body with undeclared variable is an error', () => {
+    assert.ok(hasError(`
+@state let items = []
+@computed let bad = items.map(x => x + undeclaredVar)
 page "T"
-  text "ok"
-`, '') || true)  // tolerant: may produce execution error but not undefined var
+  text "{bad}"
+`, 'Undefined variable "undeclaredVar"'))
+  })
+
+  test('TemplateLiteral interpolation with undeclared var is an error', () => {
+    // Arc string interpolation: "text {expr}"
+    assert.ok(hasError(`
+page "T"
+  text "Hello {undeclaredName}"
+`, 'Undefined variable "undeclaredName"'))
+  })
+
+  test('BlockStatement in expression body checks inner statements', () => {
+    // Match expression with block body
+    assert.ok(clean(`
+@state let x = 0
+@computed let r = match x {
+  0 => 0
+  _ => x
+}
+page "T"
+  text "{r}"
+`))
+  })
+
+  test('MatchExpr in @computed with simple patterns is clean', () => {
+    assert.ok(clean(`
+@state let val = 0
+@computed let result = match val {
+  0 => "zero"
+  _ => "other"
+}
+page "T"
+  text "{result}"
+`))
   })
 
   test('null coalesce ?? in @computed is clean', () => {

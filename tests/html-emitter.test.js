@@ -713,6 +713,94 @@ page "T"
       assert.equal(emitter.exprToString(expr), 'fn(1,2)')
     })
 
+    test('emitInterpolation reactive (non-static) emits span placeholder', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      // Identifier not in buildContext → not static → reactive span
+      const node = N.InterpolationNode(N.Identifier('reactiveVar', 0), 0)
+      const result = emitter.emitNode(node)
+      assert.ok(result.includes('data-arc-live'), `Expected reactive span: ${result}`)
+    })
+
+    test('emitInterpolation inside for-template uses _esc inline', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      emitter._inForTemplate = true
+      const node = N.InterpolationNode(N.Identifier('item', 0), 0)
+      const result = emitter.emitNode(node)
+      assert.ok(result.includes('_esc(String('), `Expected _esc inline: ${result}`)
+      emitter._inForTemplate = false
+    })
+
+    test('emitTemplateLiteral inside for-template inlines expression parts', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      emitter._inForTemplate = true
+      const node = N.TemplateLiteral([
+        N.Literal('Hello ', '"Hello "', 0),
+        N.Identifier('name', 0),
+      ], 0)
+      const result = emitter.emitNode(node)
+      assert.ok(result.includes('_esc(String('), `Expected for-template inline: ${result}`)
+      emitter._inForTemplate = false
+    })
+
+    test('emitMatchTemplate reactive with Literal arm pattern uses === comparison', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const node = {
+        type: 'MatchTemplateNode',
+        subject: N.Identifier('val', 0),
+        arms: [
+          { pattern: N.Literal(1, '1', 0), body: N.TextNode('one', 0), line: 0 },
+          { pattern: { type: 'Wildcard', line: 0 }, body: N.TextNode('other', 0), line: 0 },
+        ],
+        line: 0
+      }
+      const result = emitter.emitNode(node)
+      assert.ok(result.includes('aria-live'), `Expected aria-live: ${result}`)
+      assert.ok(result.includes('hidden'), `Expected hidden arms: ${result}`)
+    })
+
+    test('emitMatchTemplate reactive with non-literal pattern uses exprToString', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const node = {
+        type: 'MatchTemplateNode',
+        subject: N.Identifier('val', 0),
+        arms: [
+          { pattern: N.Identifier('THRESHOLD', 0), body: N.TextNode('match', 0), line: 0 },
+        ],
+        line: 0
+      }
+      const result = emitter.emitNode(node)
+      assert.ok(result.includes('aria-live'))
+    })
+
+    test('emitTooltipAttr wraps element with aria-describedby anchor', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const el = N.Element('button', [], null, { tooltip: 'help me' }, [
+        N.TextNode('Click', 0)
+      ], 0)
+      const result = emitter.emitElement(el)
+      assert.ok(result.includes('aria-describedby'), `Expected aria-describedby: ${result}`)
+      assert.ok(result.includes('popover='), `Expected popover attr: ${result}`)
+      assert.ok(result.includes('help me'), `Expected tooltip text`)
+    })
+
+    test('emitWidget delegates to emitChildren of widget body', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const widget = N.WidgetDecl('Card', [], [N.TextNode('hello', 0)], 0)
+      const result = emitter.emitWidget(widget)
+      assert.ok(result.includes('hello'), `Expected widget body content: ${result}`)
+    })
+
+    test('exprToString for AwaitExpr with template literal arg', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      const expr = {
+        type: 'AwaitExpr',
+        argument: N.TemplateLiteral([N.Literal('x', '"x"', 0)], 0),
+        line: 0
+      }
+      const result = emitter.exprToString(expr)
+      assert.ok(result.startsWith('await'))
+    })
+
     test('emitUnless always falls to reactive path (UnaryExpr not static)', () => {
       const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { broken: false } })
       const node = N.UnlessNode(N.Identifier('broken', 0), [N.TextNode('OK', 0)], 0)

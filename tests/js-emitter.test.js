@@ -240,6 +240,48 @@ describe('JS Emitter', () => {
     })
   })
 
+  describe('bind:value with dotted-path two-way binding', () => {
+    test('bind:value on user.name generates immutable update with spread', async () => {
+      const { js } = await compile(`page "T"
+  @state let user = { name: "" }
+  input type="text" bind:value={user.name}`)
+      // Should contain spread of _user and assignment of "name"
+      assert.ok(js.includes('_set_user'), `Expected _set_user`)
+      assert.ok(js.includes('"name":_bv') || js.includes('"name":'), `Expected immutable update`)
+    })
+
+    test('bind:value with deeply nested path generates nested spread', async () => {
+      const { js } = await compile(`page "T"
+  @state let user = { profile: { email: "" } }
+  input type="text" bind:value={user.profile.email}`)
+      // Should have nested spread: {...(_user??{}), profile:{...(_user.profile??{}), email:_bv}}
+      assert.ok(js.includes('profile'), `Expected profile in path: ${js}`)
+      assert.ok(js.includes('email'), `Expected email in path`)
+    })
+
+    test('bind:value on non-simple path compiles (allowed)', async () => {
+      // Test that the compile path runs — actual semantics may vary
+      const r = await compile(`page "T"
+  @state let val = ""
+  input type="text" bind:value={val}`)
+      assert.ok(r.js.includes('bind') || r.js.includes('_set_val'))
+    })
+  })
+
+  describe('source map mappings for fn declarations', () => {
+    test('compile with sourceMap option emits mappings for @server fn', async () => {
+      const { SourceMapBuilder } = require('../src/sourcemap')
+      const sm = new SourceMapBuilder()
+      await compile(`page "T"
+  @server fn process() {
+    return 1
+  }
+  text "ok"`, '<input>', { sourceMap: sm })
+      const mapJson = sm.generate('app.js', '@server fn process() { return 1 }')
+      assert.ok(mapJson.version === 3, `Expected source map v3: ${JSON.stringify(mapJson)}`)
+    })
+  })
+
   describe('expression emitter — complex expressions', () => {
     test('template literal in @computed concatenation is reactive', async () => {
       const { js } = await compile(`page "T"
@@ -425,6 +467,142 @@ describe('JS Emitter', () => {
     return n
   }`)
       assert.ok(r.edgeFunctions.includes('break'), `Expected break statement`)
+    })
+
+    test('emitUpdate for attr-kind binding uses setAttribute', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const result = emitter.emitBindingUpdate({
+        id: 'el1',
+        expr: 'cond',
+        kind: 'attr',
+        attr: 'aria-label',
+      })
+      assert.ok(result.includes('setAttribute'), `Expected setAttribute: ${result}`)
+    })
+
+    test('emitUpdate for attr-kind binding rejects unsafe attr name', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      assert.throws(() =>
+        emitter.emitBindingUpdate({
+          id: 'el1',
+          expr: 'cond',
+          kind: 'attr',
+          attr: 'bad attr!',
+        }),
+        /unsafe attribute/
+      )
+    })
+
+    test('emitUpdate for class-toggle binding uses classList.toggle', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const result = emitter.emitBindingUpdate({
+        id: 'el1',
+        expr: 'cond',
+        kind: 'class-toggle',
+        cls: 'active',
+      })
+      assert.ok(result.includes('classList.toggle'), `Expected classList.toggle: ${result}`)
+    })
+
+    test('emitUpdate for class-toggle rejects unsafe class name', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      assert.throws(() =>
+        emitter.emitBindingUpdate({
+          id: 'el1',
+          expr: 'cond',
+          kind: 'class-toggle',
+          cls: 'bad class!',
+        }),
+        /unsafe attribute\/class/
+      )
+    })
+
+    test('emitExpr for TemplateLiteral with mixed parts', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.TemplateLiteral([
+        N.Literal('Hello ', '"Hello "', 0),
+        N.Identifier('name', 0),
+        N.Literal('!', '"!"', 0),
+      ], 0)
+      const result = emitter.emitExpr(expr)
+      assert.ok(result.startsWith('`'), `Expected backticks: ${result}`)
+      assert.ok(result.includes('${name}'), `Expected interpolation: ${result}`)
+    })
+
+    test('emitExpr for TemplateLiteral escapes special chars in literal parts', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.TemplateLiteral([
+        N.Literal('a`b\\c$d', '"..."', 0),
+      ], 0)
+      const result = emitter.emitExpr(expr)
+      assert.ok(result.includes('\\`'), `Expected backtick escape: ${result}`)
+      assert.ok(result.includes('\\\\'), `Expected backslash escape`)
+      assert.ok(result.includes('\\$'), `Expected dollar escape`)
+    })
+
+    test('emitExpr for AtProperty prefixes with _', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.AtProperty('count', 0)
+      assert.equal(emitter.emitExpr(expr), '_count')
+    })
+
+    test('emitPattern returns true for Wildcard or undefined', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      assert.equal(emitter.emitPattern({ type: 'Wildcard' }, '_subj'), 'true')
+      assert.equal(emitter.emitPattern(null, '_subj'), 'true')
+    })
+
+    test('emitPattern returns === check for Literal pattern', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      assert.equal(emitter.emitPattern(N.Literal(42, '42', 0), '_subj'), '_subj===42')
+    })
+
+    test('emitPattern for IsExpr uses typeof check', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const pat = { type: 'IsExpr', typeOrValue: N.Identifier('String', 0), subject: null, line: 0 }
+      const result = emitter.emitPattern(pat, '_subj')
+      assert.ok(result.includes('typeof'), `Expected typeof check: ${result}`)
+    })
+
+    test('emitPipeline where right is non-CallExpr identifier', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const expr = N.PipelineExpr(N.Identifier('x', 0), N.Identifier('fn', 0), 0)
+      const result = emitter.emitExpr(expr)
+      assert.ok(result.includes('(fn)(x)'), `Expected (fn)(x) form: ${result}`)
+    })
+
+    test('emitPipeline with CallExpr right and no args adds left as only arg', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const callExpr = N.CallExpr(N.Identifier('Math', 0), [], 0)
+      // Need to also test the CallExpr case with non-empty args (already tested)
+      const expr = N.PipelineExpr(N.Identifier('x', 0), callExpr, 0)
+      const result = emitter.emitExpr(expr)
+      assert.ok(result.includes('Math(x)'), `Expected Math(x): ${result}`)
+    })
+
+    test('emitStmt for unknown statement type returns empty string', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      assert.equal(emitter.emitStmt({ type: 'WeirdStmt', line: 0 }), '')
+    })
+
+    test('emitFnDecl with non-block expression body returns expression value', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const fn = N.FnDecl('square',
+        [N.Param('x', null, null, false, 0)],
+        null,
+        N.BinaryExpr('*', N.Identifier('x', 0), N.Identifier('x', 0), 0),
+        false, 0)
+      const result = emitter.emitFnDecl(fn)
+      assert.ok(result.includes('return (x*x)'), `Expected return: ${result}`)
+    })
+
+    test('emitClassDecl with field that has no init (no = part)', () => {
+      const emitter = new JsEmitter({ hash: 'h1' })
+      const cls = N.ClassDecl('C', [
+        N.ClassField('value', null, null, false, 0),  // No init
+      ], [], 0)
+      const result = emitter.emitClassDecl(cls)
+      assert.ok(result.includes('value;'), `Expected field without init: ${result}`)
     })
 
     test('class declaration via direct emitter — emits JS class syntax', () => {

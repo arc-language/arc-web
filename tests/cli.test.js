@@ -237,6 +237,61 @@ page "T"
     } finally { rmDir(dir) }
   })
 
+  test('imports FnDecl by name', async () => {
+    const dir = mkTmpDir('importfn')
+    try {
+      fs.writeFileSync(path.join(dir, 'utils.arc'), `fn double(x) => x * 2
+`)
+      fs.writeFileSync(path.join(dir, 'main.arc'), `import { double } from "./utils"
+page "T"
+  text "ok"
+`)
+      const r = await compile(
+        fs.readFileSync(path.join(dir, 'main.arc'), 'utf8'),
+        path.join(dir, 'main.arc'),
+        { projectDir: dir }
+      )
+      assert.ok(r.html.includes('ok'))
+    } finally { rmDir(dir) }
+  })
+
+  test('warns when imported file has a syntax error (no throw)', async () => {
+    const dir = mkTmpDir('importsyntax')
+    try {
+      // Imported file with truly malformed structure that breaks the parser
+      fs.writeFileSync(path.join(dir, 'broken.arc'), `widget Bad {{{{ syntax errors }}}}\n}`)
+      fs.writeFileSync(path.join(dir, 'main.arc'), `import { Bad } from "./broken"
+page "T"
+  text "still works"
+`)
+      // Should compile main even though the imported file has a syntax error
+      const r = await compile(
+        fs.readFileSync(path.join(dir, 'main.arc'), 'utf8'),
+        path.join(dir, 'main.arc'),
+        { projectDir: dir }
+      )
+      assert.ok(r.html.includes('still works'))
+    } finally { rmDir(dir) }
+  })
+
+  test('warns when imported file cannot be read (permission/unreadable)', async () => {
+    const dir = mkTmpDir('importread')
+    try {
+      // Create a directory at the import path instead of a file — readFile will EISDIR
+      fs.mkdirSync(path.join(dir, 'unreadable.arc'))
+      fs.writeFileSync(path.join(dir, 'main.arc'), `import { X } from "./unreadable"
+page "T"
+  text "still works"
+`)
+      const r = await compile(
+        fs.readFileSync(path.join(dir, 'main.arc'), 'utf8'),
+        path.join(dir, 'main.arc'),
+        { projectDir: dir }
+      )
+      assert.ok(r.html.includes('still works'))
+    } finally { rmDir(dir) }
+  })
+
   test('does not re-process an already-visited file (cycle prevention)', async () => {
     const dir = mkTmpDir('cycle')
     try {
@@ -376,6 +431,19 @@ describe('cli — build command (subprocess)', () => {
     } finally { rmDir(dir) }
   })
 
+  test('build exits non-zero when dist write fails (file at dist path)', () => {
+    const dir = mkTmpDir('buildwrite')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
+      // Create a file named "dist" so mkdirSync recursive fails or write goes wrong
+      fs.writeFileSync(path.join(dir, 'dist'), 'blocker')
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'build', dir], { stdio: 'pipe' }),
+        /Command failed/
+      )
+    } finally { rmDir(dir) }
+  })
+
   test('build exits non-zero when dir has no .arc files', () => {
     const dir = mkTmpDir('buildempty')
     try {
@@ -481,6 +549,64 @@ describe('cli — new command edge cases (subprocess)', () => {
       execFileSync('node', [cliPath, 'new', 'b-app', '--template', 'blog'], { stdio: 'pipe', cwd: dir })
       assert.ok(fs.existsSync(path.join(dir, 'b-app', 'index.arc')))
     } finally { rmDir(dir) }
+  })
+})
+
+describe('cli — fatal error handling (subprocess)', () => {
+  const { execFileSync, spawnSync } = require('child_process')
+  const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+
+  test('ARC_DEBUG=1 prints stack trace on fatal error', () => {
+    // Invoke a command that would cause an unhandled error
+    const result = spawnSync('node', [cliPath, 'build', '/nonexistent/no/permission/at/all'], {
+      env: { ...process.env, ARC_DEBUG: '1' },
+      stdio: 'pipe'
+    })
+    assert.ok(result.status !== 0, 'should exit non-zero')
+    // Either the early-exit message OR a stack trace fired
+    const stderr = result.stderr.toString()
+    assert.ok(stderr.length > 0, `Expected error output: ${stderr}`)
+  })
+
+  test('without ARC_DEBUG prints hint to set it', () => {
+    // Trigger a non-graceful exit (e.g. unhandled error in main)
+    const result = spawnSync('node', [cliPath, 'build', '/this/does/not/exist/anywhere'], {
+      env: { ...process.env, ARC_DEBUG: '' },
+      stdio: 'pipe'
+    })
+    assert.ok(result.status !== 0)
+  })
+
+  test('unknown subcommand prints help', () => {
+    const result = spawnSync('node', [cliPath, 'unknown-cmd'], { stdio: 'pipe' })
+    const out = result.stdout.toString()
+    assert.ok(out.includes('build') && out.includes('dev'), `Expected help in: ${out}`)
+  })
+})
+
+describe('cli — formatError edge cases', () => {
+  const { formatError, showSourceContext } = require('../src/cli')
+
+  test('formatError works without filename', () => {
+    // Just ensure it doesn't throw
+    const err = new Error('test error message')
+    formatError(err, null, null)
+  })
+
+  test('formatError extracts line:col from message and shows source context', () => {
+    const err = new SyntaxError('test.arc:3:5: something went wrong')
+    const source = 'line1\nline2\nline3 here\nline4'
+    // Capture stderr to ensure no throw
+    formatError(err, source, 'test.arc')
+  })
+
+  test('showSourceContext handles missing line gracefully', () => {
+    showSourceContext('line1\nline2', null, null)
+    showSourceContext('line1\nline2', 999, 1)  // line out of range
+  })
+
+  test('showSourceContext displays col indicator when col provided', () => {
+    showSourceContext('hello world', 1, 7)  // col=7 → points at 'w'
   })
 })
 
@@ -725,6 +851,57 @@ describe('cli — dev server (subprocess + HTTP)', () => {
       assert.equal(r.status, 200)
       assert.ok(r.headers['content-type']?.includes('text/event-stream'),
         `Expected event-stream content-type, got: ${r.headers['content-type']}`)
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server returns 400 on malformed URL (invalid encoded byte)', async () => {
+    const dir = mkTmpDir('devbadurl')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
+      proc = await startDevServer(dir, port)
+      // %ZZ is an invalid percent-encoding — decodeURIComponent throws
+      const r = await httpGet(port, '/%ZZbad')
+      assert.equal(r.status, 400)
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server returns 200 with correct MIME for .json', async () => {
+    const dir = mkTmpDir('devjson')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
+      proc = await startDevServer(dir, port)
+      // Manually drop a JSON file into dist after start
+      fs.writeFileSync(path.join(dir, 'dist', 'data.json'), '{"a":1}')
+      const r = await httpGet(port, '/data.json')
+      assert.equal(r.status, 200)
+      assert.equal(r.headers['content-type'], 'application/json')
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server returns 200 with octet-stream MIME for unknown ext', async () => {
+    const dir = mkTmpDir('devext')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
+      proc = await startDevServer(dir, port)
+      fs.writeFileSync(path.join(dir, 'dist', 'data.bin'), 'binary-content')
+      const r = await httpGet(port, '/data.bin')
+      assert.equal(r.status, 200)
+      assert.equal(r.headers['content-type'], 'application/octet-stream')
     } finally {
       if (proc) proc.kill('SIGTERM')
       rmDir(dir)

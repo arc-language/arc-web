@@ -478,5 +478,226 @@ describe('CSS Emitter', () => {
       const css = emitter.emitProgram(makeDesignProgram('.x', [['transition', 'opacity 150ms']]))
       assert.ok(css.includes('opacity 150ms ease'), `Expected ease added in:\n${css}`)
     })
+
+    test('border 1-part shorthand passes through unchanged', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['border', '1px']]))
+      // 1-part: no expansion — passes through as is
+      assert.ok(css.includes('border: 1px'))
+    })
+
+    test('weight: numeric value passes through unchanged', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['weight', '500']]))
+      assert.ok(css.includes('font-weight: 500'))
+    })
+
+    test('line-height: numeric value passes through', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['line', '1.5']]))
+      assert.ok(css.includes('line-height: 1.5'))
+    })
+
+    test('tracking: arbitrary value passes through', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['tracking', '0.1px']]))
+      assert.ok(css.includes('letter-spacing: 0.1px'))
+    })
+
+    test('flex with row direction', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['flex', 'row']]))
+      assert.ok(css.includes('flex-direction: row'))
+    })
+
+    test('flex with wrap option', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['flex', 'wrap']]))
+      assert.ok(css.includes('flex-wrap: wrap'))
+    })
+
+    test('flex with nowrap option', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['flex', 'nowrap']]))
+      assert.ok(css.includes('flex-wrap: nowrap'))
+    })
+
+    test('flex with col alias', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['flex', 'col']]))
+      assert.ok(css.includes('flex-direction: column'))
+    })
+
+    test('flex with align=stretch', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['flex', 'col align=stretch']]))
+      assert.ok(css.includes('align-items: stretch'))
+    })
+
+    test('flex with justify=around', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['flex', 'row justify=around']]))
+      assert.ok(css.includes('justify-content: space-around'))
+    })
+
+    test('flex with no value uses defaults', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['flex', '']]))
+      assert.ok(css.includes('display: flex'))
+    })
+
+    test('grid with no value uses defaults', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['grid', '']]))
+      assert.ok(css.includes('display: grid'))
+    })
+
+    test('grid with fr unit columns', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['grid', '1fr']]))
+      assert.ok(css.includes('grid-template-columns: 1fr'))
+    })
+
+    test('transition with single-part passes through', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['transition', 'all 200ms ease-out']]))
+      assert.ok(css.includes('all 200ms ease-out'))
+    })
+
+    test('animation shorthand tracks keyframe in usedKeyframes', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['animate', 'fadeIn 200ms ease']]))
+      assert.ok(css.includes('animation:'))
+    })
+
+    test('nested style rule with &:hover combinator', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleRule',
+            selector: '.btn',
+            props: [{ type: 'StyleProp', name: 'color', value: 'blue', line: 1 }],
+            children: [{
+              type: 'StyleRule',
+              selector: '&:hover',
+              props: [{ type: 'StyleProp', name: 'color', value: 'red', line: 1 }],
+              children: [],
+              line: 1
+            }],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      assert.ok(css.includes(':hover'), `Expected hover in:\n${css}`)
+    })
+
+    test('nested style rule with descendant selector', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleRule',
+            selector: '.card',
+            props: [{ type: 'StyleProp', name: 'p', value: '16px', line: 1 }],
+            children: [{
+              type: 'StyleRule',
+              selector: '.title',
+              props: [{ type: 'StyleProp', name: 'weight', value: 'bold', line: 1 }],
+              children: [],
+              line: 1
+            }],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      assert.ok(css.includes('.card_h1 .title_h1'), `Expected descendant: ${css}`)
+    })
+
+    test('emitConditionNested with inline props and nested rules', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleRule',
+            selector: '.card',
+            props: [{ type: 'StyleProp', name: 'p', value: '16px', line: 1 }],
+            children: [{
+              type: 'StyleCondition',
+              kind: 'mobile',
+              query: null,
+              rules: [
+                { type: 'StyleProp', name: 'p', value: '8px', line: 1 },
+                {
+                  type: 'StyleRule',
+                  selector: '&:hover',
+                  props: [{ type: 'StyleProp', name: 'p', value: '4px', line: 1 }],
+                  children: [],
+                  line: 1
+                }
+              ],
+              line: 1
+            }],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      assert.ok(css.includes('@media'), `Expected media query: ${css}`)
+      assert.ok(css.includes('padding: 8px'), `Expected mobile padding`)
+    })
+
+    test('emitConditionNested with empty rules returns empty', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const result = emitter.emitConditionNested(
+        { type: 'StyleCondition', kind: 'mobile', query: null, rules: [], line: 1 },
+        '.card_h1'
+      )
+      assert.equal(result, '')
+    })
+
+    test('resolveCondition for unknown kind returns null', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      assert.equal(emitter.resolveCondition('unknown', null), null)
+    })
+
+    test('resolveCondition for starting-style', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      assert.equal(emitter.resolveCondition('starting-style', null), '@starting-style')
+    })
+
+    test('resolveCondition for media with explicit query', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      assert.equal(emitter.resolveCondition('media', '(min-width: 800px)'), '@media (min-width: 800px)')
+    })
+
+    test('scopeSelector returns selector unchanged when null/empty', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      assert.equal(emitter.scopeSelector(null), null)
+      assert.equal(emitter.scopeSelector(''), '')
+    })
+
+    test('emitCondition with empty inner rules returns empty', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const result = emitter.emitCondition({
+        kind: 'mobile', query: null, rules: [], line: 1
+      })
+      assert.equal(result, '')
+    })
+
+    test('emitCondition with unknown kind returns empty', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const result = emitter.emitCondition({
+        kind: 'unknown', query: null, rules: [
+          { type: 'StyleRule', selector: '.x', props: [{ type: 'StyleProp', name: 'color', value: 'red', line: 1 }], children: [], line: 1 }
+        ], line: 1
+      })
+      assert.equal(result, '')
+    })
   })
 })
