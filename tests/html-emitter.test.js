@@ -383,6 +383,55 @@ page "T"
     })
   })
 
+  describe('native patterns (tooltip, accordion, modal)', () => {
+    test('tooltip element emits aria-describedby and popover', async () => {
+      const src = `page "T"
+  tooltip text="Help text"
+    text "hover me"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('aria-describedby'), `Expected aria-describedby in:\n${html}`)
+      assert.ok(html.includes('popover='), `Expected popover attr in:\n${html}`)
+      assert.ok(html.includes('Help text'), `Expected tooltip text`)
+    })
+
+    test('accordion element emits details/summary', async () => {
+      const src = `page "T"
+  accordion
+    summary "Click me"
+    text "content"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('<details'), `Expected <details> in:\n${html}`)
+      assert.ok(html.includes('<summary'), `Expected <summary> in:\n${html}`)
+    })
+
+    test('accordion without summary gets a fallback summary', async () => {
+      const src = `page "T"
+  accordion
+    text "content"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('<details'))
+      assert.ok(html.includes('<summary'), `Expected fallback summary in:\n${html}`)
+    })
+
+    test('element with tooltip attr is wrapped in tooltip-anchor span', async () => {
+      const src = `page "T"
+  button tooltip="Click to save" "Save"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('tooltip-anchor'), `Expected tooltip-anchor wrapper in:\n${html}`)
+      assert.ok(html.includes('Click to save'))
+    })
+
+    test('modal element emits <dialog> with aria-modal', async () => {
+      const src = `page "T"
+  modal id="confirm"
+    heading "Confirm?"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('<dialog'), `Expected <dialog> in:\n${html}`)
+      assert.ok(html.includes('aria-modal="true"'), `Expected aria-modal in:\n${html}`)
+      assert.ok(html.includes('id="confirm"'))
+    })
+  })
+
   describe('reactive template literal span placeholders', () => {
     test('@state variable in text template emits reactive span', async () => {
       const src = `page "T"

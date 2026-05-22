@@ -122,3 +122,67 @@ test('cloudflare: generated Worker script has correct content-type logic', () =>
   assert.ok(worker.content.includes('text/css'), 'should reference text/css content type')
   assert.ok(worker.content.includes('text/html'), 'should reference text/html content type')
 })
+
+// ── Edge functions block tests ───────────────────────────────────────────────
+
+const edgeFns = `
+async function _handler_greet(req) {
+  return new Response('hi')
+}
+async function _handler_compute(req) {
+  return new Response('done')
+}`
+
+test('node: edgeFunctions block appears in server when edgeFunctions provided', () => {
+  const files = node.generate({ html: '<html/>', edgeFunctions: edgeFns, handlerNames: ['_handler_greet', '_handler_compute'] })
+  const server = files.find(f => f.path === 'server.js')
+  assert.ok(server.content.includes('_handler_greet'), 'node: should embed greet handler')
+  assert.ok(server.content.includes('_ARC_HANDLERS'), 'node: should set up handler dispatch map')
+  assert.ok(server.content.includes('"greet"'), 'node: should map "greet" to handler')
+})
+
+test('node: includes /_arc/health endpoint', () => {
+  const files = node.generate({ html: '<html/>' })
+  const server = files.find(f => f.path === 'server.js')
+  assert.ok(server.content.includes('/_arc/health'), 'node: should include health endpoint')
+})
+
+test('node: edge routing block appears when edgeFunctions provided', () => {
+  const files = node.generate({ html: '<html/>', edgeFunctions: edgeFns, handlerNames: ['_handler_greet'] })
+  const server = files.find(f => f.path === 'server.js')
+  assert.ok(server.content.includes('_makeArcRequest') || server.content.includes('_ARC_HANDLERS'),
+    'node: should have edge routing logic')
+})
+
+test('bun: edgeFunctions block appears with handler names', () => {
+  const files = bun.generate({ html: '<html/>', edgeFunctions: edgeFns, handlerNames: ['_handler_greet', '_handler_compute'] })
+  const server = files.find(f => f.path === 'server.js')
+  assert.ok(server.content.includes('_handler_greet'), 'bun: should embed greet handler')
+  assert.ok(server.content.includes('_ARC_HANDLERS'), 'bun: should set up handler dispatch map')
+})
+
+test('bun: edge routing block uses request object for handlers', () => {
+  const files = bun.generate({ html: '<html/>', edgeFunctions: edgeFns, handlerNames: ['_handler_greet'] })
+  const server = files.find(f => f.path === 'server.js')
+  assert.ok(server.content.includes('_ARC_HANDLERS') || server.content.includes('_handler_greet'),
+    'bun: should route to handler')
+})
+
+test('deno: edgeFunctions block appears in server.ts', () => {
+  const files = denoTarget.generate({ html: '<html/>', edgeFunctions: edgeFns, handlerNames: ['_handler_greet'] })
+  const server = files.find(f => f.path === 'server.ts')
+  assert.ok(server.content.includes('_handler_greet'), 'deno: should embed greet handler')
+  assert.ok(server.content.includes('_ARC_HANDLERS'), 'deno: should set up handler dispatch map')
+})
+
+test('deno: produces deno.json task file alongside server.ts', () => {
+  const files = denoTarget.generate({ html: '<html/>' })
+  const cfg = files.find(f => f.path === 'deno.json')
+  assert.ok(cfg, 'deno: should produce deno.json')
+})
+
+test('cloudflare: edgeFunctions are integrated into Worker', () => {
+  const files = cloudflare.generate({ html: '<html/>', edgeFunctions: edgeFns, handlerNames: ['_handler_greet'] })
+  const worker = files.find(f => f.path === 'worker.js')
+  assert.ok(worker.content.includes('_handler_greet'), 'cloudflare: should embed greet handler')
+})

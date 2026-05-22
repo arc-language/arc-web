@@ -408,4 +408,75 @@ describe('CSS Emitter', () => {
       assert.equal(result, '')
     })
   })
+
+  describe('shorthand expansion functions', () => {
+    test('w shorthand with arithmetic wraps in calc()', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['w', '100% - 32px']]))
+      assert.ok(css.includes('calc(100% - 32px)'), `Expected calc() in:\n${css}`)
+    })
+
+    test('w shorthand without arithmetic leaves value as-is', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['w', '300px']]))
+      assert.ok(css.includes('width: 300px'))
+      assert.ok(!css.includes('calc('))
+    })
+
+    test('border 2-part shorthand expands to width/solid/color', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['border', '1px #ccc']]))
+      assert.ok(css.includes('solid'), `Expected solid in:\n${css}`)
+      assert.ok(css.includes('1px'))
+      assert.ok(css.includes('#ccc'))
+    })
+
+    test('weight: bold expands to 700', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['weight', 'bold']]))
+      assert.ok(css.includes('font-weight: 700'), `Expected 700 in:\n${css}`)
+    })
+
+    test('weight: semibold expands to 600', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['weight', 'semibold']]))
+      assert.ok(css.includes('font-weight: 600'), `Expected 600 in:\n${css}`)
+    })
+
+    test('line: tight expands to 1.25', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['line', 'tight']]))
+      assert.ok(css.includes('line-height: 1.25'))
+    })
+
+    test('tracking: wide expands to 0.025em', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['tracking', 'wide']]))
+      assert.ok(css.includes('letter-spacing: 0.025em'))
+    })
+
+    test('flex with column+gap+align+justify expands all', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['flex', 'column gap=16px align=center justify=between']]))
+      assert.ok(css.includes('display: flex'))
+      assert.ok(css.includes('flex-direction: column'))
+      assert.ok(css.includes('gap: 16px'))
+      assert.ok(css.includes('align-items: center'))
+      assert.ok(css.includes('justify-content: space-between'))
+    })
+
+    test('grid with 3col expands to repeat(3, 1fr)', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['grid', '3col gap=16px']]))
+      assert.ok(css.includes('display: grid'))
+      assert.ok(css.includes('repeat(3, 1fr)'), `Expected 3col → repeat(3, 1fr) in:\n${css}`)
+      assert.ok(css.includes('gap: 16px'))
+    })
+
+    test('transition with 2 parts adds default ease', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.x', [['transition', 'opacity 150ms']]))
+      assert.ok(css.includes('opacity 150ms ease'), `Expected ease added in:\n${css}`)
+    })
+  })
 })
