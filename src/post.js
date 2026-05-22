@@ -65,11 +65,24 @@ class PostProcessor {
   splitCriticalCss(css) {
     // Critical = @layer base block (always above the fold)
     // Rest = @layer component and beyond
-    const baseMatch = css.match(/(@layer base \{[\s\S]*?\n\})/)
-    if (!baseMatch) return { critical: css, rest: '' }
+    // Use brace counting instead of regex to correctly handle nested rules
+    const marker = '@layer base {'
+    const start = css.indexOf(marker)
+    if (start === -1) return { critical: css, rest: '' }
 
-    const critical = baseMatch[0]
-    const rest = css.replace(critical, '').trim()
+    let depth = 0
+    let end = -1
+    for (let i = start; i < css.length; i++) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}') {
+        depth--
+        if (depth === 0) { end = i + 1; break }
+      }
+    }
+    if (end === -1) return { critical: css, rest: '' }
+
+    const critical = css.slice(start, end)
+    const rest = (css.slice(0, start) + css.slice(end)).trim()
     return { critical, rest }
   }
 

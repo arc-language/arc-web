@@ -117,7 +117,9 @@ class EdgeRenderer {
     // break the surrounding template literal in the generated edge function.
     const mapEntries = bindingExprs.map(({ id, exprStr }) => {
       const safeExpr = exprStr.replace(/\\/g, '\\\\').replace(/`/g, '\\`')
-      return `  _m['${id}'] = _esc(String(${safeExpr} ?? ''))`
+      // Wrap in try/catch: if a dotted path like user.name throws when user is null,
+      // render empty string rather than crashing the edge function
+      return `  try { _m['${id}'] = _esc(String(${safeExpr} ?? '')) } catch { _m['${id}'] = '' }`
     }).join('\n')
 
     const spanIds = bindingExprs.map(({ id }) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')

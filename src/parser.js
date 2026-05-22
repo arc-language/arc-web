@@ -20,15 +20,20 @@ class Parser {
     this.filename = filename
     this.hoistedDecls = []  // @state/@computed/@build found inside templates
 
-    // Pre-compute non-whitespace token array for O(1) peek().
-    // _nwsTokens[i] is the i-th significant (non-WS) token.
-    // _nwsAt[rawPos] maps each raw token position to its index in _nwsTokens.
+    // Pre-compute non-whitespace token array for O(1) peek() and match().
+    // _nwsTokens[i]  — the i-th significant (non-WS) token
+    // _nwsAt[rawPos] — maps each raw token position to its nwsTokens index
+    // _nwsRawPos[i]  — reverse map: nwsTokens index → raw token position
     this._nwsTokens = tokens.filter(t => t.type !== T.NEWLINE && t.type !== T.INDENT && t.type !== T.DEDENT)
     this._nwsAt = new Int32Array(tokens.length + 1)
+    this._nwsRawPos = new Int32Array(this._nwsTokens.length)
     let _nwsIdx = 0
     for (let _i = 0; _i < tokens.length; _i++) {
       this._nwsAt[_i] = _nwsIdx
-      if (tokens[_i].type !== T.NEWLINE && tokens[_i].type !== T.INDENT && tokens[_i].type !== T.DEDENT) _nwsIdx++
+      if (tokens[_i].type !== T.NEWLINE && tokens[_i].type !== T.INDENT && tokens[_i].type !== T.DEDENT) {
+        this._nwsRawPos[_nwsIdx] = _i
+        _nwsIdx++
+      }
     }
     this._nwsAt[tokens.length] = _nwsIdx
   }
@@ -79,16 +84,12 @@ class Parser {
   }
 
   match(...types) {
-    const p = this.peek()
-    if (types.includes(p.type)) {
-      // advance to that token
-      const MAX_ITER = 100000
-      let iter = 0
-      while (this.tokens[this.pos].type !== p.type || this.tokens[this.pos] !== p) {
-        if (++iter > MAX_ITER) throw this.error('Parser: match() exceeded iteration limit — possible malformed input', p)
-        this.pos++
-      }
-      this.pos++
+    const nwsIdx = this._nwsAt[Math.min(this.pos, this.tokens.length)]
+    if (nwsIdx >= this._nwsTokens.length) return null
+    const p = this._nwsTokens[nwsIdx]
+    if (p && types.includes(p.type)) {
+      // O(1) jump via reverse lookup — no linear scan
+      this.pos = this._nwsRawPos[nwsIdx] + 1
       return p
     }
     return null
