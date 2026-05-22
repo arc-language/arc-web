@@ -181,15 +181,16 @@ class JsEmitter {
       const setterCall = b.bindRoot
         ? (() => {
             // Dotted path: generate a deep immutable update
-            // e.g. user.name → _set_user({...user, name: _bv})
-            // e.g. user.profile.email → _set_user({...user, profile:{...user.profile, email:_bv}})
+            // e.g. user.name → _set_user({..._user, name: _bv})
+            // e.g. user.profile.email → _set_user({..._user, profile:{..._user.profile, email:_bv}})
             _assertSafeIdent(b.bindRoot, 'bind root')
             const parts2 = b.expr.split('.')
             const root = parts2[0]
             const keys = parts2.slice(1)
             let setter = `_bv`
             for (let i = keys.length - 1; i >= 0; i--) {
-              const path = [root, ...keys.slice(0, i)].join('.')
+              // Use _ prefix for root so the runtime reads the state variable, not a bare name
+              const path = ['_' + root, ...keys.slice(0, i)].join('.')
               setter = `{...((${path})??{}),${JSON.stringify(keys[i])}:${setter}}`
             }
             return `_set_${root}(${setter})`
@@ -333,14 +334,14 @@ class JsEmitter {
         // Render and reconcile
         `const _kept=new Set();`,
         `const _newNodes=_items.map(function(${item},${idx}){`,
-        `  const _k=String((${b.keyExpr})!=null?(${b.keyExpr}):${idx});`,
+        `  const _kv=(${b.keyExpr});const _k=String(_kv!=null?_kv:${idx});`,
         `  const _html=_renderItem(${item},${idx});`,
         `  if(_km.has(_k)){`,
         `    const _ex=_km.get(_k);_kept.add(_k);`,
         `    const _tmp=document.createElement('div');_tmp.innerHTML=_html;`,
         `    const _nn=_tmp.firstChild;`,
-        `    if(_nn&&_ex.outerHTML!==_nn.outerHTML)_ex.replaceWith(_nn);`,
-        `    return _km.has(_k)?_ex:_nn;`,
+        `    if(_nn&&_ex.outerHTML!==_nn.outerHTML){_ex.replaceWith(_nn);return _nn;}`,
+        `    return _ex;`,
         `  }`,
         `  const _tmp=document.createElement('div');_tmp.innerHTML=_html;`,
         `  return _tmp.firstChild;`,

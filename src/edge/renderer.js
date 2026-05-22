@@ -58,7 +58,7 @@ class EdgeRenderer {
     parts.push(this.emitLiveResolver(liveDecls))
 
     // Emit HTML template filler (replaces reactive spans with real data)
-    parts.push(this.emitHtmlFiller(liveBindings))
+    parts.push(this.emitHtmlFiller(liveBindings, liveVarNames))
 
     // Emit WinterCG fetch handler
     parts.push(this.emitFetchHandler())
@@ -98,18 +98,12 @@ class EdgeRenderer {
     ].join('\n')
   }
 
-  emitHtmlFiller(liveBindings) {
-    // Collect top-level @live variable names referenced in bindings
-    // stateBindings format: { id, expr: string }
-    const liveVarsUsed = new Set()
-    const bindingExprs = liveBindings.map(b => {
-      const exprStr = b.expr
-      // Strip leading @ for AtProperty expressions before extracting the var name
-      const raw = exprStr.replace(/^@/, '')
-      const m = raw.match(/^([a-z_][a-z0-9_]*)\b/i)
-      if (m) liveVarsUsed.add(m[1])
-      return { id: b.id, exprStr }
-    })
+  emitHtmlFiller(liveBindings, liveVarNames) {
+    // Use the authoritative liveVarNames set from the compiler (all @live decl names)
+    // rather than trying to extract variable names by regex from expression strings,
+    // which fails for compound expressions like (user===null||user===undefined)
+    const liveVarsUsed = liveVarNames ?? new Set()
+    const bindingExprs = liveBindings.map(b => ({ id: b.id, exprStr: b.expr }))
 
     // Build a map of span id → replacement value, then do a single-pass regex replace
     // instead of O(N) replaceAll calls over the full HTML string
