@@ -97,9 +97,6 @@ const ELEMENT_CLASSES = {
 // Void elements that don't need closing tags
 const VOID_ELEMENTS = new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr'])
 
-// Attributes that map to HTML event handlers (removed — use Arc reactive)
-const SKIP_ATTRS = new Set(['on:click','on:input','on:change','on:submit','on:keydown','on:keyup','on:focus','on:blur','bind:value'])
-
 class HtmlEmitter {
   constructor(options = {}) {
     this.options = options
@@ -316,6 +313,8 @@ class HtmlEmitter {
     return `<${htmlTag}${attrStr}>${inner}</${htmlTag}>`
   }
 
+  // attrs has already had bind:/on: filtered out by emitElement.
+  // Only "tooltip" needs to be skipped here (consumed by emitTooltipAttr wrapper).
   buildAttrs(id, classes, attrs, node) {
     const parts = []
 
@@ -326,8 +325,7 @@ class HtmlEmitter {
     }
 
     for (const [key, rawValue] of Object.entries(attrs)) {
-      // Skip attrs consumed upstream (tooltip handled in emitElement; SKIP_ATTRS for safety)
-      if (SKIP_ATTRS.has(key) || key === 'tooltip') continue
+      if (key === 'tooltip') continue
 
       // Resolve AST node to its static value when possible
       const value = (rawValue && typeof rawValue === 'object' && rawValue.type)

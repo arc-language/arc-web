@@ -760,6 +760,41 @@ describe('Parser - range expressions', () => {
     assert.equal(computed.init.inclusive, false)
   })
 
+  test('parses range with member access on RHS: 0..arr.length', () => {
+    const src = `page "T"
+  @state let arr = []
+  @computed let nums = 0..arr.length
+  text "{nums}"`
+    const node = parse(src)
+    const computed = node.declarations.find(d => d.type === 'ComputedDecl')
+    assert.equal(computed.init.type, 'RangeExpr')
+    assert.equal(computed.init.end.type, 'MemberExpr')
+    assert.equal(computed.init.end.property.name, 'length')
+  })
+
+  test('parses range with call expression on RHS: 0..count()', () => {
+    const src = `page "T"
+  @state let n = 0
+  @computed let nums = 0..count()
+  text "{nums}"`
+    const node = parse(src)
+    const computed = node.declarations.find(d => d.type === 'ComputedDecl')
+    assert.equal(computed.init.type, 'RangeExpr')
+    assert.equal(computed.init.end.type, 'CallExpr')
+  })
+
+  test('parses range with computed indexing on RHS: 0..arr[0]', () => {
+    const src = `page "T"
+  @state let arr = []
+  @computed let nums = 0..arr[0]
+  text "{nums}"`
+    const node = parse(src)
+    const computed = node.declarations.find(d => d.type === 'ComputedDecl')
+    assert.equal(computed.init.type, 'RangeExpr')
+    assert.equal(computed.init.end.type, 'MemberExpr')
+    assert.equal(computed.init.end.computed, true)
+  })
+
   test('parses inclusive range 0..=n', () => {
     const src = `page "T"
   @state let n = 5

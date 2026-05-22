@@ -1544,13 +1544,40 @@ class Parser {
         expr = N.CallExpr(expr, args, t.line)
       } else if (t.type === T.DOTDOT) {
         this.pos++
-        expr = N.RangeExpr(expr, this.parsePrimary(), false, t.line)
+        // Range bound must support .prop, [i], (args) but not chained ranges
+        expr = N.RangeExpr(expr, this.parseRangeBound(), false, t.line)
+        break
       } else if (t.type === T.DOTDOTEQ) {
         this.pos++
-        expr = N.RangeExpr(expr, this.parsePrimary(), true, t.line)
+        expr = N.RangeExpr(expr, this.parseRangeBound(), true, t.line)
+        break
       } else break
     }
     return expr
+  }
+
+  // Parse a range bound — supports member access, indexing, calls,
+  // but stops at DOTDOT/DOTDOTEQ so nested ranges don't form.
+  parseRangeBound() {
+    let e = this.parsePrimary()
+    while (true) {
+      const t = this.tokens[this.pos]
+      if (!t) break
+      if (t.type === T.DOT) {
+        this.pos++
+        const propTok = this.tokens[this.pos++]
+        e = N.MemberExpr(e, N.Identifier(propTok?.value ?? '', t.line), false, t.line)
+      } else if (t.type === T.LBRACKET) {
+        this.pos++
+        const index = this.parseExpr()
+        this.eat(T.RBRACKET)
+        e = N.MemberExpr(e, index, true, t.line)
+      } else if (t.type === T.LPAREN) {
+        const args = this.parseCallArgs()
+        e = N.CallExpr(e, args, t.line)
+      } else break
+    }
+    return e
   }
 
   parseCallArgs() {

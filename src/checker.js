@@ -8,10 +8,17 @@ class Scope {
     this._parent = parent
   }
   has(k) {
-    return this._own.has(k) || (this._parent !== null && this._parent.has(k))
+    // Iterative walk avoids stack growth on deeply nested scopes
+    for (let s = this; s !== null; s = s._parent) {
+      if (s._own.has(k)) return true
+    }
+    return false
   }
   get(k) {
-    return this._own.has(k) ? this._own.get(k) : this._parent?.get(k)
+    for (let s = this; s !== null; s = s._parent) {
+      if (s._own.has(k)) return s._own.get(k)
+    }
+    return undefined
   }
   set(k, v) {
     this._own.set(k, v)
