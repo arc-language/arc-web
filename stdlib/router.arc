@@ -104,6 +104,7 @@ fn _announceRoute(path) {
 
 // Navigate to a new path — updates URL and runs View Transition if available
 fn navigate(path) {
+  if _routerTransitioning { return }
   unless path == _routerPath {
     if document.startViewTransition {
       _routerTransitioning = true
@@ -127,6 +128,7 @@ fn navigate(path) {
 window.addEventListener("popstate", fn() {
   _routerPath = location.pathname
   _focusMain()
+  _announceRoute(location.pathname)
 })
 
 // Router widget — renders the first matching route

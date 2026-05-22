@@ -10,12 +10,14 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', projectNam
     .join(',\n')
 
   // Extract unique handler function names from the edge functions string
+  const _SAFE_HANDLER_NAME = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
   const handlerMatches = edgeFunctions
     ? [...new Set((edgeFunctions.match(/function (_handler_\w+)/g) ?? []).map(m => m.slice('function '.length)))]
+        .filter(h => _SAFE_HANDLER_NAME.test(h))
     : []
 
   const handlerMapEntries = handlerMatches
-    .map(h => `  '${h.slice('_handler_'.length)}': ${h}`)
+    .map(h => `  ${JSON.stringify(h.slice('_handler_'.length))}: ${h}`)
     .join(',\n')
 
   const edgeFunctionsBlock = edgeFunctions ? `
@@ -81,12 +83,12 @@ async function handleEdgeFunction(urlPath, req, res) {
       res.end(JSON.stringify({ error: 'Response too large' }))
       return true
     }
-    const body = rawBody
     headers['X-Content-Type-Options'] = headers['X-Content-Type-Options'] ?? 'nosniff'
     headers['X-Frame-Options'] = headers['X-Frame-Options'] ?? 'SAMEORIGIN'
     headers['Content-Security-Policy'] = headers['Content-Security-Policy'] ?? "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    headers['Permissions-Policy'] = headers['Permissions-Policy'] ?? 'camera=(), microphone=(), geolocation=()'
     res.writeHead(status, headers)
-    res.end(body)
+    res.end(rawBody)
   } catch (e) {
     console.error('[arc] edge function error:', e.message)
     res.writeHead(500, { 'Content-Type': 'application/json' })
@@ -144,6 +146,8 @@ ${edgeRoutingBlock}
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'SAMEORIGIN',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
+      'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+      'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
     })
     res.end(asset)
     return

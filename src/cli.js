@@ -561,8 +561,8 @@ async function dev(projectDir) {
   // HTTP server: serves dist/ and handles /_arc/reload SSE
   const server = http.createServer((req, res) => {
     if (req.url === '/_arc/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ status: 'ok', mode: 'dev', uptime: process.uptime() }))
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify({ status: 'ok', mode: 'dev', uptime: process.uptime(), pid: process.pid, memory: process.memoryUsage().rss }))
       return
     }
 
@@ -584,8 +584,13 @@ async function dev(projectDir) {
 
     let urlPath
     try {
-      urlPath = decodeURIComponent(req.url.split('?')[0])
+      urlPath = decodeURIComponent((req.url ?? '/').split('?')[0])
     } catch {
+      res.writeHead(400)
+      res.end('Bad Request')
+      return
+    }
+    if (urlPath.includes('\0')) {
       res.writeHead(400)
       res.end('Bad Request')
       return
@@ -622,7 +627,12 @@ async function dev(projectDir) {
         )
       }
 
-      res.writeHead(200, { 'Content-Type': mime })
+      res.writeHead(200, {
+        'Content-Type': mime,
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'SAMEORIGIN',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+      })
       res.end(content)
     } catch (e) {
       // Only fall back to SPA index.html for missing files, not for read errors
@@ -634,7 +644,12 @@ async function dev(projectDir) {
       try {
         let html = fs.readFileSync(path.join(distDir, 'index.html')).toString()
         html = html.replace('</body>', `${RELOAD_SCRIPT}\n</body>`)
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'SAMEORIGIN',
+          'Referrer-Policy': 'strict-origin-when-cross-origin',
+        })
         res.end(html)
       } catch (fallbackErr) {
         console.error(`arc: dev: SPA fallback failed: ${fallbackErr.message}`)

@@ -295,7 +295,11 @@ class BuildExecutor {
         hostname.startsWith('fe80') ||
         hostname.startsWith('::ffff:10.') || hostname.startsWith('::ffff:127.') ||
         hostname.startsWith('::ffff:192.168.') ||
-        /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
+        /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+        // IPv4-translated form (::ffff:0:x.x.x.x)
+        hostname.startsWith('::ffff:0:10.') || hostname.startsWith('::ffff:0:127.') ||
+        hostname.startsWith('::ffff:0:192.168.') ||
+        /^::ffff:0:172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
       throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
     }
 

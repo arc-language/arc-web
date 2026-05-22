@@ -164,8 +164,11 @@ fn createForm(schema) {
         .then(fn() { isSubmitting = false })
         .catch(fn(err) {
           isSubmitting = false
-          // If handler throws { field: "message" }, show field errors
-          if err && !err.message {
+          // Handle plain string errors, field-map errors, and Error instances
+          if err is String {
+            errors = { ...errors, _form: err }
+          } else if err && !err.message {
+            // If handler throws { field: "message" }, show field errors
             errors = { ...errors, ...err }
           } else if err {
             errors = { ...errors, _form: err.message }
@@ -209,11 +212,16 @@ widget Field
       placeholder={ @placeholder ?? "" }
       aria-labelledby={ @label ? "label-" + @name : none }
       aria-invalid={ isTouched ? (error ? "true" : "false") : none }
-      aria-describedby={"error-" + @name}
+      aria-describedby={ isTouched && error ? "error-" + @name : none }
       on:input={ fn e => @form.setValue(@name, e.target.value) }
       on:blur={ fn() => @form.touch(@name) }
       class={ isTouched && error ? "field-error" : "" }
-    span id={"error-" + @name} class="field-error-msg" role="alert" aria-live="polite" "{isTouched && error ? error : ""}"
+    span
+      id={"error-" + @name}
+      class="field-error-msg"
+      role="alert"
+      aria-hidden={ !(isTouched && error) ? "true" : none }
+      "{isTouched && error ? error : ""}"
 
   design
     .field-label

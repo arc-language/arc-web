@@ -209,7 +209,7 @@ class Checker {
           this.checkExpr(value, declared, { allowAwait: true })
         }
       }
-      if (key === 'bind:value' || key.startsWith('bind:')) {
+      if (key.startsWith('bind:')) {
         // Value should be a declared @state variable
         const bindExpr = value
         if (bindExpr?.type === 'Identifier' && !declared.has(bindExpr.name)) {

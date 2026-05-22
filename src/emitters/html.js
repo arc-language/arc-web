@@ -288,9 +288,6 @@ class HtmlEmitter {
     }
 
     const inner = this.emitChildren(children)
-    if (!inner && children.length === 0) {
-      return `<${htmlTag}${attrStr}></${htmlTag}>`
-    }
     return `<${htmlTag}${attrStr}>${inner}</${htmlTag}>`
   }
 

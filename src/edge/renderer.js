@@ -90,7 +90,7 @@ class EdgeRenderer {
       assignments,
       `    return { ${liveDecls.map(d => d.name).join(', ')} }`,
       `  } catch (e) {`,
-      `    console.error('[arc] @live data error:', e)
+      `    console.error('[arc] @live data error:', e.message)
     return { __arc_render_error__: true }`,
       `  }`,
       `}`,
@@ -145,15 +145,14 @@ class EdgeRenderer {
 
     return [
       escFn,
-      `const _SPAN_RE = new RegExp('<span id="(?:' + ${JSON.stringify(spanIds)} + ')" aria-live="polite"><\\/span>', 'g')`,
+      `const _SPAN_RE = new RegExp('<span id="(' + ${JSON.stringify(spanIds)} + ')" aria-live="polite"><\\/span>', 'g')`,
       ``,
       `function _fillHtml(data) {`,
       `  const { ${[...liveVarsUsed].filter(v => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(v) && v !== '__proto__' && v !== 'constructor' && v !== 'prototype').map(v => `${v} = undefined`).join(', ')} } = data`,
       `  const _m = Object.create(null)`,
       mapEntries,
-      `  let html = BASE_HTML.replace(_SPAN_RE, m => {`,
-      `    const id = m.match(/id="([^"]+)"/)?.[1]`,
-      `    return id && id in _m ? _m[id] : m`,
+      `  let html = BASE_HTML.replace(_SPAN_RE, (_m0, id) => {`,
+      `    return id in _m ? _m[id] : _m0`,
       `  })`,
       cssInline,
       jsInline,
@@ -181,7 +180,7 @@ class EdgeRenderer {
       `        },`,
       `      })`,
       `    } catch (e) {`,
-      `      console.error('[arc] edge render error:', e)`,
+      `      console.error('[arc] edge render error:', e.message)`,
       `      return new Response('Internal Server Error', { status: 500 })`,
       `    }`,
       `  }`,

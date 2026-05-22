@@ -47,7 +47,10 @@ class JsEmitter {
     }
 
     // If nothing reactive, emit nothing
-    if (stateDecls.length === 0 && eventBindings.length === 0) return ''
+    if (stateDecls.length === 0 && eventBindings.length === 0) {
+      this._reCache?.clear()
+      return ''
+    }
 
     // Set of all reactive variable names — used by emitRuntimeExpr to prefix identifiers
     this.stateVarNames = new Set([
@@ -59,6 +62,12 @@ class JsEmitter {
 
     // Build dependency graph: stateVar → [binding]
     const deps = this.buildDeps(stateDecls, computedDecls, stateBindings)
+
+    // Hoist _esc helper to module scope when any list binding uses it
+    const hasListBindings = stateBindings.some(b => b.kind === 'list')
+    if (hasListBindings) {
+      parts.push(`function _esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}`)
+    }
 
     parts.push('(function(){')
     let genLine = 1  // incremental line counter avoids O(n²) join+scan
@@ -198,6 +207,7 @@ class JsEmitter {
 
     parts.push('})();')
 
+    this._reCache?.clear()
     return parts.join('\n')
   }
 
@@ -290,9 +300,6 @@ class JsEmitter {
     _assertSafeIdent(item, 'list item var')
     _assertSafeIdent(idx, 'list index var')
 
-    // _esc helper for safe HTML insertion of item values
-    const escHelper = `function _esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}`
-
     // Template that renders one item: JS template literal or plain HTML
     const tplFnBody = b.bodyIsTemplate
       ? `return \`${b.bodyTemplate ?? ''}\``
@@ -304,7 +311,6 @@ class JsEmitter {
       // Keyed reconciliation — preserves focus, scroll, and input state for unchanged items
       return [
         `(function(){`,
-        escHelper,
         renderFn,
         `const _items=${items};`,
         `if(!Array.isArray(_items)){${el}.innerHTML='';return;}`,
@@ -346,7 +352,6 @@ class JsEmitter {
     // Focus within the list is restored after update
     return [
       `(function(){`,
-      escHelper,
       renderFn,
       `const _items=${items};`,
       `if(!Array.isArray(_items)){${el}.innerHTML='';return;}`,
@@ -392,8 +397,8 @@ class JsEmitter {
     // Convert @name → _name, and known state/computed identifiers → _name
     let result = exprStr.replace(/@([a-zA-Z_][a-zA-Z0-9_]*)/g, '_$1')
     if (this.stateVarNames) {
-      // Replace bare identifiers (not after a dot) that are state variables with their _prefixed form
-      result = result.replace(/(?<![.])\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match) => {
+      // Replace bare identifiers (not after a dot or ?.) that are state variables with their _prefixed form
+      result = result.replace(/(?<![.?])\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match) => {
         return this.stateVarNames.has(match) ? `_${match}` : match
       })
     }

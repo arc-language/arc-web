@@ -23,6 +23,7 @@ class Decoder {
   constructor(buf) {
     this.buf = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
     this.pos = 0
+    this.view = new DataView(this.buf.buffer, this.buf.byteOffset)
   }
 
   decode() {
@@ -53,9 +54,9 @@ class Decoder {
 
       case TAG.FLOAT64: {
         if (this.pos + 8 > this.buf.length) throw new Error('ADP decode: unexpected end of buffer reading FLOAT64')
-        const dv = new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 8)
+        const floatVal = this.view.getFloat64(this.pos, false) // big-endian
         this.pos += 8
-        return dv.getFloat64(0, false) // big-endian
+        return floatVal
       }
 
       case TAG.STRING:
@@ -85,10 +86,8 @@ class Decoder {
       case TAG.DATE: {
         if (this.pos + 8 > this.buf.length) throw new Error('ADP decode: unexpected end of buffer reading DATE')
         // hi must be signed (encoder uses Math.floor for negative timestamps, e.g. pre-1970 dates)
-        const hi = (this.buf[this.pos] << 24) | (this.buf[this.pos+1] << 16) |
-                   (this.buf[this.pos+2] << 8) | this.buf[this.pos+3]
-        const lo = ((this.buf[this.pos+4] << 24) | (this.buf[this.pos+5] << 16) |
-                    (this.buf[this.pos+6] << 8) | this.buf[this.pos+7]) >>> 0
+        const hi = this.view.getInt32(this.pos, false)
+        const lo = this.view.getUint32(this.pos + 4, false)
         this.pos += 8
         return new Date(hi * 4294967296 + lo)
       }
@@ -149,7 +148,7 @@ async function fetchAdp(url, options = {}) {
 function decodeWithSchema(buf, typeName, schemas) {
   const raw = decode(buf)
   const schema = schemas?.[typeName]
-  if (!schema || typeof raw !== 'object') return raw
+  if (!schema || raw === null || typeof raw !== 'object') return raw
   return applySchema(raw, schema, schemas)
 }
 
