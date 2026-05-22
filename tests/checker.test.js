@@ -549,6 +549,42 @@ page "T"
   })
 })
 
+describe('Checker — direct Scope class tests', () => {
+  const { Scope } = require('../src/checker')
+
+  test('Scope.get returns own value when key is in own', () => {
+    const s = new Scope()
+    s.set('x', 'val')
+    assert.equal(s.get('x'), 'val')
+  })
+
+  test('Scope.get walks up parent chain when key only in parent', () => {
+    const parent = new Scope()
+    parent.set('outer', 'parent-val')
+    const child = new Scope(parent)
+    assert.equal(child.get('outer'), 'parent-val')
+  })
+
+  test('Scope.get returns undefined when key not in any scope', () => {
+    const parent = new Scope()
+    const child = new Scope(parent)
+    assert.equal(child.get('nope'), undefined)
+  })
+
+  test('Scope.has returns true for own keys', () => {
+    const s = new Scope()
+    s.set('a', 1)
+    assert.equal(s.has('a'), true)
+  })
+
+  test('Scope.has walks parent chain', () => {
+    const parent = new Scope()
+    parent.set('p', 1)
+    const child = new Scope(parent)
+    assert.equal(child.has('p'), true)
+  })
+})
+
 describe('Checker — direct AST construction for dead-code path coverage', () => {
   const { Checker } = require('../src/checker')
   const N = require('../src/ast')

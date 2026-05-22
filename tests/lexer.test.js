@@ -430,6 +430,17 @@ describe('Lexer - error cases', () => {
     assert.ok(l.pos > pos0)
   })
 
+  test('handles interpolation with nested {} braces via depth tracking', () => {
+    // String interpolation containing an object literal expression with {}
+    const tokens = lex('text "hello {{a: 1}.a}"')
+    // Should tokenize without error
+    assert.ok(tokens.length > 5)
+    // Should contain INTERP_START and INTERP_END
+    const types = tokens.map(t => t.type)
+    assert.ok(types.includes(T.INTERP_START))
+    assert.ok(types.includes(T.INTERP_END))
+  })
+
   test('Token.toString returns formatted string', () => {
     const { Token } = require('../src/tokens')
     const t = new Token('IDENT', 'foo', 1, 5)

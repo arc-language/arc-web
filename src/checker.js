@@ -485,4 +485,4 @@ const GLOBALS = new Set([
   '_session',
 ])
 
-module.exports = { Checker, ArcError }
+module.exports = { Checker, ArcError, Scope }
