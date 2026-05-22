@@ -19,6 +19,11 @@ const TAG = {
   ENUM:    0x0A,
 }
 
+// Pre-allocated single-byte Buffers for all 256 values — avoids per-tag allocation
+const _B = Array.from({length: 256}, (_, i) => Buffer.from([i]))
+// Module-level scratch for varint encoding (max 5 bytes for 32-bit, 10 for 64-bit)
+const _VARINT_SCRATCH = Buffer.allocUnsafe(10)
+
 class Encoder {
   constructor() {
     this.buf = []
@@ -27,26 +32,26 @@ class Encoder {
   encode(value) {
     this.buf = []
     this.writeValue(value)
-    return Buffer.from(this.buf)
+    return Buffer.concat(this.buf)
   }
 
   writeValue(val) {
     if (val === null || val === undefined) {
-      this.buf.push(TAG.NULL)
+      this.buf.push(_B[TAG.NULL])
       return
     }
 
-    if (val === true)  { this.buf.push(TAG.TRUE);  return }
-    if (val === false) { this.buf.push(TAG.FALSE); return }
+    if (val === true)  { this.buf.push(_B[TAG.TRUE]);  return }
+    if (val === false) { this.buf.push(_B[TAG.FALSE]); return }
 
     if (val instanceof Date) {
-      this.buf.push(TAG.DATE)
+      this.buf.push(_B[TAG.DATE])
       this.writeInt64(val.getTime())
       return
     }
 
     if (Array.isArray(val)) {
-      this.buf.push(TAG.ARRAY)
+      this.buf.push(_B[TAG.ARRAY])
       this.writeVarInt(val.length)
       for (const item of val) this.writeValue(item)
       return
@@ -54,26 +59,26 @@ class Encoder {
 
     if (typeof val === 'number') {
       if (Number.isInteger(val) && val >= 0 && val <= 255) {
-        this.buf.push(TAG.UINT8, val)
+        this.buf.push(_B[TAG.UINT8], _B[val])
       } else if (Number.isInteger(val) && val >= -2147483648 && val <= 2147483647) {
-        this.buf.push(TAG.INT32)
+        this.buf.push(_B[TAG.INT32])
         this.writeInt32(val)
       } else {
-        this.buf.push(TAG.FLOAT64)
+        this.buf.push(_B[TAG.FLOAT64])
         this.writeFloat64(val)
       }
       return
     }
 
     if (typeof val === 'string') {
-      this.buf.push(TAG.STRING)
+      this.buf.push(_B[TAG.STRING])
       this.writeString(val)
       return
     }
 
     if (typeof val === 'object') {
       const keys = Object.keys(val).filter(k => k !== '__proto__' && k !== 'constructor' && k !== 'prototype')
-      this.buf.push(TAG.OBJECT)
+      this.buf.push(_B[TAG.OBJECT])
       this.writeVarInt(keys.length)
       for (const key of keys) {
         this.writeString(key)
@@ -83,33 +88,43 @@ class Encoder {
     }
 
     // Fallback: stringify
-    this.buf.push(TAG.STRING)
+    this.buf.push(_B[TAG.STRING])
     this.writeString(String(val))
   }
 
   writeString(str) {
     const bytes = Buffer.from(str, 'utf8')
     this.writeVarInt(bytes.length)
-    for (let i = 0; i < bytes.length; i++) this.buf.push(bytes[i])
+    this.buf.push(bytes)
   }
 
   writeVarInt(n) {
-    // LEB128 unsigned varint
+    if (n < 128) {
+      this.buf.push(_B[n])
+      return
+    }
+    let len = 0
     while (n > 127) {
-      this.buf.push((n & 0x7f) | 0x80)
+      _VARINT_SCRATCH[len++] = (n & 0x7f) | 0x80
       n >>>= 7
     }
-    this.buf.push(n)
+    _VARINT_SCRATCH[len++] = n
+    this.buf.push(Buffer.from(_VARINT_SCRATCH.subarray(0, len)))
   }
 
   writeInt32(n) {
-    this.buf.push((n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff)
+    const b = Buffer.allocUnsafe(4)
+    b[0] = (n >>> 24) & 0xff
+    b[1] = (n >>> 16) & 0xff
+    b[2] = (n >>> 8) & 0xff
+    b[3] = n & 0xff
+    this.buf.push(b)
   }
 
   writeFloat64(n) {
     const b = Buffer.allocUnsafe(8)
     b.writeDoubleBE(n, 0)
-    for (let i = 0; i < 8; i++) this.buf.push(b[i])
+    this.buf.push(b)
   }
 
   writeInt64(n) {
@@ -137,20 +152,20 @@ class SchemaEncoder extends Encoder {
 
     this.buf = []
     this.writeObjectWithSchema(value, typeSchema)
-    return Buffer.from(this.buf)
+    return Buffer.concat(this.buf)
   }
 
   writeObjectWithSchema(obj, schema) {
     const fields = schema.fields ?? Object.keys(obj)
-    this.buf.push(TAG.OBJECT)  // required type tag — decoder reads tag first
+    this.buf.push(_B[TAG.OBJECT])
     this.writeVarInt(fields.length)
     for (const field of fields) {
-      this.writeString(field)  // decoder always reads key string first
+      this.writeString(field)
       const val = obj[field]
       const fieldSchema = schema.fieldTypes?.[field]
       if (fieldSchema?.enum) {
         const idx = fieldSchema.enum.indexOf(val)
-        this.buf.push(TAG.ENUM, idx >= 0 ? idx : 0)
+        this.buf.push(_B[TAG.ENUM], _B[idx >= 0 ? idx : 0])
       } else {
         this.writeValue(val)
       }
@@ -164,10 +179,10 @@ function encode(value) {
 
 function encodeArray(items) {
   const enc = new Encoder()
-  enc.buf.push(TAG.ARRAY)
+  enc.buf.push(_B[TAG.ARRAY])
   enc.writeVarInt(items.length)
   for (const item of items) enc.writeValue(item)
-  return Buffer.from(enc.buf)
+  return Buffer.concat(enc.buf)
 }
 
 // Express/Bun/Deno middleware helper: send ADP response

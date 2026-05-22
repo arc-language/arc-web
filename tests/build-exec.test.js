@@ -476,13 +476,28 @@ describe('Error cases', () => {
     )
   })
 
+  test('reduce sums array', async () => {
+    const e = exec()
+    e.context.arr = [1, 2, 3]
+    const N2 = require('../src/ast')
+    // reduce([1,2,3], fn(acc,x) => acc+x, 0) should return 6
+    const addFn = N2.ArrowFn(['acc', 'x'],
+      N2.BinaryExpr('+', N2.Identifier('acc', 0), N2.Identifier('x', 0), 0), 0)
+    const call = N2.CallExpr(
+      N2.MemberExpr(ident('arr'), N2.Identifier('reduce', 0), false, 0),
+      [addFn, lit(0)], 0
+    )
+    const result = await e.evalExpr(call)
+    assert.equal(result, 6)
+  })
+
   test('unsupported array method throws', async () => {
     const e = exec()
     e.context.arr = [1, 2, 3]
     const call = N.CallExpr(
-      N.MemberExpr(ident('arr'), N.Identifier('reduce', 0), false, 0),
+      N.MemberExpr(ident('arr'), N.Identifier('fill', 0), false, 0),
       [lit(0)], 0
     )
-    await assert.rejects(() => e.evalExpr(call), /Array\.reduce not supported/)
+    await assert.rejects(() => e.evalExpr(call), /Array\.fill not supported/)
   })
 })

@@ -90,7 +90,7 @@ class EdgeRenderer {
       assignments,
       `    return { ${liveDecls.map(d => d.name).join(', ')} }`,
       `  } catch (e) {`,
-      `    console.error('[arc] @live data error:', e.message)
+      `    console.error('[arc] @live data error:', e instanceof Error ? e.message : String(e))
     return { __arc_render_error__: true }`,
       `  }`,
       `}`,
@@ -183,7 +183,7 @@ class EdgeRenderer {
       `        },`,
       `      })`,
       `    } catch (e) {`,
-      `      console.error('[arc] edge render error:', e.message)`,
+      `      console.error('[arc] edge render error:', e instanceof Error ? e.message : String(e))`,
       `      return new Response('Internal Server Error', { status: 500 })`,
       `    }`,
       `  }`,

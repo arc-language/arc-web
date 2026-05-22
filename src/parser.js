@@ -10,6 +10,9 @@ const _CSS_NUM_RE = /^\d/
 // Hoisted to avoid per-rule object allocation in parseStyleRule
 const _PSEUDO_SHORTHANDS = Object.freeze({ hover: ':hover', focus: ':focus-visible', active: ':active', disabled: ':disabled', checked: ':checked', placeholder: '::placeholder' })
 
+// Annotations allowed inside template blocks — Set for O(1) vs O(7) Array.includes
+const _TEMPLATE_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker'])
+
 class Parser {
   constructor(tokens, filename = '<input>') {
     this.tokens = tokens  // keep all tokens, handle newlines in context
@@ -243,6 +246,10 @@ class Parser {
   }
 
   parseStateDecl(line) {
+    const kwTok = this.peek()
+    if (kwTok?.type !== T.CONST && kwTok?.type !== T.LET) {
+      throw this.error(`Expected 'const' or 'let' after @state, got ${JSON.stringify(kwTok?.value ?? 'end of input')}`)
+    }
     this.next() // consume const/let
     const name = this.eat(T.IDENT).value
     const typeAnnotation = this.eatIf(T.COLON) ? this.parseTypeAnnotation() : null
@@ -436,7 +443,7 @@ class Parser {
     // @state/@computed/@build inside template — hoist to program declarations
     if (t.type === T.AT_IDENT) {
       const annotation = t.value
-      if (['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker'].includes(annotation)) {
+      if (_TEMPLATE_ANNOTATIONS.has(annotation)) {
         const decl = this.parseAnnotatedDecl()
         if (decl) this.hoistedDecls.push(decl)
         return null

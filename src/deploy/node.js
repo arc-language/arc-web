@@ -90,7 +90,7 @@ async function handleEdgeFunction(urlPath, req, res) {
     res.writeHead(status, headers)
     res.end(rawBody)
   } catch (e) {
-    console.error('[arc] edge function error:', e.message)
+    console.error('[arc] edge function error:', e instanceof Error ? e.message : String(e))
     res.writeHead(500, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'Internal server error' }))
   }

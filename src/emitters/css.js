@@ -48,8 +48,8 @@ const SHORTHANDS = {
   // Layout — flex shorthand
   'flex':      v => expandFlex(v),
   'grid':      v => expandGrid(v),
-  'row':       v => `display: flex; flex-direction: row; ${v ? `gap: ${v}` : ''}`,
-  'col':       v => `display: flex; flex-direction: column; ${v ? `gap: ${v}` : ''}`,
+  'row':       v => `display: flex; flex-direction: row${v ? `; gap: ${v}` : ''}`,
+  'col':       v => `display: flex; flex-direction: column${v ? `; gap: ${v}` : ''}`,
 
   // Visual
   'z':         v => `z-index: ${v}`,
@@ -324,7 +324,6 @@ class CssEmitter {
 
   emitProps(props) {
     const declarations = []
-    const extraKeyframes = []
 
     for (const prop of props) {
       const { name, value } = prop
@@ -335,13 +334,26 @@ class CssEmitter {
         if (!expanded) continue
 
         // Handle animation shorthand — might produce multiple properties
-        const lines = expanded.split(';').map(l => l.trim()).filter(Boolean)
-        for (const line of lines) {
-          declarations.push(line)
-          // Check if we need keyframes
-          if (line.startsWith('animation:')) {
-            const animName = line.split(':')[1].trim().split(/\s+/)[0]
-            if (KEYFRAMES[animName]) this.usedKeyframes.add(animName)
+        if (!expanded.includes(';')) {
+          // Single declaration — avoid split/map/filter allocation
+          const line = expanded.trim()
+          if (line) {
+            declarations.push(line)
+            if (line.startsWith('animation:')) {
+              const colon = line.indexOf(':')
+              const animName = line.slice(colon + 1).trimStart().split(/\s+/)[0]
+              if (KEYFRAMES[animName]) this.usedKeyframes.add(animName)
+            }
+          }
+        } else {
+          const lines = expanded.split(';').map(l => l.trim()).filter(Boolean)
+          for (const line of lines) {
+            declarations.push(line)
+            if (line.startsWith('animation:')) {
+              const colon = line.indexOf(':')
+              const animName = line.slice(colon + 1).trimStart().split(/\s+/)[0]
+              if (KEYFRAMES[animName]) this.usedKeyframes.add(animName)
+            }
           }
         }
         continue

@@ -152,7 +152,7 @@ widget Route
 // Link widget — renders <a> that uses router navigation instead of full page load
 widget Link
   // Attrs: href, class, (slot for children)
-  link href={ @href } aria-current={ @href == _routerPath ? "page" : "false" }
+  link href={ @href } aria-current={ @href == _routerPath ? "page" : none }
     on:click={ fn(e) {
       e.preventDefault()
       navigate(@href)

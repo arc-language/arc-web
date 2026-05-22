@@ -30,5 +30,5 @@ jobs:
         run: find tests -name '*.test.js' | xargs node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=70
         if: matrix.node == 22
       - name: Build smoke test
-        run: node src/cli.js build examples/counter || true
+        run: node src/cli.js build examples/counter
         if: matrix.node == 22

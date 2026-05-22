@@ -276,10 +276,12 @@ class HtmlEmitter {
     }
 
     const htmlTag = ELEMENT_MAP[tag] ?? tag
-    const allClasses = [...(ELEMENT_CLASSES[tag] ?? []), ...classes]
 
-    // Build scoped class names
-    const scopedClasses = allClasses.map(c => `${c}_${this.componentHash}`)
+    // Skip allocations for elements with no layout or user classes (majority of elements)
+    const baseClasses = ELEMENT_CLASSES[tag]
+    const scopedClasses = (baseClasses != null || classes.length > 0)
+      ? [...(baseClasses ?? []), ...classes].map(c => `${c}_${this.componentHash}`)
+      : []
 
     const attrStr = this.buildAttrs(id, scopedClasses, attrs, node)
 
@@ -313,13 +315,13 @@ class HtmlEmitter {
 
       // <dialog> trigger: trigger="id" → onclick that calls showModal() then focuses first focusable child
       if (key === 'trigger') {
-        const safeId = JSON.stringify(String(value)).replace(/"/g, '&quot;')
+        const safeId = JSON.stringify(String(value)).split(String.fromCharCode(0x2028)).join('\\u2028').split(String.fromCharCode(0x2029)).join('\\u2029').replace(/"/g, '&quot;')
         parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)_f.focus();}"`)
         continue
       }
       // <dialog> close: close="id" → onclick that calls close()
       if (key === 'close') {
-        const safeId = JSON.stringify(String(value)).replace(/"/g, '&quot;')
+        const safeId = JSON.stringify(String(value)).split(String.fromCharCode(0x2028)).join('\\u2028').split(String.fromCharCode(0x2029)).join('\\u2029').replace(/"/g, '&quot;')
         parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d)_d.close()"`)
         continue
       }

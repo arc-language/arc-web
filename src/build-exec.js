@@ -250,6 +250,28 @@ class BuildExecutor {
       case 'join':    return arr.join(args[0] ?? ',')
       case 'includes': return arr.includes(args[0])
       case 'indexOf': return arr.indexOf(args[0])
+      case 'forEach': {
+        if (typeof args[0] !== 'function') throw new Error('@build Array.forEach: callback must be a function')
+        for (let i = 0; i < arr.length; i++) await args[0](arr[i], i, arr)
+        return undefined
+      }
+      case 'reduce': {
+        if (typeof args[0] !== 'function') throw new Error('@build Array.reduce: callback must be a function')
+        let acc = args.length >= 2 ? args[1] : arr[0]
+        const start = args.length >= 2 ? 0 : 1
+        for (let i = start; i < arr.length; i++) acc = await args[0](acc, arr[i], i, arr)
+        return acc
+      }
+      case 'some': {
+        if (typeof args[0] !== 'function') throw new Error('@build Array.some: callback must be a function')
+        for (const item of arr) { if (await args[0](item)) return true }
+        return false
+      }
+      case 'every': {
+        if (typeof args[0] !== 'function') throw new Error('@build Array.every: callback must be a function')
+        for (const item of arr) { if (!(await args[0](item))) return false }
+        return true
+      }
       default: throw new Error(`Array.${method} not supported at build time`)
     }
   }

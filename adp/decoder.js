@@ -121,7 +121,7 @@ class Decoder {
       if (shift < 28) {
         result |= (byte & 0x7f) << shift
       } else {
-        result += (byte & 0x7f) * Math.pow(2, shift)
+        result += (byte & 0x7f) * 2**shift
       }
       if (!(byte & 0x80)) break
       shift += 7

@@ -16,6 +16,12 @@ function _assertSafeAttr(val, context) {
   }
 }
 
+function _countNL(s) {
+  let c = 0
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) c++
+  return c
+}
+
 const _SAFE_DOM_EVENTS = new Set([
   'click','dblclick','mousedown','mouseup','mousemove','mouseenter','mouseleave','mouseover','mouseout',
   'keydown','keyup','keypress','focus','blur','focusin','focusout',
@@ -49,6 +55,7 @@ class JsEmitter {
     // If nothing reactive, emit nothing
     if (stateDecls.length === 0 && eventBindings.length === 0) {
       this._reCache?.clear()
+      this._emitCache = undefined
       return ''
     }
 
@@ -78,7 +85,7 @@ class JsEmitter {
         this.sourceMap.addMapping(genLine, 0, s.line - 1, 0)
       }
       const code = `let _${s.name}=${this.emitExpr(s.init)};`
-      genLine += (code.match(/\n/g) ?? []).length + 1
+      genLine += _countNL(code) + 1
       parts.push(code)
     }
 
@@ -88,7 +95,7 @@ class JsEmitter {
         this.sourceMap.addMapping(genLine, 0, c.line - 1, 0)
       }
       const code = `let _${c.name}=${this.emitExpr(c.init)};`
-      genLine += (code.match(/\n/g) ?? []).length + 1
+      genLine += _countNL(code) + 1
       parts.push(code)
     }
 
@@ -108,7 +115,7 @@ class JsEmitter {
         this.sourceMap.addMapping(genLine, 0, fn.line - 1, 0)
       }
       const code = this.emitFnDecl(fn)
-      genLine += (code.match(/\n/g) ?? []).length + 1
+      genLine += _countNL(code) + 1
       parts.push(code)
     }
 
@@ -169,7 +176,8 @@ class JsEmitter {
     }
 
     // bind:value two-way bindings
-    for (const b of stateBindings.filter(b => b.kind === 'bind')) {
+    for (const b of stateBindings) {
+      if (b.kind !== 'bind') continue
       const setterCall = b.bindRoot
         ? (() => {
             // Dotted path: generate a deep immutable update
@@ -208,6 +216,7 @@ class JsEmitter {
     parts.push('})();')
 
     this._reCache?.clear()
+    this._emitCache = undefined
     return parts.join('\n')
   }
 
@@ -534,7 +543,7 @@ class JsEmitter {
         return `(()=>{throw new Error(${this.emitExpr(expr.argument)})})()`
 
       default:
-        return 'undefined'
+        throw new Error(`Arc JS emitter: unhandled expression type "${expr.type}" — this is a compiler bug`)
     }
   }
 

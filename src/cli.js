@@ -54,7 +54,7 @@ async function resolveImports(program, projectDir, filename, visited, rootDir) {
 
     let importedSource
     try {
-      importedSource = fs.readFileSync(importPath, 'utf8')
+      importedSource = await fs.promises.readFile(importPath, 'utf8')
     } catch (e) {
       console.warn(`arc: warning: could not read import ${src}: ${e.message}`)
       continue
