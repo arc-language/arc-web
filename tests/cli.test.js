@@ -472,6 +472,24 @@ page "T"
     } finally { rmDir(dir) }
   })
 
+  test('build with @live but no template references uses short-circuit renderer', () => {
+    const dir = mkTmpDir('buildliveempty')
+    try {
+      // @live declared but not referenced in template — short-circuit path
+      fs.writeFileSync(path.join(dir, 'index.arc'), `page "T"
+  @server fn getUser() -> { name: String } {
+    return { name: "alice" }
+  }
+  @live let user = getUser()
+  text "no reference to user"
+`)
+      execFileSync('node', [cliPath, 'build', dir], { stdio: 'pipe' })
+      const renderer = fs.readFileSync(path.join(dir, 'dist', '_arc', 'renderer.js'), 'utf8')
+      // Short-circuit path: no _SPAN_RE constant
+      assert.ok(!renderer.includes('_SPAN_RE'), `Expected no _SPAN_RE (short-circuit): ${renderer.slice(0, 300)}`)
+    } finally { rmDir(dir) }
+  })
+
   test('build emits @live edge renderer to _arc/renderer.js', () => {
     const dir = mkTmpDir('buildlive')
     try {
@@ -552,6 +570,24 @@ describe('cli — check command edge cases (subprocess)', () => {
         () => execFileSync('node', [cliPath, 'check', file], { stdio: 'pipe' }),
         /Command failed/
       )
+    } finally { rmDir(dir) }
+  })
+
+  test('check prints warnings (e.g. await outside async)', () => {
+    const dir = mkTmpDir('checkwarn')
+    try {
+      const file = path.join(dir, 'warn.arc')
+      // Trigger an await-outside-async warning
+      fs.writeFileSync(file, `@server fn process(x) {
+  await x
+}
+page "T"
+  text "ok"
+`)
+      const r = require('child_process').spawnSync('node', [cliPath, 'check', file], { stdio: 'pipe' })
+      const out = r.stdout.toString() + r.stderr.toString()
+      assert.ok(out.includes('warn') || out.includes('await'),
+        `Expected warning output: ${out}`)
     } finally { rmDir(dir) }
   })
 

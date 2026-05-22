@@ -181,6 +181,32 @@ test('deno: produces deno.json task file alongside server.ts', () => {
   assert.ok(cfg, 'deno: should produce deno.json')
 })
 
+// Coverage of text-scan path: edgeFunctions provided without handlerNames
+test('node: derives handlerNames from edgeFunctions text scan when not provided', () => {
+  const files = node.generate({ html: '<html/>', edgeFunctions: edgeFns })
+  const server = files.find(f => f.path === 'server.js')
+  // Should have scanned the text and found _handler_greet
+  assert.ok(server.content.includes('_handler_greet'))
+})
+
+test('bun: derives handlerNames from edgeFunctions text scan', () => {
+  const files = bun.generate({ html: '<html/>', edgeFunctions: edgeFns })
+  const server = files.find(f => f.path === 'server.js')
+  assert.ok(server.content.includes('_handler_greet'))
+})
+
+test('deno: derives handlerNames from edgeFunctions text scan', () => {
+  const files = denoTarget.generate({ html: '<html/>', edgeFunctions: edgeFns })
+  const server = files.find(f => f.path === 'server.ts')
+  assert.ok(server.content.includes('_handler_greet'))
+})
+
+test('cloudflare: derives handlerNames from edgeFunctions text scan', () => {
+  const files = cloudflare.generate({ html: '<html/>', edgeFunctions: edgeFns })
+  const worker = files.find(f => f.path === 'worker.js')
+  assert.ok(worker.content.includes('_handler_greet'))
+})
+
 test('cloudflare: edgeFunctions are integrated into Worker', () => {
   const files = cloudflare.generate({ html: '<html/>', edgeFunctions: edgeFns, handlerNames: ['_handler_greet'] })
   const worker = files.find(f => f.path === 'worker.js')

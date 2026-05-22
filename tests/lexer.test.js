@@ -410,4 +410,36 @@ describe('Lexer - error cases', () => {
   test('throws on unexpected character', () => {
     assert.throws(() => lex('`'), /Unexpected character/)
   })
+
+  test('throws on newline inside double-quoted string', () => {
+    assert.throws(() => lex('"line1\nline2"'), /Unterminated string/)
+  })
+
+  test('throws on unterminated string interpolation in template', () => {
+    // The interpolation has { but no }
+    assert.throws(() => lex('text "hello {expr'), /string interpolation|Unterminated|Unexpected/)
+  })
+
+  test('lexer.match returns true and advances when char matches', () => {
+    const { Lexer } = require('../src/lexer')
+    const l = new Lexer('=x', 'test')
+    // Position 0 is '=' — match('=') returns true and advances
+    const pos0 = l.pos
+    const r = l.match('=')
+    assert.equal(r, true)
+    assert.ok(l.pos > pos0)
+  })
+
+  test('Token.toString returns formatted string', () => {
+    const { Token } = require('../src/tokens')
+    const t = new Token('IDENT', 'foo', 1, 5)
+    assert.equal(t.toString(), 'Token(IDENT, "foo", 1:5)')
+  })
+
+  test('lexer.match returns false when char does not match', () => {
+    const { Lexer } = require('../src/lexer')
+    const l = new Lexer('x', 'test')
+    const r = l.match('=')
+    assert.equal(r, false)
+  })
 })

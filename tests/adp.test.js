@@ -283,6 +283,23 @@ describe('ADP Protocol', () => {
     })
   })
 
+  describe('Encoder fallback paths', () => {
+    test('encodes Symbol via stringify fallback', () => {
+      const sym = Symbol.for('test')
+      const buf = encode(sym)
+      // Should encode as STRING via String() fallback
+      const decoded = decode(buf)
+      assert.ok(typeof decoded === 'string', `Expected string fallback: ${typeof decoded}`)
+    })
+
+    test('encodes function via stringify fallback', () => {
+      const fn = function abc() {}
+      const buf = encode(fn)
+      const decoded = decode(buf)
+      assert.ok(typeof decoded === 'string')
+    })
+  })
+
   describe('readVarInt edge cases', () => {
     test('large varint (>= 2^28) uses multiplication path correctly', () => {
       // Encode an array of length 2^28 — too big to actually allocate, but we can
@@ -445,6 +462,14 @@ describe('ADP Protocol', () => {
       assert.ok(calls.headers['Content-Length'] > 0)
       assert.ok(Buffer.isBuffer(calls.ended))
       assert.deepEqual(decode(calls.ended), { id: 1, name: 'A' })
+    })
+
+    test('sends ADP via WinterCG function-style res (returns Response)', () => {
+      let response = null
+      const res = (r) => { response = r }
+      sendAdp(res, { id: 1 })
+      assert.ok(response, 'should call res as function')
+      assert.equal(response.headers.get('Content-Type'), 'application/x-adp')
     })
 
     test('sends array via encodeArray path', () => {

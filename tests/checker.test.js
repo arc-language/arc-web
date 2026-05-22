@@ -742,6 +742,47 @@ describe('Checker — direct AST construction for dead-code path coverage', () =
       `Expected await warning`)
   })
 
+  test('checkClassDecl with method that has params puts them in scope', () => {
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.ClassDecl('Box', [], [
+          N.ClassMethod('set', [N.Param('value', null, null, false, 0)], null,
+            { type: 'BlockStatement', body: [
+              N.ExprStatement(N.Identifier('value', 0), 0)  // uses value param
+            ], line: 0 }, false, false, 0)
+        ], 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.equal(result.errors.length, 0)
+  })
+
+  test('Scope.get returns from parent chain when key only in parent', () => {
+    const { Checker } = require('../src/checker')
+    // Construct via the public Scope API indirectly
+    // Test that an inner block can read an outer scope binding
+    const checker = new Checker('test')
+    const program = {
+      declarations: [
+        N.StateDecl('outer', null, N.Literal(1, '1', 0), 0),
+        N.ServerFn('fn1', [], null, {
+          type: 'BlockStatement',
+          body: [
+            { type: 'BlockStatement', body: [
+              N.ExprStatement(N.AtProperty('outer', 0), 0)
+            ], line: 0 }
+          ],
+          line: 0
+        }, 0),
+        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
+      ]
+    }
+    const result = checker.check(program)
+    assert.equal(result.errors.length, 0)
+  })
+
   test('checkClassDecl with field that has init expression', () => {
     const checker = new Checker('test')
     const program = {

@@ -429,6 +429,51 @@ describe('Optimizer - applyOp arithmetic', () => {
   })
 })
 
+describe('Optimizer - Element attr substitution via bindings', () => {
+  test('Element with attrs gets attrs substituted from bindings', () => {
+    const { Optimizer } = require('../src/optimizer')
+    // Element with attrs that reference a bound variable
+    const elem = N.Element('div', [], null,
+      { 'data-id': N.Identifier('idVal', 0) },
+      [], 0)
+    const opt = new Optimizer({})
+    const result = opt.optimizeNodeWithBindings(elem, { idVal: 'abc' })
+    assert.equal(result.length, 1)
+    assert.equal(result[0].attrs['data-id'].type, 'Literal')
+    assert.equal(result[0].attrs['data-id'].value, 'abc')
+  })
+
+  test('Optimizer.optimizeUnless with unknown condition leaves UnlessNode', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const node = N.UnlessNode(N.Identifier('unknown', 0), [N.TextNode('x', 0)], 0)
+    const opt = new Optimizer({})
+    const result = opt.optimizeUnless(node)
+    assert.equal(result[0].type, 'UnlessNode')
+  })
+
+  test('Optimizer with nested ForNode via bindings dispatches recursively', () => {
+    const { Optimizer } = require('../src/optimizer')
+    // Outer for unrolls items; inner for inside body uses the unrolled binding
+    const innerFor = N.ForNode(null, 'sub', N.Identifier('item', 0), [
+      N.InterpolationNode(N.Identifier('sub', 0), 0)
+    ], 0)
+    const outerFor = N.ForNode(null, 'item', N.Identifier('items', 0), [innerFor], 0)
+    const opt = new Optimizer({ items: [[1, 2], [3]] })
+    const result = opt.optimizeForWithBindings(outerFor, {})
+    // After full unrolling: 2+1 = 3 TextNodes
+    assert.equal(result.length, 3)
+  })
+
+  test('Optimizer.optimizeForWithBindings with non-array static collection', () => {
+    const { Optimizer } = require('../src/optimizer')
+    const forNode = N.ForNode(null, 'item', N.Identifier('notArr', 0), [], 0)
+    const opt = new Optimizer({ notArr: 'string-not-array' })
+    const result = opt.optimizeForWithBindings(forNode, {})
+    // Non-array → returns [original node]
+    assert.equal(result.length, 1)
+  })
+})
+
 describe('Optimizer - InterpolationNode substitution inside Element', () => {
   test('Element with InterpolationNode child gets folded by optimizer when value is known', () => {
     const { Optimizer } = require('../src/optimizer')
