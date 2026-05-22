@@ -368,6 +368,54 @@ page "T"
   })
 })
 
+describe('Checker — widget and class declarations', () => {
+  test('widget with @attr reference is clean (no false positive)', () => {
+    assert.ok(clean(`
+widget Card
+  div
+    text "{@title}"
+page "T"
+  Card title="Hello"
+`))
+  })
+
+  test('widget body uses passed attr value without error', () => {
+    assert.ok(clean(`
+widget Badge
+  span
+    text "{@label}"
+page "T"
+  Badge label="New"
+`))
+  })
+
+  test('class with fields and methods is clean', () => {
+    assert.ok(clean(`
+class Counter {
+  @count = 0
+  fn increment() { return 1 }
+}
+page "T"
+  text "ok"
+`))
+  })
+
+  test('bind:value on undeclared variable produces an error', () => {
+    assert.ok(hasError(`
+page "T"
+  input type="text" bind:value={undeclaredVar}
+`, 'bind:value references undeclared'))
+  })
+
+  test('bind:value on declared @state is clean', () => {
+    assert.ok(clean(`
+page "T"
+  @state let name = ""
+  input type="text" bind:value={name}
+`))
+  })
+})
+
 describe('Checker — clean examples', () => {
   const fs = require('fs')
   const examples = ['hello', 'counter', 'blog', 'dashboard', 'patterns', 'live', 'chat']

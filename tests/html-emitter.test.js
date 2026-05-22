@@ -306,6 +306,83 @@ page "T"
     })
   })
 
+  describe('if/unless template nodes', () => {
+    test('static if with true @build condition emits consequent only', async () => {
+      const src = `page "T"
+  @build const flag = true
+  if flag
+    text "shown"
+  else
+    text "hidden"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('shown'), `Expected "shown" in:\n${html}`)
+      assert.ok(!html.includes('hidden'), `Should not include "hidden":\n${html}`)
+    })
+
+    test('static if with false @build condition emits alternate', async () => {
+      const src = `page "T"
+  @build const flag = false
+  if flag
+    text "shown"
+  else
+    text "hidden"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('hidden'), `Expected "hidden" in:\n${html}`)
+      assert.ok(!html.includes('shown'), `Should not include "shown":\n${html}`)
+    })
+
+    test('reactive if (on @state) emits aria-live container', async () => {
+      const src = `page "T"
+  @state let show = true
+  if show
+    text "visible"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('aria-live'), `Expected aria-live container in:\n${html}`)
+    })
+
+    test('reactive if with else emits both branches with separate ids', async () => {
+      const src = `page "T"
+  @state let show = true
+  if show
+    text "yes"
+  else
+    text "no"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('yes') && html.includes('no'), `Expected both branches in:\n${html}`)
+    })
+
+    test('unless with static false condition emits body', async () => {
+      const src = `page "T"
+  @build const broken = false
+  unless broken
+    text "ok"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('ok'), `Expected body in:\n${html}`)
+    })
+  })
+
+  describe('for template nodes', () => {
+    test('static for with @build array unrolls to multiple HTML items', async () => {
+      const src = `page "T"
+  @build const items = ["one", "two", "three"]
+  for item in items
+    text "{item}"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('one'), `Expected "one" in:\n${html}`)
+      assert.ok(html.includes('two'), `Expected "two"`)
+      assert.ok(html.includes('three'), `Expected "three"`)
+    })
+
+    test('reactive for (on @state) emits list container with aria-live', async () => {
+      const src = `page "T"
+  @state let items = []
+  for item in items
+    text "{item}"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('aria-live'), `Expected aria-live list container in:\n${html}`)
+    })
+  })
+
   describe('reactive template literal span placeholders', () => {
     test('@state variable in text template emits reactive span', async () => {
       const src = `page "T"

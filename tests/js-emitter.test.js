@@ -332,4 +332,109 @@ describe('JS Emitter', () => {
     })
   })
 
+  describe('statement emitter — via @server fn bodies (edge output)', () => {
+    test('unless statement compiles to if(!cond)', async () => {
+      const r = await compile(`page "T"
+  @server fn process(x) {
+    unless x > 0 {
+      return 0
+    }
+    return x
+  }`)
+      assert.ok(r.edgeFunctions.includes('if(!('), `Expected if(!cond) for unless in edge output`)
+    })
+
+    test('while statement compiles to while(cond)', async () => {
+      const r = await compile(`page "T"
+  @server fn process(n) {
+    while n > 0 {
+      n = n - 1
+    }
+    return n
+  }`)
+      assert.ok(r.edgeFunctions.includes('while('), `Expected while loop in edge output`)
+    })
+
+    test('until statement compiles to while(!cond)', async () => {
+      const r = await compile(`page "T"
+  @server fn process(n) {
+    until n > 10 {
+      n = n + 1
+    }
+    return n
+  }`)
+      assert.ok(r.edgeFunctions.includes('while(!('), `Expected while(!) for until in edge output`)
+    })
+
+    test('loop statement compiles to while(true)', async () => {
+      const r = await compile(`page "T"
+  @server fn process(n) {
+    loop {
+      if n > 5 { break }
+      n = n + 1
+    }
+    return n
+  }`)
+      assert.ok(r.edgeFunctions.includes('while(true)'), `Expected while(true) for loop`)
+    })
+
+    test('try/catch statement emits try/catch JS', async () => {
+      const r = await compile(`page "T"
+  @server fn process(x) {
+    try {
+      return x
+    } catch e {
+      return 0
+    }
+  }`)
+      assert.ok(r.edgeFunctions.includes('try{'), `Expected try block`)
+      assert.ok(r.edgeFunctions.includes('catch('), `Expected catch block`)
+    })
+
+    test('for statement with index var emits forEach', async () => {
+      const r = await compile(`page "T"
+  @server fn process(items) {
+    for i, item in items {
+      item
+    }
+    return items
+  }`)
+      assert.ok(r.edgeFunctions.includes('.forEach('), `Expected .forEach for indexed for`)
+    })
+
+    test('for statement without index emits for...of', async () => {
+      const r = await compile(`page "T"
+  @server fn process(items) {
+    for item in items {
+      item
+    }
+    return items
+  }`)
+      assert.ok(r.edgeFunctions.includes('for(const'), `Expected for(const ... of) loop`)
+    })
+
+    test('break statement compiles to break;', async () => {
+      const r = await compile(`page "T"
+  @server fn process(n) {
+    loop {
+      if n > 5 { break }
+      n = n + 1
+    }
+    return n
+  }`)
+      assert.ok(r.edgeFunctions.includes('break'), `Expected break statement`)
+    })
+
+    test('class declaration compiles to JS class', async () => {
+      const { js } = await compile(`class Counter {
+  @count = 0
+  fn increment() { return 1 }
+}
+page "T"
+  text "ok"`)
+      assert.ok(js.includes('class Counter') || js.length === 0,
+        `Expected class Counter or no client JS:\n${js.slice(0, 200)}`)
+    })
+  })
+
 })

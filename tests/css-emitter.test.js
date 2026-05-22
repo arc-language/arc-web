@@ -316,4 +316,96 @@ describe('CSS Emitter', () => {
       assert.ok(!css.includes('system - ui'), 'Should not have spaces around hyphen')
     })
   })
+
+  describe('@-rule conditions (direct emitter)', () => {
+    test('@tablet condition emits @media query', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleCondition',
+            kind: 'tablet',
+            query: null,
+            rules: [{
+              type: 'StyleRule',
+              selector: 'body',
+              props: [{ type: 'StyleProp', name: 'font-size', value: '16px', line: 1 }],
+              children: [],
+              line: 1
+            }],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      assert.ok(css.includes('@media'), `Expected @media in:\n${css}`)
+    })
+
+    test('@dark condition emits prefers-color-scheme query', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleCondition',
+            kind: 'dark',
+            query: null,
+            rules: [{
+              type: 'StyleRule',
+              selector: 'body',
+              props: [{ type: 'StyleProp', name: 'color', value: 'white', line: 1 }],
+              children: [],
+              line: 1
+            }],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      assert.ok(css.includes('prefers-color-scheme: dark'), `Expected dark query in:\n${css}`)
+    })
+
+    test('@container condition emits @container query with size', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const program = {
+        declarations: [{
+          type: 'DesignBlock',
+          rules: [{
+            type: 'StyleCondition',
+            kind: 'container',
+            query: '(max-width: 400px)',
+            rules: [{
+              type: 'StyleRule',
+              selector: '.card',
+              props: [{ type: 'StyleProp', name: 'padding', value: '8px', line: 1 }],
+              children: [],
+              line: 1
+            }],
+            line: 1
+          }]
+        }]
+      }
+      const css = emitter.emitProgram(program)
+      assert.ok(css.includes('@container'), `Expected @container in:\n${css}`)
+    })
+
+    test('scopeSelector adds hash suffix to class', () => {
+      const emitter = new CssEmitter({ hash: 'abc' })
+      const scoped = emitter.scopeSelector('.card')
+      assert.ok(scoped.includes('_abc'), `Expected hash suffix in: ${scoped}`)
+    })
+
+    test('scopeSelector leaves element selectors unchanged', () => {
+      const emitter = new CssEmitter({ hash: 'abc' })
+      const scoped = emitter.scopeSelector('body')
+      assert.equal(scoped, 'body')
+    })
+
+    test('unknown rule type returns empty string', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const result = emitter.emitRule({ type: 'WeirdUnknown' })
+      assert.equal(result, '')
+    })
+  })
 })
