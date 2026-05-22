@@ -385,11 +385,20 @@ class BuildExecutor {
     })
   }
 
+  // Sensitive filename patterns that @build readFile must never expose
+  static _SENSITIVE_FILE_RE = /(?:^|[/\\])(?:\.env(?:\..+)?|\.envrc|\.netrc|credentials(?:\.json)?|secrets(?:\.json)?|\.aws[/\\]credentials|\.ssh[/\\]id_[a-z]+(?:\.pub)?|.*\.pem|.*\.key|.*\.p12|.*\.pfx|.*\.cer|.*\.crt)$/i
+
   doReadFile(filePath) {
+    if (BuildExecutor._SENSITIVE_FILE_RE.test(filePath)) {
+      throw new Error(`@build readFile: refusing to read sensitive file: ${path.basename(filePath)}`)
+    }
     const abs = path.isAbsolute(filePath)
       ? filePath
       : path.join(this.projectDir, filePath)
     const resolved = path.resolve(abs)
+    if (BuildExecutor._SENSITIVE_FILE_RE.test(resolved)) {
+      throw new Error(`@build readFile: refusing to read sensitive file: ${path.basename(filePath)}`)
+    }
     const projectRoot = path.resolve(this.projectDir)
     if (!resolved.startsWith(projectRoot + path.sep) && resolved !== projectRoot) {
       throw new Error(`@build readFile: path escapes project root: ${filePath}`)

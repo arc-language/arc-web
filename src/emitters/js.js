@@ -333,7 +333,7 @@ class JsEmitter {
         // Render and reconcile
         `const _kept=new Set();`,
         `const _newNodes=_items.map(function(${item},${idx}){`,
-        `  const _k=String((${item}&&${item}.key)!=null?(${item}).key:${idx});`,
+        `  const _k=String((${b.keyExpr})!=null?(${b.keyExpr}):${idx});`,
         `  const _html=_renderItem(${item},${idx});`,
         `  if(_km.has(_k)){`,
         `    const _ex=_km.get(_k);_kept.add(_k);`,

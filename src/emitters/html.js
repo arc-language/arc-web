@@ -257,9 +257,10 @@ class HtmlEmitter {
           // Dotted path: user.name → expr="user.name", bindRoot="user"
           const exprStr = this.exprToString(value)
           const bindRoot = this._extractRootIdent(value)
-          if (bindRoot) {
-            this.stateBindings.push({ id, expr: exprStr, bindRoot, kind: 'bind', line: node.line })
+          if (!bindRoot) {
+            throw new Error(`Arc: bind:value path must be a simple variable or dotted path (e.g. user.name), got: ${exprStr}`)
           }
+          this.stateBindings.push({ id, expr: exprStr, bindRoot, kind: 'bind', line: node.line })
         } else {
           const boundName = value?.type === 'Identifier' ? value.name
             : value?.type === 'AtProperty' ? value.name
@@ -714,14 +715,43 @@ class HtmlEmitter {
 
   exprToString(expr) {
     if (!expr) return 'undefined'
-    if (expr.type === 'Literal') return JSON.stringify(expr.value)
-    if (expr.type === 'Identifier') return expr.name
-    if (expr.type === 'AtProperty') return `@${expr.name}`
-    if (expr.type === 'MemberExpr') return `${this.exprToString(expr.object)}.${this.exprToString(expr.property)}`
-    if (expr.type === 'BinaryExpr') return `${this.exprToString(expr.left)}${expr.op}${this.exprToString(expr.right)}`
-    if (expr.type === 'CallExpr') return `${this.exprToString(expr.callee)}()`
-    if (expr.type === 'UnaryExpr') return `${expr.op}${this.exprToString(expr.operand)}`
-    return 'expr'
+    switch (expr.type) {
+      case 'Literal':       return JSON.stringify(expr.value)
+      case 'Identifier':    return expr.name
+      case 'AtProperty':    return `@${expr.name}`
+      case 'MemberExpr':
+        if (expr.computed) {
+          return `${this.exprToString(expr.object)}[${this.exprToString(expr.property)}]`
+        }
+        return `${this.exprToString(expr.object)}.${expr.property.name ?? expr.property.value ?? this.exprToString(expr.property)}`
+      case 'OptionalChain':
+        return `${this.exprToString(expr.object)}?.${expr.property.name ?? expr.property.value ?? this.exprToString(expr.property)}`
+      case 'BinaryExpr':
+        return `(${this.exprToString(expr.left)}${expr.op}${this.exprToString(expr.right)})`
+      case 'LogicalExpr':
+        return `(${this.exprToString(expr.left)}${expr.op}${this.exprToString(expr.right)})`
+      case 'NullCoalesce':
+        return `(${this.exprToString(expr.left)}??${this.exprToString(expr.right)})`
+      case 'TernaryExpr':
+        return `(${this.exprToString(expr.condition)}?${this.exprToString(expr.consequent)}:${this.exprToString(expr.alternate)})`
+      case 'UnaryExpr':
+        return `(${expr.op}${this.exprToString(expr.operand)})`
+      case 'CallExpr': {
+        const args = (expr.args ?? []).map(a => this.exprToString(a)).join(',')
+        return `${this.exprToString(expr.callee)}(${args})`
+      }
+      case 'TemplateLiteral':
+        return '`' + (expr.parts ?? []).map(p => {
+          if (p.type === 'Literal') return String(p.value).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$')
+          return `\${${this.exprToString(p)}}`
+        }).join('') + '`'
+      case 'ArrayLiteral':
+        return `[${(expr.elements ?? []).map(e => this.exprToString(e)).join(',')}]`
+      case 'AwaitExpr':
+        return `await ${this.exprToString(expr.argument)}`
+      default:
+        return 'undefined'
+    }
   }
 }
 
