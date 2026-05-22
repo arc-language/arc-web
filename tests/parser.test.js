@@ -772,6 +772,21 @@ describe('Parser - range expressions', () => {
   })
 })
 
+describe('Parser - widget with external design block', () => {
+  test('parses widget followed by separate design block', () => {
+    const src = `widget Card
+  text "hi"
+design
+  body
+    bg: white
+page "T"
+  Card`
+    const node = parse(src)
+    const widget = node.declarations.find(d => d.type === 'WidgetDecl')
+    assert.ok(widget)
+  })
+})
+
 describe('Parser - @worker fn', () => {
   test('parses @worker fn declaration', () => {
     const src = `@worker fn heavy(data) {
@@ -787,6 +802,26 @@ page "T"
 })
 
 describe('Parser - @param decl', () => {
+  test('parses @param top-level declaration as VarDecl', () => {
+    const src = `@param x
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const v = node.declarations.find(d => d.type === 'VarDecl')
+    assert.ok(v)
+    assert.equal(v.name, 'x')
+  })
+
+  test('parses @param with type annotation', () => {
+    const src = `@param count: Number
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const v = node.declarations.find(d => d.type === 'VarDecl')
+    assert.ok(v)
+    assert.ok(v.typeAnnotation)
+  })
+
   test('parses @param widget declaration', () => {
     const src = `widget Card
   @param title
@@ -964,6 +999,32 @@ describe('Parser - page with meta attributes', () => {
     const node = parse(src)
     const page = node.declarations.find(d => d.type === 'PageDecl')
     assert.ok(page.meta && page.meta.lang)
+  })
+})
+
+describe('Parser - throw statement and spread args', () => {
+  test('parses throw statement in fn body', () => {
+    const src = `@server fn fail() {
+  throw "error"
+}
+page "T"
+  text "ok"`
+    const node = parse(src)
+    const fn = node.declarations.find(d => d.type === 'ServerFn')
+    const stmt = fn.body.body[0]
+    assert.equal(stmt.type, 'ExprStatement')
+    assert.equal(stmt.expr.type, 'ThrowExpr')
+  })
+
+  test('parses spread arg ...arr in function call', () => {
+    const src = `page "T"
+  @state let arr = []
+  @computed let m = Math.max(...arr)
+  text "ok"`
+    const node = parse(src)
+    const computed = node.declarations.find(d => d.type === 'ComputedDecl')
+    const call = computed.init
+    assert.equal(call.args[0].type, 'SpreadElement')
   })
 })
 

@@ -632,6 +632,24 @@ page "T"
       assert.equal(emitter.emitExpr(null), '')
     })
 
+    test('emitRaw throws without allowRaw option', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.throws(() => emitter.emitRaw({ type: 'RawNode', html: '<x>' }),
+        /requires opt-in via allowRaw/)
+    })
+
+    test('emitRaw returns html when allowRaw is true', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {}, allowRaw: true })
+      assert.equal(emitter.emitRaw({ type: 'RawNode', html: '<custom>' }), '<custom>')
+    })
+
+    test('escape returns String of non-string input', () => {
+      const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
+      assert.equal(emitter.escape(42), '42')
+      assert.equal(emitter.escape(null), '')
+      assert.equal(emitter.escape(undefined), '')
+    })
+
     test('evalStaticExpr returns undefined for BinaryExpr with unknown left', () => {
       const emitter = new HtmlEmitter({ hash: 'h1', buildContext: {} })
       const expr = N.BinaryExpr('+', N.Identifier('unknown', 0), N.Literal(2, '2', 0), 0)
