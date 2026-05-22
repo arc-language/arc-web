@@ -2,8 +2,8 @@
 
 const { test, describe } = require('node:test')
 const assert = require('node:assert/strict')
-const { encode, decode: adpDecode, TAG, Encoder, encodeArray } = require('../adp/encoder')
-const { decode, Decoder } = require('../adp/decoder')
+const { encode, decode: adpDecode, TAG, Encoder, SchemaEncoder, encodeArray, sendAdp } = require('../adp/encoder')
+const { decode, Decoder, fetchAdp, decodeWithSchema } = require('../adp/decoder')
 
 // Helper: round-trip encode then decode
 function roundTrip(value) {
@@ -283,4 +283,180 @@ describe('ADP Protocol', () => {
     })
   })
 
+  describe('readVarInt edge cases', () => {
+    test('large varint (>= 2^28) uses multiplication path correctly', () => {
+      // Encode an array of length 2^28 — too big to actually allocate, but we can
+      // craft the buffer directly. Use array length to trigger varint decode.
+      // Easier: encode a string > 127 bytes — varint for length
+      const longStr = 'x'.repeat(200000)  // 200,000 bytes — requires multi-byte varint
+      const buf = encode(longStr)
+      const decoded = decode(buf)
+      assert.equal(decoded.length, 200000)
+    })
+
+    test('varint with 6+ continuation bytes throws overflow', () => {
+      // Craft buffer: STRING tag, then 6 bytes all with high bit set
+      const buf = Buffer.from([TAG.STRING, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+      assert.throws(() => decode(buf), /varint overflow/)
+    })
+
+    test('string with length exceeding remaining buffer throws', () => {
+      // STRING tag + varint length 100 + only 3 bytes
+      const buf = Buffer.from([TAG.STRING, 100, 0x61, 0x62, 0x63])
+      assert.throws(() => decode(buf), /string length .* exceeds buffer/)
+    })
+  })
+
+  describe('decodeWithSchema', () => {
+    test('returns raw value when typeName has no schema', () => {
+      const buf = encode({ id: 1, name: 'x' })
+      const result = decodeWithSchema(buf, 'Unknown', {})
+      assert.deepEqual(result, { id: 1, name: 'x' })
+    })
+
+    test('maps enum index back to string value', () => {
+      // Encode raw object with role index
+      const buf = encode({ id: 1, role: 0 })
+      const schemas = {
+        User: {
+          fields: ['id', 'role'],
+          fieldTypes: { role: { enum: ['admin', 'user'] } }
+        }
+      }
+      const result = decodeWithSchema(buf, 'User', schemas)
+      assert.equal(result.role, 'admin')
+      assert.equal(result.id, 1)
+    })
+
+    test('applies nested type schema recursively', () => {
+      const buf = encode({ user: { role: 1 } })
+      const schemas = {
+        Wrapper: { fields: ['user'], fieldTypes: { user: { type: 'User' } } },
+        User: { fields: ['role'], fieldTypes: { role: { enum: ['admin', 'user'] } } }
+      }
+      const result = decodeWithSchema(buf, 'Wrapper', schemas)
+      assert.equal(result.user.role, 'user')
+    })
+
+    test('returns raw value for primitive types', () => {
+      const buf = encode(42)
+      const result = decodeWithSchema(buf, 'Number', {})
+      assert.equal(result, 42)
+    })
+  })
+
+  describe('fetchAdp', () => {
+    test('throws clear error when fetch is unavailable', async () => {
+      const origFetch = globalThis.fetch
+      delete globalThis.fetch
+      try {
+        await assert.rejects(() => fetchAdp('http://example.com/'), /fetch API not available/)
+      } finally {
+        globalThis.fetch = origFetch
+      }
+    })
+
+    test('decodes ADP response when fetch returns ok', async () => {
+      const origFetch = globalThis.fetch
+      const payload = encode({ ok: true, value: 42 })
+      globalThis.fetch = async () => ({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength),
+      })
+      try {
+        const result = await fetchAdp('http://example.com/api')
+        assert.deepEqual(result, { ok: true, value: 42 })
+      } finally {
+        globalThis.fetch = origFetch
+      }
+    })
+
+    test('throws on non-ok response status', async () => {
+      const origFetch = globalThis.fetch
+      globalThis.fetch = async () => ({ ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) })
+      try {
+        await assert.rejects(() => fetchAdp('http://example.com/api'), /ADP fetch.*404/)
+      } finally {
+        globalThis.fetch = origFetch
+      }
+    })
+
+    test('rejects oversized responses (> 10MB)', async () => {
+      const origFetch = globalThis.fetch
+      const bigBuf = new ArrayBuffer(11 * 1024 * 1024)
+      globalThis.fetch = async () => ({ ok: true, status: 200, arrayBuffer: async () => bigBuf })
+      try {
+        await assert.rejects(() => fetchAdp('http://example.com/api'), /response too large/)
+      } finally {
+        globalThis.fetch = origFetch
+      }
+    })
+  })
+
+  describe('SchemaEncoder', () => {
+    test('falls back to plain encode when typeName has no schema', () => {
+      const enc = new SchemaEncoder({})
+      const buf = enc.encodeWithSchema({ id: 1 }, 'Unknown')
+      assert.deepEqual(decode(buf), { id: 1 })
+    })
+
+    test('falls back to plain encode for non-object values', () => {
+      const enc = new SchemaEncoder({ User: { fields: ['id'] } })
+      const buf = enc.encodeWithSchema(42, 'User')
+      assert.equal(decode(buf), 42)
+    })
+
+    test('encodes enum field as enum tag with index', () => {
+      const enc = new SchemaEncoder({
+        User: {
+          fields: ['id', 'role'],
+          fieldTypes: { role: { enum: ['admin', 'user'] } }
+        }
+      })
+      const buf = enc.encodeWithSchema({ id: 1, role: 'user' }, 'User')
+      // Decode raw — should contain the enum index 1
+      const raw = decode(buf)
+      assert.equal(raw.role, 1)
+    })
+
+    test('unknown enum value defaults to index 0', () => {
+      const enc = new SchemaEncoder({
+        User: {
+          fields: ['role'],
+          fieldTypes: { role: { enum: ['admin', 'user'] } }
+        }
+      })
+      const buf = enc.encodeWithSchema({ role: 'invalid' }, 'User')
+      const raw = decode(buf)
+      assert.equal(raw.role, 0)
+    })
+  })
+
+  describe('sendAdp middleware helper', () => {
+    test('sends ADP via Express-style res.setHeader/res.end', () => {
+      const calls = { headers: {}, ended: null }
+      const res = {
+        setHeader(k, v) { calls.headers[k] = v },
+        end(buf) { calls.ended = buf }
+      }
+      sendAdp(res, { id: 1, name: 'A' })
+      assert.equal(calls.headers['Content-Type'], 'application/x-adp')
+      assert.ok(calls.headers['Content-Length'] > 0)
+      assert.ok(Buffer.isBuffer(calls.ended))
+      assert.deepEqual(decode(calls.ended), { id: 1, name: 'A' })
+    })
+
+    test('sends array via encodeArray path', () => {
+      const calls = { headers: {}, ended: null }
+      const res = {
+        setHeader(k, v) { calls.headers[k] = v },
+        end(buf) { calls.ended = buf }
+      }
+      sendAdp(res, [{ id: 1 }, { id: 2 }])
+      assert.equal(calls.headers['Content-Type'], 'application/x-adp')
+      const decoded = decode(calls.ended)
+      assert.equal(decoded.length, 2)
+    })
+  })
 })

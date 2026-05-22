@@ -476,6 +476,71 @@ describe('Error cases', () => {
     )
   })
 
+  test('Array.flatMap doubles and flattens', async () => {
+    const e = exec()
+    e.context.arr = [1, 2, 3]
+    const N2 = require('../src/ast')
+    const fn = N2.ArrowFn(['x'], N2.ArrayLiteral([
+      N2.Identifier('x', 0),
+      N2.BinaryExpr('*', N2.Identifier('x', 0), lit(2), 0),
+    ], 0), 0)
+    const call = N2.CallExpr(
+      N2.MemberExpr(ident('arr'), N2.Identifier('flatMap', 0), false, 0),
+      [fn], 0
+    )
+    const result = await e.evalExpr(call)
+    assert.deepEqual(result, [1, 2, 2, 4, 3, 6])
+  })
+
+  test('Array.forEach calls callback for each element', async () => {
+    const e = exec()
+    e.context.arr = [1, 2, 3]
+    e.context.total = 0
+    const seen = []
+    const N2 = require('../src/ast')
+    // Use a JS function captured into context for verifying iteration
+    const recordFn = (x) => { seen.push(x) }
+    e.context.record = recordFn
+    const callRecord = N2.ArrowFn(['x'],
+      N2.CallExpr(ident('record'), [N2.Identifier('x', 0)], 0), 0)
+    const call = N2.CallExpr(
+      N2.MemberExpr(ident('arr'), N2.Identifier('forEach', 0), false, 0),
+      [callRecord], 0
+    )
+    await e.evalExpr(call)
+    assert.deepEqual(seen, [1, 2, 3])
+  })
+
+  test('Array.some returns true when any element matches', async () => {
+    const e = exec()
+    e.context.arr = [1, 2, 3, 4]
+    const N2 = require('../src/ast')
+    const isEven = N2.ArrowFn(['x'],
+      N2.BinaryExpr('==',
+        N2.BinaryExpr('%', N2.Identifier('x', 0), lit(2), 0),
+        lit(0), 0), 0)
+    const call = N2.CallExpr(
+      N2.MemberExpr(ident('arr'), N2.Identifier('some', 0), false, 0),
+      [isEven], 0
+    )
+    assert.equal(await e.evalExpr(call), true)
+  })
+
+  test('Array.every returns true when all elements match', async () => {
+    const e = exec()
+    e.context.arr = [2, 4, 6]
+    const N2 = require('../src/ast')
+    const isEven = N2.ArrowFn(['x'],
+      N2.BinaryExpr('==',
+        N2.BinaryExpr('%', N2.Identifier('x', 0), lit(2), 0),
+        lit(0), 0), 0)
+    const call = N2.CallExpr(
+      N2.MemberExpr(ident('arr'), N2.Identifier('every', 0), false, 0),
+      [isEven], 0
+    )
+    assert.equal(await e.evalExpr(call), true)
+  })
+
   test('reduce sums array', async () => {
     const e = exec()
     e.context.arr = [1, 2, 3]
@@ -503,6 +568,94 @@ describe('Error cases', () => {
 })
 
 // ── evalCall — fetch, readFile, object methods ────────────────────────────────
+
+describe('BuildExecutor — TemplateLiteral, ObjectLiteral guards', () => {
+  test('TemplateLiteral evaluates mixed literal and expression parts', async () => {
+    const e = exec()
+    e.context.name = 'World'
+    const tpl = {
+      type: 'TemplateLiteral',
+      parts: [
+        N.Literal('Hello, ', '"Hello, "', 0),
+        N.Identifier('name', 0),
+        N.Literal('!', '"!"', 0),
+      ],
+      line: 0
+    }
+    const result = await e.evalExpr(tpl)
+    assert.equal(result, 'Hello, World!')
+  })
+
+  test('ObjectLiteral with __proto__ key throws', async () => {
+    const e = exec()
+    const obj = {
+      type: 'ObjectLiteral',
+      properties: [{ key: '__proto__', value: lit('evil') }],
+      line: 0
+    }
+    await assert.rejects(() => e.evalExpr(obj), /forbidden key/)
+  })
+
+  test('ObjectLiteral with constructor key throws', async () => {
+    const e = exec()
+    const obj = {
+      type: 'ObjectLiteral',
+      properties: [{ key: 'constructor', value: lit('evil') }],
+      line: 0
+    }
+    await assert.rejects(() => e.evalExpr(obj), /forbidden key/)
+  })
+})
+
+describe('BuildExecutor — UnaryExpr, AwaitExpr, PipelineExpr', () => {
+  test('UnaryExpr "!" negates truthy values', async () => {
+    const e = exec()
+    const expr = { type: 'UnaryExpr', op: '!', operand: lit(1), line: 0 }
+    assert.equal(await e.evalExpr(expr), false)
+  })
+
+  test('UnaryExpr "!" negates falsy values', async () => {
+    const e = exec()
+    const expr = { type: 'UnaryExpr', op: '!', operand: lit(0), line: 0 }
+    assert.equal(await e.evalExpr(expr), true)
+  })
+
+  test('UnaryExpr "-" negates numeric values', async () => {
+    const e = exec()
+    const expr = { type: 'UnaryExpr', op: '-', operand: lit(5), line: 0 }
+    assert.equal(await e.evalExpr(expr), -5)
+  })
+
+  test('AwaitExpr passes through to argument value', async () => {
+    const e = exec()
+    const expr = { type: 'AwaitExpr', argument: lit(42), line: 0 }
+    assert.equal(await e.evalExpr(expr), 42)
+  })
+
+  test('PipelineExpr applies function to left value', async () => {
+    const e = exec()
+    e.context.double = (x) => x * 2
+    const expr = {
+      type: 'PipelineExpr',
+      left: lit(5),
+      right: ident('double'),
+      line: 0
+    }
+    assert.equal(await e.evalExpr(expr), 10)
+  })
+
+  test('PipelineExpr throws when right is not a function', async () => {
+    const e = exec()
+    e.context.notAFn = 42
+    const expr = {
+      type: 'PipelineExpr',
+      left: lit(5),
+      right: ident('notAFn'),
+      line: 0
+    }
+    await assert.rejects(() => e.evalExpr(expr), /must be a function/)
+  })
+})
 
 describe('BuildExecutor.evalCall — fetch and readFile', () => {
   test('fetch() with no args throws', async () => {
