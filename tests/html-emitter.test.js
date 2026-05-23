@@ -853,7 +853,7 @@ page "T"
       const node = N.UnlessNode(N.Identifier('broken', 0), [N.TextNode('OK', 0)], 0)
       const result = emitter.emitNode(node)
       // Unless wraps in UnaryExpr which is not static: emits a reactive aria-live container
-      assert.ok(result.includes('aria-live') || result.includes('OK'), `Got: ${result}`)
+      assert.ok(result.includes('aria-live'), `Got: ${result}`)
     })
   })
 

@@ -74,7 +74,6 @@ const T = {
   QQDOT: 'QQDOT',         // ?.
   QQ: 'QQ',               // ??
   HASH: 'HASH',           // #
-  AT: 'AT',               // @ (standalone)
   SPREAD: 'SPREAD',       // ...
 
   // Operators
@@ -96,9 +95,6 @@ const T = {
   AMPAMP: 'AMPAMP',       // &&
   BAR: 'BAR',             // |
   BARBAR: 'BARBAR',       // ||
-  CARET: 'CARET',         // ^
-  LSHIFT: 'LSHIFT',       // <<
-  RSHIFT: 'RSHIFT',       // >>
   PLUS_EQ: 'PLUS_EQ',     // +=
   MINUS_EQ: 'MINUS_EQ',   // -=
   STAR_EQ: 'STAR_EQ',     // *=
@@ -109,19 +105,9 @@ const T = {
   DEDENT: 'DEDENT',       // decrease in indentation
   NEWLINE: 'NEWLINE',     // significant newline
 
-  // Section markers
-  DESIGN_SECTION: 'DESIGN_SECTION',   // 'design' block start
-  SCRIPT_SECTION: 'SCRIPT_SECTION',   // top-level logic
-
   // Interpolation
   INTERP_START: 'INTERP_START',  // { inside a string
   INTERP_END: 'INTERP_END',      // } closing interpolation
-
-  // Template attribute operators
-  BIND_VALUE: 'BIND_VALUE',    // bind:value
-  ON_EVENT: 'ON_EVENT',        // on:click, on:input etc.
-  DIALOG_OPEN: 'DIALOG_OPEN',  // dialog:open
-  DIALOG_CLOSE: 'DIALOG_CLOSE',// dialog:close
 
   EOF: 'EOF',
 }

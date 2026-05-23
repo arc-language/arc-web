@@ -132,10 +132,17 @@ describe('postProcess convenience function', () => {
     assert.equal(result.css, css)
   })
 
-  test('accepts options', () => {
+  test('accepts options: threshold below css size triggers preload split', () => {
     const html = '<head><link rel="stylesheet" href="styles.css"></head><body></body>'
-    const css = '@layer base { body { margin: 0 } }' + ' '.repeat(200)
+    // Above-threshold CSS with both a critical @layer base block AND a non-trivial
+    // non-critical block, so the splitter has real content for both halves.
+    const css = '@layer base { body { margin: 0 } } .extra { padding: 10px; color: red; border: 1px solid black; }'
     const result = postProcess(html, css, { criticalCssThreshold: 10 })
-    assert.ok(result.html.includes('preload') || result.html.includes('<style>'), `Expected processed:\n${result.html}`)
+    assert.ok(result.html.includes('preload'), `Expected preload link for non-critical CSS:\n${result.html}`)
+    assert.ok(result.html.includes('<style>'), `Expected inline <style> for critical CSS`)
+    // The preload mechanism keeps a <noscript> fallback link, but the original
+    // render-blocking stylesheet link must be replaced
+    assert.ok(result.html.includes('<noscript>'), 'Expected noscript fallback for non-JS users')
+    assert.ok(result.html.includes('rel="preload"'), 'Expected non-blocking preload swap')
   })
 })

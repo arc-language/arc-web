@@ -86,12 +86,16 @@ describe('Parser - public utility methods', () => {
     // The parser's "force-skip to prevent infinite loop" guard at line 152-154
     // Construct input with a token that no top-level handler matches at all
     const src = '@@@@strange'  // bad annotation might trigger no-advance scenario
+    const start = Date.now()
+    let parsed = null, threw = false
     try {
       const p = newParser(src)
-      p.parse()
-    } catch {}
-    // Either parses or throws — but doesn't loop forever
-    assert.ok(true)
+      parsed = p.parse()
+    } catch { threw = true }
+    const dur = Date.now() - start
+    // Either parses or throws — but must complete within reasonable time (not loop forever)
+    assert.ok(dur < 1000, `parse took ${dur}ms — possible infinite loop`)
+    assert.ok(parsed !== null || threw, 'expected parse() to return or throw')
   })
 })
 
@@ -661,7 +665,14 @@ describe('Parser - style rules with combinators', () => {
       &:hover
         bg: red`
     const node = parse(src)
-    assert.ok(node)
+    const page = node.declarations.find(d => d.type === 'PageDecl')
+    const design = page?.design ?? page?.body?.find(n => n.type === 'DesignBlock')
+    assert.ok(design, 'expected design block')
+    // Find the .card rule and verify it has a nested &:hover child
+    const cardRule = (design.rules ?? []).find(r => r.selector?.includes('card'))
+    assert.ok(cardRule, 'expected .card rule')
+    const hoverChild = (cardRule.children ?? []).find(c => c.selector?.includes('&'))
+    assert.ok(hoverChild, 'expected nested &:hover child rule')
   })
 
   test('parses nested .child rule', () => {
@@ -672,7 +683,13 @@ describe('Parser - style rules with combinators', () => {
       .child
         bg: blue`
     const node = parse(src)
-    assert.ok(node)
+    const page = node.declarations.find(d => d.type === 'PageDecl')
+    const design = page?.design ?? page?.body?.find(n => n.type === 'DesignBlock')
+    assert.ok(design, 'expected design block')
+    const parentRule = (design.rules ?? []).find(r => r.selector?.includes('parent'))
+    assert.ok(parentRule, 'expected .parent rule')
+    const childRule = (parentRule.children ?? []).find(c => c.selector?.includes('child'))
+    assert.ok(childRule, 'expected nested .child rule')
   })
 })
 
@@ -744,7 +761,12 @@ describe('Parser - inline style condition syntax', () => {
     }
 `
     const node = parse(src)
-    assert.ok(node)
+    const page = node.declarations.find(d => d.type === 'PageDecl')
+    const design = page?.design ?? page?.body?.find(n => n.type === 'DesignBlock')
+    assert.ok(design, 'expected design block')
+    const container = (design.rules ?? []).find(r => r.type === 'StyleCondition' && r.kind === 'container')
+    assert.ok(container, 'expected @container StyleCondition')
+    assert.ok(String(container.query ?? '').includes('1024'), `query should reference 1024: ${container.query}`)
   })
 })
 
@@ -818,7 +840,10 @@ page "T"
   Card`
     const node = parse(src)
     const widget = node.declarations.find(d => d.type === 'WidgetDecl')
-    assert.ok(widget)
+    assert.ok(widget, 'expected WidgetDecl')
+    assert.equal(widget.name, 'Card')
+    // The trailing `design` block attaches to the widget as widget.design
+    assert.ok(widget.design, 'expected design attached to widget')
   })
 })
 
@@ -865,7 +890,11 @@ page "T"
   Card title="hi"`
     const node = parse(src)
     const widget = node.declarations.find(d => d.type === 'WidgetDecl')
-    assert.ok(widget)
+    assert.ok(widget, 'expected WidgetDecl')
+    assert.equal(widget.name, 'Card')
+    // The widget body contains the template; @title is referenced as InterpolationNode
+    // in the text element. Verify the body parses to expected element count.
+    assert.ok((widget.body ?? []).length >= 1, 'expected widget body to have at least one element')
   })
 })
 
@@ -876,8 +905,10 @@ page "T"
   text "ok"`
     const node = parse(src)
     const fn = node.declarations.find(d => d.type === 'FnDecl')
-    assert.ok(fn)
-    assert.notEqual(fn.body?.type, 'BlockStatement')
+    assert.ok(fn, 'expected FnDecl')
+    assert.equal(fn.name, 'double')
+    assert.notEqual(fn.body?.type, 'BlockStatement', 'arrow body should be an expression, not a block')
+    assert.equal(fn.body?.type, 'BinaryExpr', `expected BinaryExpr body, got ${fn.body?.type}`)
   })
 
   test('parses fn with return type annotation', () => {
@@ -1073,7 +1104,8 @@ page "T"
     const node = parse(src)
     const fn = node.declarations.find(d => d.type === 'ServerFn')
     const ret = fn.body.body.find(s => s.type === 'ReturnStatement')
-    assert.ok(ret)
+    assert.ok(ret, 'expected ReturnStatement')
+    assert.equal(ret.value?.name, 'x', 'expected return value to reference x')
   })
 
   test('parses bare "return" without value', () => {
@@ -1087,7 +1119,19 @@ page "T"
   text "ok"`
     const node = parse(src)
     const fn = node.declarations.find(d => d.type === 'ServerFn')
-    assert.ok(fn)
+    assert.ok(fn, 'expected ServerFn')
+    // Find any bare return (value === null) somewhere in the body or its nested if
+    const allStmts = []
+    const collect = (stmts) => {
+      for (const s of (stmts ?? [])) {
+        allStmts.push(s)
+        if (s.consequent) collect(s.consequent.body ?? s.consequent)
+        if (s.alternate) collect(s.alternate.body ?? s.alternate)
+      }
+    }
+    collect(fn.body.body)
+    const bareReturn = allStmts.find(s => s.type === 'ReturnStatement' && s.value == null)
+    assert.ok(bareReturn, 'expected at least one bare return statement (value=null)')
   })
 })
 
@@ -1105,7 +1149,8 @@ describe('Parser - import aliases and export', () => {
     const node = parse(src)
     // ExportDecl wraps a declaration
     const exp = node.declarations.find(d => d.type === 'ExportDecl')
-    assert.ok(exp)
+    assert.ok(exp, 'expected ExportDecl')
+    assert.equal(exp.decl?.type ?? exp.declaration?.type, 'WidgetDecl', 'expected wrapped WidgetDecl')
   })
 })
 

@@ -11,14 +11,6 @@ const _RE_DIGIT = /[0-9]/
 const _RE_IDENT_CONT = /[a-zA-Z0-9_$]/
 const _RE_AT_CONT = /[a-zA-Z0-9_]/
 
-// Lexer modes: Arc has three syntactic regions
-const MODE = {
-  TOP: 'TOP',           // top-level: imports, @annotations, widget/page declarations
-  TEMPLATE: 'TEMPLATE', // inside a widget/page body (indentation-based HTML)
-  DESIGN: 'DESIGN',     // inside a design block
-  SCRIPT: 'SCRIPT',     // inside { } expression blocks and fn bodies
-  STRING: 'STRING',     // inside a string literal
-}
 
 class Lexer {
   constructor(source, filename = '<input>') {
@@ -250,12 +242,10 @@ class Lexer {
         break
       case '<':
         if (this.peek() === '=') { this.advance(); this.emit(T.LTEQ, '<='); break }
-        if (this.peek() === '<') { this.advance(); this.emit(T.LSHIFT, '<<'); break }
         this.emit(T.LT, '<')
         break
       case '>':
         if (this.peek() === '=') { this.advance(); this.emit(T.GTEQ, '>='); break }
-        if (this.peek() === '>') { this.advance(); this.emit(T.RSHIFT, '>>'); break }
         this.emit(T.GT, '>')
         break
       case '&':
@@ -291,7 +281,6 @@ class Lexer {
         this.emit(T.SLASH, '/')
         break
       case '%': this.emit(T.PERCENT, '%'); break
-      case '^': this.emit(T.CARET, '^'); break
       case '(': this.emit(T.LPAREN, '('); break
       case ')': this.emit(T.RPAREN, ')'); break
       case '{': this.emit(T.LBRACE, '{'); break
@@ -350,4 +339,4 @@ class Lexer {
   }
 }
 
-module.exports = { Lexer, MODE }
+module.exports = { Lexer }

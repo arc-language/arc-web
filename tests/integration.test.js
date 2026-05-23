@@ -168,9 +168,11 @@ describe('integration: live example', () => {
   })
 
   test('produces edge renderer for @live', () => {
-    // @live declarations should produce an edge renderer
-    // (liveEdgeFunction may be empty if no @live in this example)
-    assert.ok(typeof result.liveEdgeFunction === 'string')
+    // The live example uses @live, so the renderer must be non-empty
+    // and contain the WinterCG fetch handler boilerplate.
+    assert.ok(result.liveEdgeFunction.length > 0, 'live example must produce edge renderer')
+    assert.ok(result.liveEdgeFunction.includes('fetch') || result.liveEdgeFunction.includes('_resolveData'),
+      `expected fetch handler in renderer: ${result.liveEdgeFunction.slice(0, 200)}`)
   })
 })
 
@@ -232,8 +234,10 @@ describe('integration: CSS structural correctness', () => {
 
   test('hello: CSS uses @layer', async () => {
     const { css } = await buildExample('hello')
-    // Arc emits CSS in @layer blocks
-    assert.ok(css.includes('@layer') || css.length === 0, 'expected @layer in CSS')
+    // Arc emits CSS in @layer blocks. The hello example has a design block,
+    // so CSS must be non-empty and contain @layer.
+    assert.ok(css.length > 0, 'hello example must produce CSS')
+    assert.ok(css.includes('@layer'), `expected @layer in CSS, got: ${css.slice(0, 200)}`)
   })
 
   test('CSS has no syntax errors (basic bracket balance)', async () => {

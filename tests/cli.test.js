@@ -586,7 +586,8 @@ page "T"
 `)
       const r = require('child_process').spawnSync('node', [cliPath, 'check', file], { stdio: 'pipe' })
       const out = r.stdout.toString() + r.stderr.toString()
-      assert.ok(out.includes('warn') || out.includes('await'),
+      // Must contain a warning indicator (not just an echo of the source containing "await")
+      assert.ok(out.toLowerCase().includes('warn') || out.includes('"await"'),
         `Expected warning output: ${out}`)
     } finally { rmDir(dir) }
   })
