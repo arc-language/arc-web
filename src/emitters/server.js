@@ -14,7 +14,7 @@ const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
 // Inlined ADP encode/decode for generated edge workers (no require() in CF Workers ESM)
 const ADP_EDGE_RUNTIME = `
-// ADP encode/decode — inlined by Arc compiler (singletons avoid per-call allocation)
+// ADP encode/decode: inlined by Arc compiler (singletons avoid per-call allocation)
 const _adpTenc=new TextEncoder();const _adpTdec=new TextDecoder()
 function _adpEncode(val){
   const b=[]
@@ -38,7 +38,7 @@ function _adpEncodeArray(items){
   vi(items.length);for(const item of items){const r=_adpEncode(item);for(const x of r)b.push(x)}
   return new Uint8Array(b)
 }
-// ADP decode — inlined by Arc compiler
+// ADP decode: inlined by Arc compiler
 function _adpDecode(buf){
   let p=0
   function rv(){

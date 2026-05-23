@@ -91,7 +91,7 @@ describe('Source map integration with compiler', () => {
       fs.writeFileSync(path.join(tmpDir, 'index.arc'), 'page "T"\n  @state let count = 0\n  text "{count}"\n')
 
       // Run build by directly calling the build function
-      // We need to require cli.js internals — but build() is not exported.
+      // We need to require cli.js internals: but build() is not exported.
       // Instead, verify through compile + manual write (mirrors build logic).
       const { SourceMapBuilder } = require('../src/sourcemap')
       const smb = new SourceMapBuilder()

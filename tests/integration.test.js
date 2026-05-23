@@ -1,6 +1,6 @@
 'use strict'
 
-// Integration tests — build each example and verify compiled output.
+// Integration tests: build each example and verify compiled output.
 // These tests exercise the full compiler pipeline end-to-end:
 // lex → parse → check → optimize → emit HTML/CSS/JS → post-process
 
@@ -143,7 +143,7 @@ describe('integration: patterns example', () => {
   })
 
   test('accordion uses <details> (zero JS native pattern)', () => {
-    assert.ok(result.html.includes('<details') || result.html.includes('details'), 'expected details element')
+    assert.ok(result.html.includes('<details'), 'expected <details> element')
   })
 
   test('modal uses popover API (zero JS)', () => {

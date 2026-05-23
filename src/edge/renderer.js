@@ -6,7 +6,7 @@
 //   2. Fills all @live variable spans in the HTML template with real data
 //   3. Streams complete, personalized HTML to the browser in ONE request
 //
-// Result: browser gets pre-rendered HTML — no flash, no loading state,
+// Result: browser gets pre-rendered HTML: no flash, no loading state,
 // no separate data fetch. One round trip total.
 
 const { JsEmitter } = require('../emitters/js')
@@ -37,7 +37,7 @@ class EdgeRenderer {
 
     const parts = [
       `'use strict'`,
-      `// Arc @live edge renderer — auto-generated`,
+      `// Arc @live edge renderer: auto-generated`,
       `// One request → edge resolves data → full HTML → browser`,
       ``,
       `const BASE_HTML = ${JSON.stringify(baseHtml)}`,
@@ -48,7 +48,7 @@ class EdgeRenderer {
 
     // Emit @server fn implementations (called at request time on edge)
     if (serverFns.length > 0) {
-      parts.push(`// @server functions — run at request time on the edge`)
+      parts.push(`// @server functions: run at request time on the edge`)
       for (const fn of serverFns) {
         parts.push(this.emitServerFnImpl(fn))
       }
@@ -107,7 +107,7 @@ class EdgeRenderer {
 
     // Build a map of span id → replacement value, then do a single-pass regex replace
     // instead of O(N) replaceAll calls over the full HTML string
-    // exprStr comes from stateBindings — escape backticks/backslashes so it can't
+    // exprStr comes from stateBindings: escape backticks/backslashes so it can't
     // break the surrounding template literal in the generated edge function.
     const mapEntries = bindingExprs.map(({ id, exprStr }) => {
       const safeExpr = exprStr.replace(/\\/g, '\\\\').replace(/`/g, '\\`')

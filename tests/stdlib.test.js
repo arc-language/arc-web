@@ -19,7 +19,7 @@ function parseFile(filePath) {
 
 const STDLIB_DIR = path.join(__dirname, '..', 'stdlib')
 
-describe('stdlib — file existence', () => {
+describe('stdlib: file existence', () => {
   const required = ['router.arc', 'store.arc', 'form.arc', 'fetch.arc', 'icons.arc']
 
   for (const file of required) {
@@ -30,7 +30,7 @@ describe('stdlib — file existence', () => {
   }
 })
 
-describe('stdlib — parse without errors', () => {
+describe('stdlib: parse without errors', () => {
   const files = fs.readdirSync(STDLIB_DIR).filter(f => f.endsWith('.arc'))
 
   for (const file of files) {
@@ -288,7 +288,7 @@ describe('stdlib/icons.arc', () => {
   })
 })
 
-describe('stdlib — content quality checks', () => {
+describe('stdlib: content quality checks', () => {
   test('no TODO or FIXME markers in stdlib', () => {
     const files = fs.readdirSync(STDLIB_DIR).filter(f => f.endsWith('.arc'))
     for (const file of files) {
@@ -313,6 +313,6 @@ describe('stdlib — content quality checks', () => {
       const src = fs.readFileSync(path.join(STDLIB_DIR, file), 'utf8')
       total += src.split('\n').length
     }
-    assert.ok(total < 1500, `stdlib is ${total} lines — should be < 1500`)
+    assert.ok(total < 1500, `stdlib is ${total} lines: should be < 1500`)
   })
 })

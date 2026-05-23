@@ -25,7 +25,7 @@ function hasWarning(src, msg) {
 }
 function clean(src) { return errors(src).length === 0 }
 
-describe('Checker — undefined variables', () => {
+describe('Checker: undefined variables', () => {
   test('clean file has no errors', () => {
     assert.ok(clean('page "T"\n  text "hello"'))
   })
@@ -75,10 +75,10 @@ describe('Checker — undefined variables', () => {
     text "{item}"`))
   })
 
-  test.todo('for loop item not accessible outside loop body — scope exit detection is future work')
+  test.todo('for loop item not accessible outside loop body: scope exit detection is future work')
 })
 
-describe('Checker — @state/@build declarations', () => {
+describe('Checker: @state/@build declarations', () => {
   test('duplicate @state declaration is an error', () => {
     assert.ok(hasError(
       'page "T"\n  @state let x = 0\n  @state let x = 1',
@@ -103,7 +103,7 @@ describe('Checker — @state/@build declarations', () => {
   })
 })
 
-describe('Checker — img alt warnings', () => {
+describe('Checker: img alt warnings', () => {
   test('img without alt gets warning', () => {
     assert.ok(hasWarning('page "T"\n  img src="photo.jpg"', 'missing alt'))
   })
@@ -117,7 +117,7 @@ describe('Checker — img alt warnings', () => {
   })
 })
 
-describe('Checker — @server fn params in scope', () => {
+describe('Checker: @server fn params in scope', () => {
   test('@server fn body can use its params', () => {
     const src = `page "T"
   @server fn greet(name: String) -> String
@@ -133,7 +133,7 @@ describe('Checker — @server fn params in scope', () => {
   })
 })
 
-describe('Checker — JS globals are not errors', () => {
+describe('Checker: JS globals are not errors', () => {
   test('Math.floor is valid', () => {
     assert.ok(clean('page "T"\n  @state let x = Math.floor(1.5)\n  text "{x}"'))
   })
@@ -147,13 +147,13 @@ describe('Checker — JS globals are not errors', () => {
   })
 
   test('fetch is valid in @build', () => {
-    // fetch is a global — should not error (it would fail at runtime if URL is bad,
+    // fetch is a global: should not error (it would fail at runtime if URL is bad,
     // but that's a @build execution error, not a check error)
     assert.ok(clean('page "T"\n  @state let x = 0\n  text "{x}"'))
   })
 })
 
-describe('Checker — error line numbers', () => {
+describe('Checker: error line numbers', () => {
   test('error includes correct line number', () => {
     const src = `page "T"
   heading "Hi"
@@ -174,7 +174,7 @@ describe('Checker — error line numbers', () => {
   })
 })
 
-describe('Checker — match expressions', () => {
+describe('Checker: match expressions', () => {
   test('match expression in @computed is clean', () => {
     assert.ok(clean(`
 @state let x = 0
@@ -187,7 +187,7 @@ page "T"
 `))
   })
 
-  test('match arm body references bound name — clean', () => {
+  test('match arm body references bound name: clean', () => {
     assert.ok(clean(`
 @state let x = 0
 @computed let doubled = match x {
@@ -211,7 +211,7 @@ page "T"
   })
 })
 
-describe('Checker — class declarations', () => {
+describe('Checker: class declarations', () => {
   test('class declaration registers the name', () => {
     assert.ok(clean(`
 class Counter {
@@ -236,7 +236,7 @@ page "T"
   })
 })
 
-describe('Checker — statement checking', () => {
+describe('Checker: statement checking', () => {
   test('while loop with undeclared condition var is an error', () => {
     assert.ok(hasError(`
 @server fn process() {
@@ -368,7 +368,7 @@ page "T"
   })
 })
 
-describe('Checker — widget and class declarations', () => {
+describe('Checker: widget and class declarations', () => {
   test('widget with @attr reference is clean (no false positive)', () => {
     assert.ok(clean(`
 widget Card
@@ -416,11 +416,11 @@ page "T"
   })
 })
 
-describe('Checker — scope chain and ClassDecl', () => {
+describe('Checker: scope chain and ClassDecl', () => {
   const { Checker } = require('../src/checker')
 
   test('Scope.get walks up parent chain to find key', () => {
-    // The Scope class is internal — exercise it via a real check that requires
+    // The Scope class is internal: exercise it via a real check that requires
     // a child scope reading from the parent (e.g. fn body reading outer @state)
     assert.ok(clean(`
 @state let outerVal = 42
@@ -442,7 +442,7 @@ page "T"
   })
 })
 
-describe('Checker — expression checking (arrow, coalesce, pipeline, spread)', () => {
+describe('Checker: expression checking (arrow, coalesce, pipeline, spread)', () => {
   test('arrow function in @computed introduces param binding', () => {
     assert.ok(clean(`
 @state let items = []
@@ -549,7 +549,7 @@ page "T"
   })
 })
 
-describe('Checker — direct Scope class tests', () => {
+describe('Checker: direct Scope class tests', () => {
   const { Scope } = require('../src/checker')
 
   test('Scope.get returns own value when key is in own', () => {
@@ -585,7 +585,7 @@ describe('Checker — direct Scope class tests', () => {
   })
 })
 
-describe('Checker — direct AST construction for dead-code path coverage', () => {
+describe('Checker: direct AST construction for dead-code path coverage', () => {
   const { Checker } = require('../src/checker')
   const N = require('../src/ast')
 
@@ -675,7 +675,7 @@ describe('Checker — direct AST construction for dead-code path coverage', () =
     const program = {
       declarations: [
         N.WidgetDecl('Card', [N.Param('title', null, null, false, 0)], [
-          // body using @title (widget attr) — should not error in widget
+          // body using @title (widget attr): should not error in widget
           N.InterpolationNode(N.AtProperty('title', 0), 0)
         ], null, 0),
         N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
@@ -766,7 +766,7 @@ describe('Checker — direct AST construction for dead-code path coverage', () =
 
   test('checkExpr with await marks warning in non-async context', () => {
     const checker = new Checker('test')
-    // @state init expression with await — not in async context, generates warning
+    // @state init expression with await: not in async context, generates warning
     const program = {
       declarations: [
         N.StateDecl('x', null, { type: 'AwaitExpr', argument: N.Literal(1, '1', 0), line: 0 }, 0),
@@ -848,7 +848,7 @@ describe('Checker — direct AST construction for dead-code path coverage', () =
   })
 })
 
-describe('Checker — clean examples', () => {
+describe('Checker: clean examples', () => {
   const fs = require('fs')
   const examples = ['hello', 'counter', 'blog', 'dashboard', 'patterns', 'live', 'chat']
 

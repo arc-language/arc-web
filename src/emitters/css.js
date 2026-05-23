@@ -45,7 +45,7 @@ const SHORTHANDS = {
   'tracking':  v => `letter-spacing: ${expandTracking(v)}`,
   'align':     v => `text-align: ${v}`,
 
-  // Layout — flex shorthand
+  // Layout: flex shorthand
   'flex':      v => expandFlex(v),
   'grid':      v => expandGrid(v),
   'row':       v => `display: flex; flex-direction: row${v ? `; gap: ${v}` : ''}`,
@@ -69,7 +69,7 @@ const SHORTHANDS = {
   'invisible': () => `visibility: hidden`,
 }
 
-// Token expansion — map token names to CSS custom properties
+// Token expansion: map token names to CSS custom properties
 function expandToken(value, category) {
   if (!value) return value
 
@@ -339,9 +339,9 @@ class CssEmitter {
           if (KEYFRAMES[animName]) this.usedKeyframes.add(animName)
         }
 
-        // Handle animation shorthand — might produce multiple properties
+        // Handle animation shorthand: might produce multiple properties
         if (!expanded.includes(';')) {
-          // Single declaration — avoid split/map/filter allocation
+          // Single declaration: avoid split/map/filter allocation
           const line = expanded.trim()
           if (line) { declarations.push(line); _trackAnim(line) }
         } else {

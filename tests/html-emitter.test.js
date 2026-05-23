@@ -174,7 +174,7 @@ describe('HTML Emitter', () => {
   for post in posts
     heading "{post.title}"`
       const { html } = await compile(src)
-      // Loop is unrolled — should contain heading elements
+      // Loop is unrolled: should contain heading elements
       assert.ok(html.includes('<h2'), `Expected <h2 headings in:\n${html}`)
     })
 
@@ -669,7 +669,7 @@ page "T"
     })
 
     test('emitWidgetInvocation with dynamic attr expression (not static)', async () => {
-      // Use a widget invoked with a @state-driven attr — dynamic, not static
+      // Use a widget invoked with a @state-driven attr: dynamic, not static
       const { html } = await compile(`widget Badge
   span "{@label}"
 page "T"
@@ -852,7 +852,7 @@ page "T"
       const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { broken: false } })
       const node = N.UnlessNode(N.Identifier('broken', 0), [N.TextNode('OK', 0)], 0)
       const result = emitter.emitNode(node)
-      // Unless wraps in UnaryExpr which is not static — emits a reactive aria-live container
+      // Unless wraps in UnaryExpr which is not static: emits a reactive aria-live container
       assert.ok(result.includes('aria-live') || result.includes('OK'), `Got: ${result}`)
     })
   })

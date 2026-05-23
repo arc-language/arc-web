@@ -2,7 +2,7 @@
 
 const { T, KEYWORDS, Token } = require('./tokens')
 
-// String escape sequences — hoisted to avoid per-character object allocation
+// String escape sequences: hoisted to avoid per-character object allocation
 const _STR_ESCAPES = { n: '\n', t: '\t', r: '\r', '\\': '\\', '"': '"', "'": "'", '{': '{' }
 
 // Hoisted character-class tests for hot lexer loops
@@ -11,7 +11,7 @@ const _RE_DIGIT = /[0-9]/
 const _RE_IDENT_CONT = /[a-zA-Z0-9_$]/
 const _RE_AT_CONT = /[a-zA-Z0-9_]/
 
-// Lexer modes — Arc has three syntactic regions
+// Lexer modes: Arc has three syntactic regions
 const MODE = {
   TOP: 'TOP',           // top-level: imports, @annotations, widget/page declarations
   TEMPLATE: 'TEMPLATE', // inside a widget/page body (indentation-based HTML)
@@ -28,7 +28,6 @@ class Lexer {
     this.line = 1
     this.col = 1
     this.tokens = []
-    this.mode = MODE.TOP
     // Indentation stack for template mode
     this.indentStack = [0]
     this.pendingDedents = 0
@@ -196,7 +195,7 @@ class Lexer {
     const line = this.line
     const col = this.col - 1
 
-    // Newline — significant in template mode
+    // Newline: significant in template mode
     if (ch === '\n') {
       this.emit(T.NEWLINE, '\n', line, col)
       return true
@@ -216,7 +215,7 @@ class Lexer {
 
     // Numbers
     if (/[0-9]/.test(ch)) {
-      this.tokenizeNumber(ch)
+      this.tokenizeNumber()
       return true
     }
 

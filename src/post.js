@@ -1,14 +1,14 @@
 'use strict'
 
 // Arc post-processor.
-// Runs after emit — makes the output as fast as possible:
+// Runs after emit: makes the output as fast as possible:
 //
-//   1. Critical CSS inlining — CSS needed for first paint is inlined in <head>,
+//   1. Critical CSS inlining: CSS needed for first paint is inlined in <head>,
 //      non-critical CSS deferred with <link rel="preload">
-//   2. Image optimization hints — adds width/height/loading/decoding to <img>
-//   3. Prefetch link hints — <link rel="prefetch"> for navigable resources
-//   4. Minification — strips whitespace from HTML
-//   5. Resource hints — dns-prefetch, preconnect for external domains
+//   2. Image optimization hints: adds width/height/loading/decoding to <img>
+//   3. Prefetch link hints: <link rel="prefetch"> for navigable resources
+//   4. Minification: strips whitespace from HTML
+//   5. Resource hints: dns-prefetch, preconnect for external domains
 
 class PostProcessor {
   constructor(options = {}) {
@@ -16,7 +16,7 @@ class PostProcessor {
     this.criticalCssThreshold = options.criticalCssThreshold ?? 14336 // 14KB
   }
 
-  // Main entry point — returns { html, css }
+  // Main entry point: returns { html, css }
   process(html, css) {
     let result = { html, css }
     result = this.inlineCriticalCss(result.html, result.css)
@@ -30,7 +30,7 @@ class PostProcessor {
   // Strategy: inline the @layer base (always needed) + component-specific CSS.
   // Defer the stylesheet link so full CSS loads non-blocking.
   //
-  // When CSS is small (<= threshold), just inline all of it — no split needed.
+  // When CSS is small (<= threshold), just inline all of it: no split needed.
 
   inlineCriticalCss(html, css) {
     if (!css || !css.trim()) return { html, css }
@@ -95,7 +95,7 @@ class PostProcessor {
     for (const m of hrefMatches) {
       try {
         externalDomains.add(new URL(m[1]).origin)
-      } catch {}
+      } catch { /* skip malformed URLs in resource-hint scan */ }
     }
 
     if (externalDomains.size === 0) return html

@@ -3,7 +3,7 @@
 const _ESC_RE = /[&<>"']/g
 const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }
 
-// U+2028/U+2029 are JS line terminators — must be escaped when embedded in inline event handlers
+// U+2028/U+2029 are JS line terminators: must be escaped when embedded in inline event handlers
 const _LS2028 = '\u2028', _LS2029 = '\u2029'
 function _safeInlineId(val) {
   return JSON.stringify(String(val))
@@ -245,7 +245,7 @@ class HtmlEmitter {
     const { tag, classes = [], attrs = {}, children = [] } = node
     let { id } = node
 
-    // Widget invocation — inline the widget body with bound attrs
+    // Widget invocation: inline the widget body with bound attrs
     if (this.widgets.has(tag)) {
       return this.emitWidgetInvocation(this.widgets.get(tag), attrs, children)
     }
@@ -255,7 +255,7 @@ class HtmlEmitter {
     if (tag === 'tooltip') return this.emitTooltip(node)
     if (tag === 'accordion') return this.emitAccordion(node)
 
-    // tooltip="" attribute on any element — wrap with tooltip anchor
+    // tooltip="" attribute on any element: wrap with tooltip anchor
     if (attrs.tooltip) {
       const rawTip = attrs.tooltip
       const tipText = (rawTip && rawTip.type) ? this.evalStaticExpr(rawTip) : rawTip
@@ -284,12 +284,12 @@ class HtmlEmitter {
             this.stateBindings.push({ id, expr: boundName, kind: 'bind', line: node.line })
           }
         }
-        // bind: attrs are JS-only — don't include in HTML output
+        // bind: attrs are JS-only: don't include in HTML output
       } else if (key.startsWith('on:')) {
         if (!id) id = this.getReactiveId(`ev_${tag}_${node.line}`)
         const event = key.slice(3)
         this.eventBindings.push({ elementId: id, event, handler: value, line: node.line })
-        // on: attrs are JS-only — don't include in HTML output
+        // on: attrs are JS-only: don't include in HTML output
       } else {
         staticAttrs[key] = value
       }
@@ -436,7 +436,7 @@ class HtmlEmitter {
       return `\${_esc(String(${exprStr}??''))}`
     }
 
-    // Reactive — emit a span placeholder (no aria-live: avoid announcing every tiny text update)
+    // Reactive: emit a span placeholder (no aria-live: avoid announcing every tiny text update)
     const id = this.getReactiveId(exprStr)
     this.stateBindings.push({ id, expr: exprStr, line: node.line })
     return `<span id="${id}" data-arc-live></span>`
@@ -451,7 +451,7 @@ class HtmlEmitter {
                  : (node.alternate ? this.emitChildren(node.alternate) : '')
     }
 
-    // Reactive if — wrap in data-arc-if container
+    // Reactive if: wrap in data-arc-if container
     const ifId = this.getReactiveId(`if_${condStr}`)
     const elseId = node.alternate ? this.getReactiveId(`else_${condStr}`) : null
 
@@ -482,7 +482,7 @@ class HtmlEmitter {
     const collStr = this.exprToString(node.collection)
 
     if (this.isStaticExpr(node.collection)) {
-      // Build-time loop — unroll to static HTML
+      // Build-time loop: unroll to static HTML
       const items = this.evalStaticExpr(node.collection)
       if (Array.isArray(items)) {
         return items.map((item, i) => {
@@ -492,7 +492,7 @@ class HtmlEmitter {
       return ''
     }
 
-    // Reactive for — emit a container, JS will manage children
+    // Reactive for: emit a container, JS will manage children
     const listId = this.getReactiveId(`list_${collStr}`)
 
     // Extract key= attr from first body node (for keyed diffing)
@@ -528,7 +528,7 @@ class HtmlEmitter {
   }
 
   // Emit a for-loop body as a JS template-literal source string.
-  // Item property expressions are inlined as ${_esc(item.field)} — no global reactive spans needed.
+  // Item property expressions are inlined as ${_esc(item.field)}: no global reactive spans needed.
   // When keyExpr is provided, strips key= from the root element and injects data-arc-key instead.
   emitForBodyTemplate(bodyNodes, itemName, indexName, keyExpr) {
     if (!this._forStack) this._forStack = []
@@ -576,7 +576,7 @@ class HtmlEmitter {
       }
       return ''
     }
-    // Reactive match — emit all branches with reactive show/hide
+    // Reactive match: emit all branches with reactive show/hide
     const subjStr = this.exprToString(node.subject)
     const arms = node.arms.map((arm, i) => {
       const armId = this.getReactiveId(`match_arm_${i}_${subjStr}`)
@@ -598,7 +598,7 @@ class HtmlEmitter {
   // ── Native patterns (zero JS) ──────────────────────────────────────────────
 
   emitModal(node) {
-    // Uses native <dialog> element — opened via showModal() from trigger= attr
+    // Uses native <dialog> element: opened via showModal() from trigger= attr
     const rawId = node.id ?? node.attrs?.id
     const id = rawId
       ? (rawId.type ? this.evalStaticExpr(rawId) : rawId)
@@ -607,7 +607,7 @@ class HtmlEmitter {
     const rawLabel = node.attrs?.label
     const label = rawLabel ? (rawLabel.type ? this.evalStaticExpr(rawLabel) : rawLabel) : null
     const ariaLabel = label ? ` aria-label="${this.escape(String(label))}"` : ` aria-label="${this.escape(String(id))}"`
-    // Note: autofocus is intentionally omitted — autofocus on <dialog> is ignored by spec.
+    // Note: autofocus is intentionally omitted: autofocus on <dialog> is ignored by spec.
     // The trigger= onclick handler focuses the first focusable child after showModal().
     return `<dialog id="${this.escape(String(id))}" aria-modal="true"${ariaLabel}>${children}</dialog>`
   }
@@ -730,7 +730,7 @@ class HtmlEmitter {
   }
 
   _extractRootIdent(expr) {
-    // OptionalChain in a bind:value path would generate invalid setter code — reject it
+    // OptionalChain in a bind:value path would generate invalid setter code: reject it
     if (this._hasOptionalChain(expr)) return null
     while (expr?.type === 'MemberExpr') expr = expr.object
     return expr?.type === 'Identifier' ? expr.name : null

@@ -59,7 +59,7 @@ class JsEmitter {
       return ''
     }
 
-    // Set of all reactive variable names — used by emitRuntimeExpr to prefix identifiers
+    // Set of all reactive variable names: used by emitRuntimeExpr to prefix identifiers
     this.stateVarNames = new Set([
       ...stateDecls.map(s => s.name),
       ...computedDecls.map(c => c.name),
@@ -143,7 +143,7 @@ class JsEmitter {
       }
     }
 
-    // Setter functions — one per @state variable
+    // Setter functions: one per @state variable
     for (const s of stateDecls) {
       const affected = deps.get(s.name) ?? []
       parts.push(`function _set_${s.name}(v){`)
@@ -209,7 +209,7 @@ class JsEmitter {
       )
     }
 
-    // Initial render — set all reactive nodes to their initial values
+    // Initial render: set all reactive nodes to their initial values
     for (const b of stateBindings) {
       parts.push(this.emitBindingUpdate(b))
     }
@@ -318,7 +318,7 @@ class JsEmitter {
     const renderFn = `function _renderItem(${item},${idx}){${tplFnBody}}`
 
     if (b.keyExpr) {
-      // Keyed reconciliation — preserves focus, scroll, and input state for unchanged items
+      // Keyed reconciliation: preserves focus, scroll, and input state for unchanged items
       return [
         `(function(){`,
         renderFn,
@@ -358,7 +358,7 @@ class JsEmitter {
       ].join('\n')
     }
 
-    // Non-keyed update — small lists use individual node replacement, large use innerHTML batch
+    // Non-keyed update: small lists use individual node replacement, large use innerHTML batch
     // Focus within the list is restored after update
     return [
       `(function(){`,
@@ -544,7 +544,7 @@ class JsEmitter {
         return `(()=>{throw new Error(${this.emitExpr(expr.argument)})})()`
 
       default:
-        throw new Error(`Arc JS emitter: unhandled expression type "${expr.type}" — this is a compiler bug`)
+        throw new Error(`Arc JS emitter: unhandled expression type "${expr.type}": this is a compiler bug`)
     }
   }
 
@@ -570,7 +570,7 @@ class JsEmitter {
     })
     // Chain right-to-left; assign each arm to tmp so it's only evaluated once
     const chain = arms.reduceRight((acc, cur, i) => {
-      if (i === arms.length - 1) return cur // wildcard/binding — no sentinel check needed
+      if (i === arms.length - 1) return cur // wildcard/binding: no sentinel check needed
       return `((${tmp}=${cur})!==${sentinel}?${tmp}:${acc})`
     })
     // Outer IIFE: subj=subject, tmp=arm scratch, sentinel=Symbol() for no-match

@@ -28,7 +28,7 @@ function rmDir(dir) {
   try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
 }
 
-describe('cli — hashString', () => {
+describe('cli: hashString', () => {
   test('returns a non-negative 32-bit integer', () => {
     const h = hashString('test.arc')
     assert.ok(Number.isInteger(h))
@@ -50,7 +50,7 @@ describe('cli — hashString', () => {
   })
 })
 
-describe('cli — injectAssets', () => {
+describe('cli: injectAssets', () => {
   test('injects <script src="app.js"> before </body> when JS is non-empty', () => {
     const html = '<html><body>hi</body></html>'
     const result = injectAssets(html, 'const x = 1;')
@@ -71,7 +71,7 @@ describe('cli — injectAssets', () => {
   })
 })
 
-describe('cli — fmt', () => {
+describe('cli: fmt', () => {
   test('formats bytes under 1024 as raw bytes', () => {
     assert.equal(fmt(0), '0 bytes')
     assert.equal(fmt(500), '500 bytes')
@@ -85,7 +85,7 @@ describe('cli — fmt', () => {
   })
 })
 
-describe('cli — composeClientJs', () => {
+describe('cli: composeClientJs', () => {
   test('returns empty when all parts are empty', () => {
     assert.equal(composeClientJs('', '', ''), '')
   })
@@ -120,7 +120,7 @@ describe('cli — composeClientJs', () => {
   })
 })
 
-describe('cli — findArcFiles', () => {
+describe('cli: findArcFiles', () => {
   test('finds .arc files recursively in a directory', () => {
     const dir = mkTmpDir('findarc')
     try {
@@ -166,7 +166,7 @@ describe('cli — findArcFiles', () => {
   })
 })
 
-describe('cli — resolveImports', () => {
+describe('cli: resolveImports', () => {
   test('resolves named widget imports from another .arc file', async () => {
     const dir = mkTmpDir('imports')
     try {
@@ -232,7 +232,7 @@ page "T"
         path.join(dir, 'main.arc'),
         { projectDir: dir }
       )
-      // Should compile without errors — the escape attempt is just warned and skipped
+      // Should compile without errors: the escape attempt is just warned and skipped
       assert.ok(r.html.includes('ok'))
     } finally { rmDir(dir) }
   })
@@ -277,7 +277,7 @@ page "T"
   test('warns when imported file cannot be read (permission/unreadable)', async () => {
     const dir = mkTmpDir('importread')
     try {
-      // Create a directory at the import path instead of a file — readFile will EISDIR
+      // Create a directory at the import path instead of a file: readFile will EISDIR
       fs.mkdirSync(path.join(dir, 'unreadable.arc'))
       fs.writeFileSync(path.join(dir, 'main.arc'), `import { X } from "./unreadable"
 page "T"
@@ -317,7 +317,7 @@ page "T"
   })
 })
 
-describe('cli — newProject', () => {
+describe('cli: newProject', () => {
   test('creates default template project files', () => {
     const dir = mkTmpDir('newproj')
     const projDir = path.join(dir, 'myapp')
@@ -404,7 +404,7 @@ describe('cli — newProject', () => {
   })
 })
 
-describe('cli — build command (subprocess)', () => {
+describe('cli: build command (subprocess)', () => {
   const { execFileSync } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
 
@@ -475,7 +475,7 @@ page "T"
   test('build with @live but no template references uses short-circuit renderer', () => {
     const dir = mkTmpDir('buildliveempty')
     try {
-      // @live declared but not referenced in template — short-circuit path
+      // @live declared but not referenced in template: short-circuit path
       fs.writeFileSync(path.join(dir, 'index.arc'), `page "T"
   @server fn getUser() -> { name: String } {
     return { name: "alice" }
@@ -521,7 +521,7 @@ page "T"
   })
 })
 
-describe('cli — check command (subprocess)', () => {
+describe('cli: check command (subprocess)', () => {
   const { execFileSync } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
 
@@ -557,7 +557,7 @@ describe('cli — check command (subprocess)', () => {
   })
 })
 
-describe('cli — check command edge cases (subprocess)', () => {
+describe('cli: check command edge cases (subprocess)', () => {
   const { execFileSync } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
 
@@ -599,7 +599,7 @@ page "T"
   })
 })
 
-describe('cli — new command edge cases (subprocess)', () => {
+describe('cli: new command edge cases (subprocess)', () => {
   const { execFileSync } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
 
@@ -622,7 +622,7 @@ describe('cli — new command edge cases (subprocess)', () => {
   })
 })
 
-describe('cli — fatal error handling (subprocess)', () => {
+describe('cli: fatal error handling (subprocess)', () => {
   const { execFileSync, spawnSync } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
 
@@ -654,7 +654,7 @@ describe('cli — fatal error handling (subprocess)', () => {
   })
 })
 
-describe('cli — formatError edge cases', () => {
+describe('cli: formatError edge cases', () => {
   const { formatError, showSourceContext } = require('../src/cli')._internal
 
   test('formatError works without filename', () => {
@@ -680,7 +680,7 @@ describe('cli — formatError edge cases', () => {
   })
 })
 
-describe('cli — version and help', () => {
+describe('cli: version and help', () => {
   const { execFileSync } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
 
@@ -698,7 +698,7 @@ describe('cli — version and help', () => {
   })
 })
 
-describe('cli — new command (subprocess)', () => {
+describe('cli: new command (subprocess)', () => {
   const { execFileSync } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
 
@@ -720,7 +720,7 @@ describe('cli — new command (subprocess)', () => {
   })
 })
 
-describe('cli — dev server (subprocess + HTTP)', () => {
+describe('cli: dev server (subprocess + HTTP)', () => {
   const { spawn } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
 
@@ -934,7 +934,7 @@ describe('cli — dev server (subprocess + HTTP)', () => {
     try {
       fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
       proc = await startDevServer(dir, port)
-      // %ZZ is an invalid percent-encoding — decodeURIComponent throws
+      // %ZZ is an invalid percent-encoding: decodeURIComponent throws
       const r = await httpGet(port, '/%ZZbad')
       assert.equal(r.status, 400)
     } finally {
@@ -995,7 +995,7 @@ describe('cli — dev server (subprocess + HTTP)', () => {
   })
 })
 
-describe('cli — deploy command (subprocess)', () => {
+describe('cli: deploy command (subprocess)', () => {
   const { execFileSync } = require('child_process')
   const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
 

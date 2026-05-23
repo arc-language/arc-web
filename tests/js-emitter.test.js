@@ -844,7 +844,7 @@ page "T"
         { type: 'ObjectProp', key: 'name', value: null, shorthand: true, line: 0 }
       ], 0)
       const result = emitter.emitExpr(expr)
-      assert.ok(result.includes('{name}') || result === '{name}', `Expected shorthand: ${result}`)
+      assert.ok(result.includes('{name}'), `Expected shorthand: ${result}`)
     })
 
     test('emitExpr for MemberExpr (computed)', () => {

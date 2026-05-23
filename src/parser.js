@@ -3,17 +3,17 @@
 const { T, STRUCTURE_ELEMENTS } = require('./tokens')
 const N = require('./ast')
 
-// Hoisted regexes used in parseStyleValue — avoids per-token allocation
+// Hoisted regexes used in parseStyleValue: avoids per-token allocation
 const _CSS_UNIT_RE = /^(px|em|rem|%|vh|vw|vmin|vmax|svh|dvh|ch|ex|fr|deg|rad|ms|s)$/
 const _CSS_NUM_RE = /^\d/
 
 // Hoisted to avoid per-rule object allocation in parseStyleRule
 const _PSEUDO_SHORTHANDS = Object.freeze({ hover: ':hover', focus: ':focus-visible', active: ':active', disabled: ':disabled', checked: ':checked', placeholder: '::placeholder' })
 
-// Annotations allowed inside template blocks — Set for O(1) vs O(7) Array.includes
+// Annotations allowed inside template blocks: Set for O(1) vs O(7) Array.includes
 const _TEMPLATE_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker'])
 
-// Hoisted operator Sets for hot expression-parsing loops — avoids per-call array allocation
+// Hoisted operator Sets for hot expression-parsing loops: avoids per-call array allocation
 const _ASSIGN_OPS = new Set([T.EQ, T.PLUS_EQ, T.MINUS_EQ, T.STAR_EQ, T.SLASH_EQ])
 const _EQUALITY_OPS = new Set([T.EQEQ, T.BANGEQ, T.IS])
 const _CMP_OPS = new Set([T.LT, T.GT, T.LTEQ, T.GTEQ])
@@ -28,9 +28,9 @@ class Parser {
     this.hoistedDecls = []  // @state/@computed/@build found inside templates
 
     // Pre-compute non-whitespace token array for O(1) peek() and match().
-    // _nwsTokens[i]  — the i-th significant (non-WS) token
-    // _nwsAt[rawPos] — maps each raw token position to its nwsTokens index
-    // _nwsRawPos[i]  — reverse map: nwsTokens index → raw token position
+    // _nwsTokens[i] : the i-th significant (non-WS) token
+    // _nwsAt[rawPos]: maps each raw token position to its nwsTokens index
+    // _nwsRawPos[i] : reverse map: nwsTokens index → raw token position
     this._nwsTokens = tokens.filter(t => t.type !== T.NEWLINE && t.type !== T.INDENT && t.type !== T.DEDENT)
     this._nwsAt = new Int32Array(tokens.length + 1)
     this._nwsRawPos = new Int32Array(this._nwsTokens.length)
@@ -95,7 +95,7 @@ class Parser {
     if (nwsIdx >= this._nwsTokens.length) return null
     const p = this._nwsTokens[nwsIdx]
     if (p && types.includes(p.type)) {
-      // O(1) jump via reverse lookup — no linear scan
+      // O(1) jump via reverse lookup: no linear scan
       this.pos = this._nwsRawPos[nwsIdx] + 1
       return p
     }
@@ -248,7 +248,7 @@ class Parser {
       case '@worker':   return this.parseWorkerFn(tok.line)
       case '@param':    return this.parseParamDecl(tok.line)
       default:
-        // Could be a class getter/static marker — pass through
+        // Could be a class getter/static marker: pass through
         this.error(`Unknown annotation: ${annotation}`, tok)
     }
   }
@@ -352,7 +352,7 @@ class Parser {
   // Parse type annotation stopping before { (to avoid consuming object types as blocks)
   parseTypeAnnotationNoObject() {
     if (this.peekType() === T.LBRACE) {
-      // Object type: { key: Type, ... } — parse inline
+      // Object type: { key: Type, ... }: parse inline
       return this.parseTypeAnnotation()
     }
     return this.parseTypeAnnotation()
@@ -415,7 +415,7 @@ class Parser {
 
   parseTemplateBlock() {
     const children = []
-    // Skip newlines but NOT indent tokens — we need to find the INDENT
+    // Skip newlines but NOT indent tokens: we need to find the INDENT
     this.consumeNewlines()
     if (this.tokens[this.pos]?.type !== T.INDENT) {
       return children
@@ -448,7 +448,7 @@ class Parser {
     // Raw HTML passthrough
     if (t.type === T.RAW) return this.parseRawNode()
 
-    // @state/@computed/@build inside template — hoist to program declarations
+    // @state/@computed/@build inside template: hoist to program declarations
     if (t.type === T.AT_IDENT) {
       const annotation = t.value
       if (_TEMPLATE_ANNOTATIONS.has(annotation)) {
@@ -608,7 +608,7 @@ class Parser {
         // Bare boolean attribute (like required, disabled, checked, lazy)
         // Consume it only when the following token indicates more attrs (IDENT, EQ, COLON)
         // or end-of-attrs (NEWLINE, INDENT, DEDENT, EOF, STRING, LBRACE).
-        // Never consume if followed by DEDENT/EOF — that would be a child element.
+        // Never consume if followed by DEDENT/EOF: that would be a child element.
         if (/^[a-z]/.test(t.value)) {
           const afterNext = this.tokens[this.pos + 1]
           const isEndOfAttrs = !afterNext || afterNext.type === T.NEWLINE ||
@@ -808,7 +808,7 @@ class Parser {
         continue
       }
 
-      // DOT prefix — class selector (.count, .field-error)
+      // DOT prefix: class selector (.count, .field-error)
       if (pt.type === T.DOT) {
         const rule = this.parseStyleRule()
         if (rule) nestedRules.push(rule)
@@ -1179,7 +1179,7 @@ class Parser {
 
       const isStatic = t.type === T.STATIC ? (this.pos++, true) : false
 
-      // @get prop() => expr  (getter) — must come before generic @field check
+      // @get prop() => expr  (getter): must come before generic @field check
       if (this.tokens[this.pos]?.type === T.AT_IDENT && this.tokens[this.pos].value === '@get') {
         this.pos++
         const methodName = this.eat(T.IDENT).value
@@ -1556,7 +1556,7 @@ class Parser {
     return expr
   }
 
-  // Parse a range bound — supports member access, indexing, calls,
+  // Parse a range bound: supports member access, indexing, calls,
   // but stops at DOTDOT/DOTDOTEQ so nested ranges don't form.
   parseRangeBound() {
     let e = this.parsePrimary()
@@ -1616,7 +1616,7 @@ class Parser {
       return N.AtProperty(t.value.slice(1), t.line)
     }
 
-    // Identifier — check for bare single-param arrow fn `x => expr` before returning
+    // Identifier: check for bare single-param arrow fn `x => expr` before returning
     if (t.type === T.IDENT) {
       if (this.tokens[this.pos + 1]?.type === T.ARROW) {
         this.pos++

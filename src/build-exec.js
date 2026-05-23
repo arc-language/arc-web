@@ -7,9 +7,9 @@ const http = require('http')
 
 // Evaluates @build expressions at compile time.
 // Supports: literals, arrays, objects, fetch(), file reads, array methods.
-// Safety: no eval(), no arbitrary code — constrained interpreter only.
+// Safety: no eval(), no arbitrary code: constrained interpreter only.
 
-// Explicit allowlist for object method dispatch — prevents calling dangerous prototype methods
+// Explicit allowlist for object method dispatch: prevents calling dangerous prototype methods
 const ALLOWED_OBJ_METHODS = new Set([
   'toString', 'valueOf', 'toJSON',
   'get', 'set', 'has', 'delete', 'clear',
@@ -148,14 +148,14 @@ class BuildExecutor {
   async evalCall(expr, locals) {
     const callee = expr.callee
 
-    // fetch(url) — HTTP/HTTPS request
+    // fetch(url): HTTP/HTTPS request
     if (callee.type === 'Identifier' && callee.name === 'fetch') {
       if (!expr.args || expr.args.length === 0) throw new Error('@build fetch: requires a URL argument')
       const url = await this.evalExpr(expr.args[0], locals)
       return this.doFetch(url)
     }
 
-    // readFile(path) — local file read
+    // readFile(path): local file read
     if (callee.type === 'Identifier' && callee.name === 'readFile') {
       if (!expr.args || expr.args.length === 0) throw new Error('@build readFile: requires a path argument')
       const filePath = await this.evalExpr(expr.args[0], locals)
@@ -317,7 +317,7 @@ class BuildExecutor {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new Error(`@build fetch: only http/https allowed, got ${parsed.protocol}`)
     }
-    // URL.hostname for IPv6 includes brackets (e.g. "[::1]") — strip them for consistent checks
+    // URL.hostname for IPv6 includes brackets (e.g. "[::1]"): strip them for consistent checks
     const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
     // Block IPv4 private/loopback/unspecified ranges
     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
@@ -344,7 +344,7 @@ class BuildExecutor {
     return new Promise((resolve, reject) => {
       const protocol = parsed.protocol === 'https:' ? https : http
       const req = protocol.get(url, (res) => {
-        // Reject redirects explicitly — following them could bypass the SSRF blocklist
+        // Reject redirects explicitly: following them could bypass the SSRF blocklist
         if (res.statusCode >= 300 && res.statusCode < 400) {
           res.resume()
           return reject(new Error(`@build fetch: redirects not allowed (${res.statusCode}): ${url}`))
