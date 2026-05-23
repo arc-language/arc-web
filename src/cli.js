@@ -604,6 +604,14 @@ async function dev(projectDir) {
       res.end('Bad Request')
       return
     }
+    // Defense in depth: reject any path-segment-traversal sequence in the decoded URL.
+    // path.resolve + startsWith(distDir) below catches escaping, but symlink games could
+    // still let `..` land inside distDir. Explicit rejection is simpler to reason about.
+    if (urlPath.split('/').some(seg => seg === '..')) {
+      res.writeHead(403)
+      res.end('Forbidden')
+      return
+    }
     if (urlPath === '/' || urlPath === '') urlPath = '/index.html'
 
     const filePath = path.resolve(distDir, urlPath.replace(/^\//, ''))
@@ -681,42 +689,53 @@ async function dev(projectDir) {
   })
 
   const shutdown = () => {
-    server.close()
-    process.exit(0)
+    // End SSE clients first so they don't hold the socket open and block close().
+    for (const client of [...reloadClients]) {
+      try { client.end() } catch {}
+    }
+    reloadClients.clear()
+    server.close(() => process.exit(0))
+    // Hard fallback in case close() never resolves (stale connections, etc.)
+    setTimeout(() => process.exit(0), 500).unref()
   }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
 
   // File watcher with debounce to avoid multiple rebuilds per save
   console.log('arc: watching for changes...')
-  let _rebuildTimer = null
-  let _building = false
-  let _pendingRebuild = false
+  let rebuildTimer = null
+  let building = false
+  let rebuildRequested = false
   const watchHandler = (event, changedFile) => {
     if (!changedFile || !changedFile.endsWith('.arc')) return
     if (changedFile.includes('dist' + path.sep) || changedFile.includes('dist/')) return
 
-    clearTimeout(_rebuildTimer)
-    _rebuildTimer = setTimeout(async () => {
-      if (_building) { _pendingRebuild = true; return }
+    clearTimeout(rebuildTimer)
+    rebuildTimer = setTimeout(async () => {
+      if (building) { rebuildRequested = true; return }
       do {
-        _building = true
-        _pendingRebuild = false
+        building = true
+        rebuildRequested = false
         console.log(`arc: ${changedFile} changed, rebuilding...`)
-        const _t0 = Date.now()
+        const t0 = Date.now()
         try {
           await build(projectDir)
-          const _dur = Date.now() - _t0
+          const dur = Date.now() - t0
           for (const client of [...reloadClients]) {
             try { client.write('data: reload\n\n') } catch { reloadClients.delete(client) }
           }
-          console.log(`arc: rebuilt in ${_dur}ms → reload sent to ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''}`)
+          console.log(`arc: rebuilt in ${dur}ms → reload sent to ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''}`)
         } catch (e) {
-          try { formatError(e, null, changedFile) } catch (e2) { console.error(e2) }
+          // Read the source of the changed file so formatError can show context.
+          // Best-effort — the actual error may come from an import; in that case
+          // we lose the snippet but still get the error message.
+          let src = null
+          try { src = fs.readFileSync(path.join(absDir, changedFile), 'utf8') } catch {}
+          try { formatError(e, src, changedFile) } catch (e2) { console.error(e2) }
         } finally {
-          _building = false
+          building = false
         }
-      } while (_pendingRebuild)
+      } while (rebuildRequested)
     }, 50)
   }
   try {

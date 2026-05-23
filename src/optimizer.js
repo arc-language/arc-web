@@ -278,8 +278,15 @@ class Optimizer {
   substituteExpr(expr, bindings) {
     if (!expr || typeof expr !== 'object') return expr
     const val = this.resolveExprWithBindings(expr, bindings)
-    if (val !== undefined) return N.Literal(val, String(val), expr.line)
-    return expr
+    if (val === undefined) return expr
+    // Only inline primitives. Objects/arrays wrapped in Literal would serialize
+    // as `[object Object]` via String(val), corrupting downstream emitters that
+    // read .raw. Leave them as the original expression.
+    const t = typeof val
+    if (t !== 'string' && t !== 'number' && t !== 'boolean' && val !== null) {
+      return expr
+    }
+    return N.Literal(val, String(val), expr.line)
   }
 
   applyOp(op, l, r) {

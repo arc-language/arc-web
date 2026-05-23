@@ -167,7 +167,10 @@ class HtmlEmitter {
       '<link rel="stylesheet" href="styles.css">',
       '</head>',
       '<body>',
-      `<a href="#main-content" class="arc-skip-link">Skip to main content</a>`,
+      // Skip link text can be overridden via page meta { skipLinkText: "..." }
+      `<a href="#main-content" class="arc-skip-link">${this.escape(
+        node.meta?.skipLinkText ? this.evalStaticExpr(node.meta.skipLinkText) : 'Skip to main content'
+      )}</a>`,
       hasUserMain ? '' : `<main id="main-content">`,
       hasUserMain ? '' : `<h1 class="arc-sr-only">${this.escape(title)}</h1>`,
       bodyContent,
@@ -321,7 +324,14 @@ class HtmlEmitter {
       return `<${htmlTag}${attrStr}>`
     }
 
-    const inner = this.emitChildren(children)
+    let inner = this.emitChildren(children)
+
+    // Append a visually-hidden "opens in new tab" notice for screen readers
+    // on auto-injected target="_blank" links (matches the auto-injection above).
+    if (htmlTag === 'a' && attrStr.includes('target="_blank"') && !attrs?.['aria-label']) {
+      inner += `<span class="arc-sr-only"> (opens in new tab)</span>`
+    }
+
     return `<${htmlTag}${attrStr}>${inner}</${htmlTag}>`
   }
 
@@ -483,7 +493,7 @@ class HtmlEmitter {
     const ifHtml = `<div id="${ifId}" hidden>${ifContent}</div>`
     const elseHtml = elseId ? `<div id="${elseId}">${elseContent}</div>` : ''
 
-    return `<div aria-live="polite" aria-atomic="true">${ifHtml}${elseHtml ? '\n' + elseHtml : ''}</div>`
+    return `<div aria-live="polite">${ifHtml}${elseHtml ? '\n' + elseHtml : ''}</div>`
   }
 
   emitUnless(node) {
@@ -533,7 +543,14 @@ class HtmlEmitter {
       line: node.line
     })
 
-    return `<div id="${listId}" aria-live="polite"></div>`
+    // aria-live is opt-in via `live="polite"` / `live="assertive"` on the for node.
+    // Default off — most lists shouldn't be announced on every mutation.
+    const liveAttr = node.attrs?.live
+    const liveVal = liveAttr && typeof liveAttr === 'object' && liveAttr.type
+      ? this.evalStaticExpr(liveAttr) : liveAttr
+    const liveStr = (liveVal === 'polite' || liveVal === 'assertive')
+      ? ` aria-live="${liveVal}"` : ''
+    return `<div id="${listId}"${liveStr}></div>`
   }
 
   emitForBody(bodyNodes, item, index, itemName = 'item', indexName = 'i') {
@@ -611,7 +628,7 @@ class HtmlEmitter {
       this.stateBindings.push({ id: armId, expr: condExpr, kind: 'if-show', line: node.line })
       return `<div id="${armId}" hidden>${body}</div>`
     }).join('\n')
-    return `<div aria-live="polite" aria-atomic="true">${arms}</div>`
+    return `<div aria-live="polite">${arms}</div>`
   }
 
   // ── Native patterns (zero JS) ──────────────────────────────────────────────
@@ -622,13 +639,29 @@ class HtmlEmitter {
     const id = rawId
       ? (rawId.type ? this.evalStaticExpr(rawId) : rawId)
       : 'modal'
-    const children = this.emitChildren(node.children)
     const rawLabel = node.attrs?.label
     const label = rawLabel ? (rawLabel.type ? this.evalStaticExpr(rawLabel) : rawLabel) : null
-    const ariaLabel = label ? ` aria-label="${this.escape(String(label))}"` : ` aria-label="${this.escape(String(id))}"`
+    let labelAttr
+    if (label) {
+      labelAttr = ` aria-label="${this.escape(String(label))}"`
+    } else {
+      // Look for the first heading child; use aria-labelledby pointing to it
+      const firstHeading = (node.children ?? []).find(c =>
+        c.type === 'Element' && (c.tag === 'heading' || /^h[1-6]$/.test(c.tag))
+      )
+      if (firstHeading) {
+        const headingId = `${id}-title`
+        if (!firstHeading.id && !firstHeading.attrs?.id) firstHeading.id = headingId
+        const actualId = firstHeading.id ?? firstHeading.attrs?.id ?? headingId
+        labelAttr = ` aria-labelledby="${this.escape(String(actualId))}"`
+      } else {
+        // No heading found — keep id-based aria-label as last resort
+        labelAttr = ` aria-label="${this.escape(String(id))}"`
+      }
+    }
     // Note: autofocus is intentionally omitted: autofocus on <dialog> is ignored by spec.
     // The trigger= onclick handler focuses the first focusable child after showModal().
-    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${ariaLabel}>${children}</dialog>`
+    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${labelAttr}>${this.emitChildren(node.children)}</dialog>`
   }
 
   emitTooltip(node) {
@@ -647,17 +680,25 @@ class HtmlEmitter {
 
   emitAccordion(node) {
     const hasSummary = node.children?.some(c => c.tag === 'summary')
-    const summaryFallback = hasSummary ? '' : '<summary>Details</summary>\n'
+    // Fallback summary text — accordion's own `summary=` attr overrides the default
+    // English string so non-English pages can localize it.
+    const rawSummary = node.attrs?.summary
+    const summaryText = rawSummary
+      ? (rawSummary.type ? this.evalStaticExpr(rawSummary) : rawSummary)
+      : 'Details'
+    const summaryFallback = hasSummary ? '' : `<summary>${this.escape(String(summaryText))}</summary>\n`
     return `<details class="arc-accordion_${this.componentHash}">\n${summaryFallback}${this.emitChildren(node.children)}\n</details>`
   }
 
-  // Wrap an element that has a tooltip="" attr as a tooltip-anchor
+  // Wrap an element that has a tooltip="" attr as a tooltip-anchor.
+  // Add tabindex="0" so non-interactive wrapped elements (e.g. <span tooltip="...">)
+  // are keyboard-focusable and can surface the tooltip via :focus styles.
   emitTooltipAttr(node, tooltipText) {
     const id = `tip_${this.componentHash}_${this.reactiveCounter++}`
     const { tooltip: _t, ...attrsWithout } = node.attrs
     const inner = this.emitElement({ ...node, attrs: attrsWithout })
     return [
-      `<span class="arc-tooltip-anchor_${this.componentHash}" aria-describedby="${id}">`,
+      `<span class="arc-tooltip-anchor_${this.componentHash}" aria-describedby="${id}" tabindex="0">`,
       `  ${inner}`,
       `  <span role="tooltip" id="${id}" popover="hint">${this.escape(tooltipText)}</span>`,
       `</span>`,

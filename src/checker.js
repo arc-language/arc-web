@@ -226,6 +226,21 @@ class Checker {
       }
     }
 
+    // Form controls without an accessible name leave screen-reader users without
+    // any context for what to enter. Warn when no `aria-label`, `aria-labelledby`,
+    // `id` (presumed to be bound to an external <label for=...>), or
+    // `placeholder` (weakest acceptable hint) is present.
+    if (node.tag === 'input' || node.tag === 'select' || node.tag === 'textarea') {
+      const attrs = node.attrs ?? {}
+      const hasLabel = attrs['aria-label'] != null
+        || attrs['aria-labelledby'] != null
+        || attrs.id != null
+        || attrs.placeholder != null
+      if (!hasLabel) {
+        this.warn(`<${node.tag}> has no accessible name — add aria-label, aria-labelledby, id (with a sibling <label for=...>), or placeholder`, node)
+      }
+    }
+
     // Check event handler expressions
     for (const [key, value] of Object.entries(node.attrs ?? {})) {
       if (key.startsWith('on:') && value && typeof value === 'object') {

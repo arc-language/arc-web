@@ -439,13 +439,28 @@ page "T"
       assert.ok(html.includes('three'), `Expected "three"`)
     })
 
-    test('reactive for (on @state) emits list container with aria-live', async () => {
+    test('reactive for (on @state) emits list container', async () => {
       const src = `page "T"
   @state let items = []
   for item in items
     text "{item}"`
       const { html } = await compile(src)
-      assert.ok(html.includes('aria-live'), `Expected aria-live list container in:\n${html}`)
+      // aria-live is opt-in; default for reactive list is a plain container
+      assert.ok(html.match(/<div id="[^"]+"><\/div>/), `Expected list container div in:\n${html}`)
+    })
+
+    test('reactive for default does NOT emit aria-live (opt-in only)', async () => {
+      const src = `page "T"
+  @state let items = []
+  for item in items
+    text "{item}"`
+      const { html } = await compile(src)
+      // Default reactive for should produce a quiet list container (no aria-live)
+      // to avoid noisy screen-reader announcements on every mutation.
+      const listDiv = html.match(/<div id="_a\d+"[^>]*><\/div>/)
+      assert.ok(listDiv, `Expected list container in:\n${html}`)
+      assert.ok(!listDiv[0].includes('aria-live'),
+        `List container should not have aria-live by default: ${listDiv[0]}`)
     })
   })
 
