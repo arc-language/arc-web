@@ -328,7 +328,9 @@ class BuildExecutor {
       throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
     }
     // Block IPv6 private/loopback/link-local/ULA/IPv4-mapped ranges
-    if (hostname === '::1' ||
+    // '::' is the IPv6 unspecified address — Linux routes it to loopback,
+    // so it's a viable SSRF target equivalent to '::1' / '0.0.0.0'.
+    if (hostname === '::1' || hostname === '::' ||
         hostname.startsWith('fc') || hostname.startsWith('fd') ||
         hostname.startsWith('fe80') ||
         hostname.startsWith('::ffff:10.') || hostname.startsWith('::ffff:127.') ||
@@ -342,20 +344,24 @@ class BuildExecutor {
     }
 
     return new Promise((resolve, reject) => {
+      // settled must be hoisted to executor scope: error/timeout handlers fire
+      // before the response callback when connect-phase failures happen.
+      let settled = false
       const protocol = parsed.protocol === 'https:' ? https : http
       const req = protocol.get(url, (res) => {
         // Reject redirects explicitly: following them could bypass the SSRF blocklist
         if (res.statusCode >= 300 && res.statusCode < 400) {
           res.resume()
-          return reject(new Error(`@build fetch: redirects not allowed (${res.statusCode}): ${url}`))
+          if (!settled) { settled = true; reject(new Error(`@build fetch: redirects not allowed (${res.statusCode}): ${url}`)) }
+          return
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
           res.resume()
-          return reject(new Error(`@build fetch: HTTP ${res.statusCode} from ${url}`))
+          if (!settled) { settled = true; reject(new Error(`@build fetch: HTTP ${res.statusCode} from ${url}`)) }
+          return
         }
         const chunks = []
         let totalBytes = 0
-        let settled = false
         const MAX_BYTES = 10 * 1024 * 1024
         res.on('data', c => {
           totalBytes += c.length

@@ -18,11 +18,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-          cache: 'npm'
-      - name: Install dependencies
-        run: npm ci
-      - name: Audit dependencies
-        run: npm audit --audit-level=moderate
+      # Arc is a zero-dependency project — no install or audit needed.
+      # If devDependencies are added later, restore `cache: 'npm'`,
+      # `npm install`, and `npm audit` here.
       - name: Lint (syntax check)
         run: find src adp -name '*.js' | xargs node --check
       - name: Run tests

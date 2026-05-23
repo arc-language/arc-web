@@ -746,6 +746,17 @@ describe('BuildExecutor.doFetch — SSRF protection', () => {
     assert.throws(() => e.doFetch('http://[::1]/api'), /internal addresses not allowed/)
   })
 
+  test('rejects IPv6 unspecified address [::]', () => {
+    // Linux routes :: to loopback, so it's an SSRF-equivalent target to ::1
+    const e = exec()
+    assert.throws(() => e.doFetch('http://[::]/api'), /internal addresses not allowed/)
+  })
+
+  test('rejects IPv6 unspecified address with zero blocks [0:0:0:0:0:0:0:0]', () => {
+    const e = exec()
+    assert.throws(() => e.doFetch('http://[0:0:0:0:0:0:0:0]/api'), /internal addresses not allowed/)
+  })
+
   test('rejects IPv6 ULA range [fc00::1]', () => {
     const e = exec()
     assert.throws(() => e.doFetch('http://[fc00::1]/api'), /internal addresses not allowed/)

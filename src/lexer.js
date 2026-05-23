@@ -8,6 +8,8 @@ const _STR_ESCAPES = { n: '\n', t: '\t', r: '\r', '\\': '\\', '"': '"', "'": "'"
 // Hoisted character-class tests for hot lexer loops
 const _RE_DIGIT_UNDERSCORE = /[0-9_]/
 const _RE_DIGIT = /[0-9]/
+const _RE_DIGIT_START = /[0-9]/
+const _RE_IDENT_START = /[a-zA-Z_$]/
 const _RE_IDENT_CONT = /[a-zA-Z0-9_$]/
 const _RE_AT_CONT = /[a-zA-Z0-9_]/
 
@@ -206,13 +208,13 @@ class Lexer {
     }
 
     // Numbers
-    if (/[0-9]/.test(ch)) {
+    if (_RE_DIGIT_START.test(ch)) {
       this.tokenizeNumber()
       return true
     }
 
     // Identifiers and keywords
-    if (/[a-zA-Z_$]/.test(ch)) {
+    if (_RE_IDENT_START.test(ch)) {
       this.tokenizeIdent(ch)
       return true
     }

@@ -547,6 +547,15 @@ const RELOAD_SCRIPT = `<script>
 </script>`
 
 async function dev(projectDir) {
+  // Long-running process — log unhandled errors instead of letting Node kill us
+  // mid-rebuild. Build/check/deploy are one-shot and don't need these.
+  process.on('unhandledRejection', e => {
+    console.error(`arc: dev: unhandled rejection: ${e?.message ?? e}`)
+  })
+  process.on('uncaughtException', e => {
+    console.error(`arc: dev: uncaught exception: ${e?.message ?? e}`)
+  })
+
   await build(projectDir)
 
   const absDir = path.resolve(projectDir)
