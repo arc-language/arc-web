@@ -876,18 +876,23 @@ function findArcFiles(dir) {
   return results
 }
 
+// Public API: just `compile`. Internals are namespaced under `_internal` to
+// signal they are not a stability contract — they exist only so tests can
+// exercise them directly.
 module.exports = {
   compile,
-  resolveImports,
-  composeClientJs,
-  hashString,
-  injectAssets,
-  fmt,
-  findArcFiles,
-  newProject,
-  check,
-  build,
-  deploy,
-  formatError,
-  showSourceContext,
+  _internal: {
+    resolveImports,
+    composeClientJs,
+    hashString,
+    injectAssets,
+    fmt,
+    findArcFiles,
+    newProject,
+    check,
+    build,
+    deploy,
+    formatError,
+    showSourceContext,
+  },
 }

@@ -6,8 +6,8 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 
+const { compile, _internal } = require('../src/cli')
 const {
-  compile,
   resolveImports,
   composeClientJs,
   hashString,
@@ -15,7 +15,7 @@ const {
   fmt,
   findArcFiles,
   newProject,
-} = require('../src/cli')
+} = _internal
 
 const TMPDIR = os.tmpdir()
 
@@ -655,7 +655,7 @@ describe('cli — fatal error handling (subprocess)', () => {
 })
 
 describe('cli — formatError edge cases', () => {
-  const { formatError, showSourceContext } = require('../src/cli')
+  const { formatError, showSourceContext } = require('../src/cli')._internal
 
   test('formatError works without filename', () => {
     // Just ensure it doesn't throw
