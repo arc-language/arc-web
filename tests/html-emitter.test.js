@@ -41,10 +41,26 @@ describe('HTML Emitter', () => {
   })
 
   describe('text elements', () => {
-    test('heading emits <h2>', async () => {
+    test('heading emits <h2> by default', async () => {
       const { html } = await compile('page "T"\n  heading "Title"')
       assert.ok(html.includes('<h2'), `Expected <h2 in:\n${html}`)
       assert.ok(html.includes('Title'), `Expected "Title" in:\n${html}`)
+    })
+
+    test('heading size=1 emits <h1> and strips size attr', async () => {
+      const { html } = await compile('page "T"\n  heading size=1 "Big"')
+      assert.ok(html.includes('<h1'), `Expected <h1 in:\n${html}`)
+      assert.ok(!html.match(/<h1[^>]*size=/), 'size attr should be stripped from rendered tag')
+    })
+
+    test('heading size=4 emits <h4>', async () => {
+      const { html } = await compile('page "T"\n  heading size=4 "Medium"')
+      assert.ok(html.includes('<h4'))
+    })
+
+    test('heading size=99 (out of range) falls back to <h2>', async () => {
+      const { html } = await compile('page "T"\n  heading size=99 "X"')
+      assert.ok(html.includes('<h2'))
     })
 
     test('text emits <p>', async () => {
@@ -80,6 +96,17 @@ describe('HTML Emitter', () => {
       const { html } = await compile('page "T"\n  button "Click"')
       assert.ok(html.includes('<button'))
       assert.ok(html.includes('Click'))
+    })
+
+    test('button gets auto type="button" to prevent accidental form submits', async () => {
+      const { html } = await compile('page "T"\n  button "Click"')
+      assert.ok(html.includes('type="button"'), `Expected type="button" auto-injected: ${html}`)
+    })
+
+    test('button with explicit type="submit" is preserved', async () => {
+      const { html } = await compile('page "T"\n  form\n    button type="submit" "Send"')
+      assert.ok(html.includes('type="submit"'), `Expected explicit type=submit preserved: ${html}`)
+      assert.ok(!html.match(/type="submit"[^>]*type="button"/), 'should not double-inject')
     })
 
     test('link emits <a> with href', async () => {

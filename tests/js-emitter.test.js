@@ -89,14 +89,6 @@ describe('JS Emitter', () => {
       assert.ok(js.includes('let _doubled='), `Expected _doubled= in:\n${js}`)
     })
 
-    test('@computed emits _recompute_ function for updating DOM', async () => {
-      const { js } = await compile(`page "T"
-  @state let count = 0
-  @computed let doubled = count * 2
-  text "{doubled}"`)
-      assert.ok(js.includes('_recompute_doubled'), `Expected _recompute_doubled function in:\n${js}`)
-    })
-
     test('@computed is recomputed inside its @state dependency setter', async () => {
       const { js } = await compile(`page "T"
   @state let count = 0

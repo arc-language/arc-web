@@ -119,7 +119,10 @@ class EdgeRenderer {
     const spanIds = bindingExprs.map(({ id }) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
 
     const cssInline = `  html = html.replace('<link rel="stylesheet" href="styles.css">', \`<style>\${BASE_CSS.replace(/<\\/style>/gi, '<\\/style>')}</style>\`)`
-    const jsInline = `  if (CLIENT_JS) html = html.replace('<script src="app.js"></script>', \`<script>\${CLIENT_JS.replace(/<\\/script>/gi, '<\\/script>')}</script>\`)`
+    // BASE_HTML is captured before injectAssets adds the <script> tag, so we
+    // inject CLIENT_JS by prepending to </body> rather than replacing a tag
+    // that doesn't exist in the snapshotted HTML.
+    const jsInline = `  if (CLIENT_JS) html = html.replace('</body>', \`<script>\${CLIENT_JS.replace(/<\\/script>/gi, '<\\/script>')}</script></body>\`)`
 
     const escFn = [
       `function _esc(s) {`,

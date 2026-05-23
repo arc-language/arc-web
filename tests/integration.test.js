@@ -174,6 +174,16 @@ describe('integration: live example', () => {
     assert.ok(result.liveEdgeFunction.includes('fetch') || result.liveEdgeFunction.includes('_resolveData'),
       `expected fetch handler in renderer: ${result.liveEdgeFunction.slice(0, 200)}`)
   })
+
+  test('edge renderer injects CLIENT_JS before </body> (not via <script src="app.js">)', () => {
+    // Regression: prior code did html.replace('<script src="app.js"></script>', ...)
+    // but BASE_HTML never contained that tag (added by post-processing), so client
+    // reactive JS never reached the rendered page.
+    if (result.js?.trim()) {
+      assert.ok(result.liveEdgeFunction.includes("html.replace('</body>'"),
+        'renderer should inject CLIENT_JS by replacing </body> tag')
+    }
+  })
 })
 
 // ── chat ─────────────────────────────────────────────────────────────────────

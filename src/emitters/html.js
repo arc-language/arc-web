@@ -295,7 +295,19 @@ class HtmlEmitter {
       }
     }
 
-    const htmlTag = ELEMENT_MAP[tag] ?? tag
+    let htmlTag = ELEMENT_MAP[tag] ?? tag
+
+    // heading size=N → <hN>. Strip size so it doesn't render as an invalid HTML attr.
+    if (tag === 'heading' && staticAttrs.size != null) {
+      const rawSize = staticAttrs.size
+      const sizeVal = (rawSize && typeof rawSize === 'object' && rawSize.type)
+        ? this.evalStaticExpr(rawSize) : rawSize
+      const n = Number(sizeVal)
+      if (Number.isInteger(n) && n >= 1 && n <= 6) {
+        htmlTag = `h${n}`
+        delete staticAttrs.size
+      }
+    }
 
     // Skip allocations for elements with no layout or user classes (majority of elements)
     const baseClasses = ELEMENT_CLASSES[tag]
@@ -374,6 +386,13 @@ class HtmlEmitter {
       if (!attrs.loading) parts.push('loading="lazy"')
       if (!attrs.decoding) parts.push('decoding="async"')
       if (attrs.alt === undefined) parts.push('alt=""')
+    }
+
+    // <button> defaults to type="submit" inside a <form> per HTML spec.
+    // Arc buttons typically use on:click handlers — submit-by-default is a
+    // surprise. Inject type="button" unless the user explicitly opted in.
+    if (node.tag === 'button' && attrs.type === undefined) {
+      parts.push('type="button"')
     }
 
     const hrefVal = attrs.href && attrs.href.type ? this.evalStaticExpr(attrs.href) : attrs.href

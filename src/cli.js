@@ -835,7 +835,11 @@ async function main() {
     case 'deploy': {
       const targetIdx = args.indexOf('--target')
       const target = targetIdx !== -1 ? args[targetIdx + 1] : 'cloudflare'
-      const deployDir = args.find(a => !a.startsWith('--') && a !== args[targetIdx + 1]) ?? '.'
+      // When --target is absent, targetIdx === -1 and args[targetIdx+1] === args[0],
+      // which would wrongly exclude the first positional arg. Guard with the targetIdx check.
+      const deployDir = args.find(
+        a => !a.startsWith('--') && (targetIdx === -1 || a !== args[targetIdx + 1])
+      ) ?? '.'
       await deploy(deployDir, target)
       break
     }

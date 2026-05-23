@@ -119,19 +119,6 @@ class JsEmitter {
       parts.push(code)
     }
 
-    // Computed recompute functions
-    for (const c of computedDecls) {
-      const dependents = this.findComputedDependents(c.name, computedDecls, stateBindings)
-      if (dependents.length > 0) {
-        parts.push(`function _recompute_${c.name}(){`)
-        parts.push(`_${c.name}=${this.emitExpr(c.init)};`)
-        for (const b of dependents) {
-          parts.push(this.emitBindingUpdate(b))
-        }
-        parts.push('}')
-      }
-    }
-
     // Pre-build computed dependency adjacency: computedName → [computeds that directly depend on it]
     const computedAdj = new Map()
     for (const c of computedDecls) computedAdj.set(c.name, [])
@@ -176,37 +163,41 @@ class JsEmitter {
     }
 
     // bind:value two-way bindings
-    for (const b of stateBindings) {
-      if (b.kind !== 'bind') continue
-      const setterCall = b.bindRoot
-        ? (() => {
-            // Dotted path: generate a deep immutable update
-            // e.g. user.name → _set_user({..._user, name: _bv})
-            // e.g. user.profile.email → _set_user({..._user, profile:{..._user.profile, email:_bv}})
-            _assertSafeIdent(b.bindRoot, 'bind root')
-            const parts2 = b.expr.split('.')
-            const root = parts2[0]
-            const keys = parts2.slice(1)
-            let setter = `_bv`
-            for (let i = keys.length - 1; i >= 0; i--) {
-              // Use _ prefix for root so the runtime reads the state variable, not a bare name
-              const path = ['_' + root, ...keys.slice(0, i)].join('.')
-              setter = `{...((${path})??{}),${JSON.stringify(keys[i])}:${setter}}`
-            }
-            return `_set_${root}(${setter})`
-          })()
-        : `_set_${b.expr}(_bv)`
-      if (!b.bindRoot && !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(b.expr)) {
-        throw new Error(`Arc codegen: bind:value only supports simple variable names or dotted paths, got: ${JSON.stringify(b.expr)}`)
-      }
+    const bindBindings = stateBindings.filter(b => b.kind === 'bind')
+    if (bindBindings.length > 0) {
+      // Shared helper — emitted once, called per binding to cut ~250 bytes/binding
       parts.push(
-        `(function(){const _be=_el_${b.id};if(!_be)return;` +
-        `const _bevt=_be.tagName==='SELECT'||_be.type==='checkbox'||_be.type==='radio'?'change':'input';` +
-        `_be.addEventListener(_bevt,function(e){` +
-        `const _bv=_be.type==='checkbox'||_be.type==='radio'?e.target.checked:_be.type==='number'?parseFloat(e.target.value):e.target.value;` +
-        `if(_be.type!=='number'||!isNaN(_bv))${setterCall};` +
-        `});})();`
+        `function _arcBind(el,setter){if(!el)return;` +
+        `const t=el.tagName==='SELECT'||el.type==='checkbox'||el.type==='radio'?'change':'input';` +
+        `el.addEventListener(t,function(e){` +
+        `const v=el.type==='checkbox'||el.type==='radio'?e.target.checked:el.type==='number'?parseFloat(e.target.value):e.target.value;` +
+        `if(el.type!=='number'||!isNaN(v))setter(v);` +
+        `});}`
       )
+      for (const b of bindBindings) {
+        const setterCall = b.bindRoot
+          ? (() => {
+              // Dotted path: generate a deep immutable update
+              // e.g. user.name → _set_user({..._user, name: _bv})
+              // e.g. user.profile.email → _set_user({..._user, profile:{..._user.profile, email:_bv}})
+              _assertSafeIdent(b.bindRoot, 'bind root')
+              const parts2 = b.expr.split('.')
+              const root = parts2[0]
+              const keys = parts2.slice(1)
+              let setter = `_bv`
+              for (let i = keys.length - 1; i >= 0; i--) {
+                // Use _ prefix for root so the runtime reads the state variable, not a bare name
+                const path = ['_' + root, ...keys.slice(0, i)].join('.')
+                setter = `{...((${path})??{}),${JSON.stringify(keys[i])}:${setter}}`
+              }
+              return `_set_${root}(${setter})`
+            })()
+          : `_set_${b.expr}(_bv)`
+        if (!b.bindRoot && !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(b.expr)) {
+          throw new Error(`Arc codegen: bind:value only supports simple variable names or dotted paths, got: ${JSON.stringify(b.expr)}`)
+        }
+        parts.push(`_arcBind(_el_${b.id},function(_bv){${setterCall}});`)
+      }
     }
 
     // Initial render: set all reactive nodes to their initial values
@@ -253,13 +244,6 @@ class JsEmitter {
     }
 
     return false
-  }
-
-  findComputedDependents(computedName, computedDecls, stateBindings) {
-    return stateBindings.filter(b => {
-      const expr = b.expr ?? ''
-      return expr.includes(computedName)
-    })
   }
 
   exprReferences(expr, name) {
