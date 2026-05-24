@@ -96,10 +96,22 @@ describe('cli: composeClientJs', () => {
     assert.equal(result, reactive)
   })
 
-  test('includes ADP runtime when stubs are present', () => {
-    const result = composeClientJs('', 'const stub = () => {}', '')
-    assert.ok(result.includes('_adpEncode'), `Expected ADP runtime in result`)
-    assert.ok(result.includes('const stub'))
+  test('includes ADP runtime when a stub is actually called from reactive code', () => {
+    const stubs = 'async function getStats() { return await fetch("/_arc/fn/getStats") }'
+    const reactive = 'getStats().then(s => console.log(s))'
+    const result = composeClientJs(reactive, stubs, '')
+    assert.ok(result.includes('_adpEncode'), `Expected ADP runtime when stub is called`)
+    assert.ok(result.includes('getStats'))
+  })
+
+  test('strips ADP runtime + stubs when stubs are never called from client', () => {
+    // @server fn declared but only used by @live (resolved at edge render time) —
+    // the client bundle should NOT ship ADP or the stub.
+    const stubs = 'async function getStats() { return await fetch("/_arc/fn/getStats") }'
+    const reactive = 'document.querySelector("button").addEventListener("click", () => {})'
+    const result = composeClientJs(reactive, stubs, '')
+    assert.ok(!result.includes('_adpEncode'), `ADP runtime should be tree-shaken: ${result}`)
+    assert.ok(!result.includes('getStats'), `Unused stub should be stripped`)
   })
 
   test('includes ADP runtime when realtime is present', () => {
@@ -109,14 +121,18 @@ describe('cli: composeClientJs', () => {
   })
 
   test('combines all parts in order: runtime, stubs, reactive, realtime', () => {
-    const result = composeClientJs('REACT', 'STUBS', 'REALT')
+    const stubs = 'async function callMe() {}'
+    const reactive = '/*REACT*/ callMe()'
+    const realtime = '/*REALT*/'
+    const result = composeClientJs(reactive, stubs, realtime)
     const runtimePos = result.indexOf('_adpEncode')
-    const stubsPos = result.indexOf('STUBS')
+    const stubsPos = result.indexOf('callMe()')  // first match is in stub def, then in reactive
+    const stubDefPos = result.indexOf('async function callMe')
     const reactPos = result.indexOf('REACT')
     const realtPos = result.indexOf('REALT')
-    assert.ok(runtimePos < stubsPos)
-    assert.ok(stubsPos < reactPos)
-    assert.ok(reactPos < realtPos)
+    assert.ok(runtimePos >= 0 && runtimePos < stubDefPos, 'runtime before stub def')
+    assert.ok(stubDefPos < reactPos, 'stub def before reactive')
+    assert.ok(reactPos < realtPos, 'reactive before realtime')
   })
 })
 
@@ -774,12 +790,20 @@ describe('cli: dev server (subprocess + HTTP)', () => {
     }
   })
 
-  test('dev server serves /styles.css', async () => {
+  test('dev server serves /styles.css when CSS exceeds inline threshold', async () => {
+    // Small CSS is now inlined into <style> (no separate file written).
+    // To exercise the external file path, generate enough CSS to exceed the 14 KB
+    // critical-inlining threshold — pad with many style rules.
     const dir = mkTmpDir('devcss')
     const port = 13000 + Math.floor(Math.random() * 1000)
     let proc
     try {
-      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"\n  design\n    body\n      bg: red')
+      // .padN rules must be indented at 4 spaces (inside the design block at indent 2)
+      const pad = Array.from({ length: 500 }, (_, i) => `    .pad${i}\n      bg: red`).join('\n')
+      fs.writeFileSync(
+        path.join(dir, 'index.arc'),
+        `page "T"\n  text "x"\n  design\n    body\n      bg: red\n${pad}`
+      )
       proc = await startDevServer(dir, port)
       const r = await httpGet(port, '/styles.css')
       assert.equal(r.status, 200)

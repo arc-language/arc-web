@@ -1,15 +1,25 @@
 // ADP mini-runtime (auto-generated)
-function _adpEncode(v){const b=[];function w(x){if(x===null||x===undefined){b.push(0);}else if(x===true){b.push(1);}else if(x===false){b.push(2);}else if(typeof x==='number'){if(Number.isInteger(x)&&x>=0&&x<=255){b.push(3,x);}else if(Number.isInteger(x)){b.push(4,(x>>>24)&255,(x>>>16)&255,(x>>>8)&255,x&255);}else{b.push(5);const d=new DataView(new ArrayBuffer(8));d.setFloat64(0,x,false);for(let i=0;i<8;i++)b.push(d.getUint8(i));}}else if(typeof x==='string'){b.push(6);const e=new TextEncoder().encode(x);let l=e.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);e.forEach(c=>b.push(c));}else if(Array.isArray(x)){b.push(7);let l=x.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);x.forEach(w);}else if(typeof x==='object'){const ks=Object.keys(x);b.push(8);let l=ks.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);ks.forEach(k=>{const e=new TextEncoder().encode(k);let kl=e.length;while(kl>127){b.push((kl&127)|128);kl>>>=7;}b.push(kl);e.forEach(c=>b.push(c));w(x[k]);});}}w(v);return new Uint8Array(b);}
-function _adpDecode(buf){let p=0;function rv(){const t=buf[p++];if(t===0)return null;if(t===1)return true;if(t===2)return false;if(t===3)return buf[p++];if(t===4){const v=(buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3];p+=4;return v;}if(t===5){const d=new DataView(buf.buffer,buf.byteOffset+p,8);p+=8;return d.getFloat64(0,false);}if(t===6){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return new TextDecoder().decode(buf.subarray(p,p+=l));}if(t===7){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return Array.from({length:l},rv);}if(t===8){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}const o={};for(let i=0;i<l;i++){let kl=0,ks=0;while(true){const b=buf[p++];kl|=(b&127)<<ks;if(!(b&128))break;ks+=7;}const k=new TextDecoder().decode(buf.subarray(p,p+=kl));o[k]=rv();}return o;}throw new Error('ADP: unknown tag '+t);}return rv();}
+const _te=new TextEncoder();function _adpEncode(v){const b=[];function w(x){if(x===null||x===undefined){b.push(0);}else if(x===true){b.push(1);}else if(x===false){b.push(2);}else if(typeof x==='number'){if(Number.isInteger(x)&&x>=0&&x<=255){b.push(3,x);}else if(Number.isInteger(x)){b.push(4,(x>>>24)&255,(x>>>16)&255,(x>>>8)&255,x&255);}else{b.push(5);const d=new DataView(new ArrayBuffer(8));d.setFloat64(0,x,false);for(let i=0;i<8;i++)b.push(d.getUint8(i));}}else if(typeof x==='string'){b.push(6);const e=_te.encode(x);let l=e.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);e.forEach(c=>b.push(c));}else if(Array.isArray(x)){b.push(7);let l=x.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);x.forEach(w);}else if(typeof x==='object'){const ks=Object.keys(x);b.push(8);let l=ks.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);ks.forEach(k=>{const e=_te.encode(k);let kl=e.length;while(kl>127){b.push((kl&127)|128);kl>>>=7;}b.push(kl);e.forEach(c=>b.push(c));w(x[k]);});}}w(v);return new Uint8Array(b);}
+function _adpDecode(buf){let p=0;function rv(){const t=buf[p++];if(t===0)return null;if(t===1)return true;if(t===2)return false;if(t===3)return buf[p++];if(t===4){const v=(buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3];p+=4;return v;}if(t===5){const d=new DataView(buf.buffer,buf.byteOffset+p,8);p+=8;return d.getFloat64(0,false);}if(t===6){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return new TextDecoder().decode(buf.subarray(p,p+=l));}if(t===7){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return Array.from({length:l},rv);}if(t===8){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}const o={};for(let i=0;i<l;i++){let kl=0,ks=0;while(true){const b=buf[p++];kl|=(b&127)<<ks;if(!(b&128))break;ks+=7;}const k=new TextDecoder().decode(buf.subarray(p,p+=kl));const v=rv();if(k!=='__proto__'&&k!=='constructor'&&k!=='prototype')o[k]=v;}return o;}throw new Error('ADP: unknown tag '+t);}return rv();}
 async function sendMessage(text, sender) {
-  const _res = await fetch('/_arc/fn/sendMessage', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/x-adp'},
-    body: _adpEncode({text,sender})
-  })
-  if (!_res.ok) throw new Error(await _res.text())
-  const _buf = await _res.arrayBuffer()
-  return _adpDecode(new Uint8Array(_buf))
+  const _ctrl = new AbortController()
+  const _tid = setTimeout(() => _ctrl.abort(), 30000)
+  try {
+    const _res = await fetch('/_arc/fn/sendMessage', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-adp'},
+      body: _adpEncode({text,sender}),
+      signal: _ctrl.signal
+    })
+    if (!_res.ok) {
+      const _et = await _res.text()
+      let _em; try { _em = JSON.parse(_et).error ?? _et } catch { _em = _et }
+      throw new Error(_em)
+    }
+    const _buf = await _res.arrayBuffer()
+    if (_buf.byteLength > 10 * 1024 * 1024) throw new Error('Response too large')
+    return _adpDecode(new Uint8Array(_buf))
+  } finally { clearTimeout(_tid) }
 }
 (function(){
 let _message="";
@@ -18,19 +28,18 @@ const _el__a1=document.getElementById('_a1');
 const _el__a2=document.getElementById('_a2');
 function _set_message(v){
 _message=v;
-_el__a2.value=_message;
+if(document.activeElement!==_el__a2)_el__a2.value=_message;
 }
 function _set_username(v){
 _username=v;
 }
-document.getElementById('_a3').addEventListener('click',function(event){await sendMessage(_message,_username);});
-document.getElementById('_a2').addEventListener('input',function(e){
-_set_message(e.target.value);
-});
+(function(){const _ee=document.getElementById('_a3');if(_ee)_ee.addEventListener('click',function(event){await sendMessage(_message,_username);});})();
+function _arcBind(el,setter){if(!el)return;const t=el.tagName==='SELECT'||el.type==='checkbox'||el.type==='radio'?'change':'input';el.addEventListener(t,function(e){const v=el.type==='checkbox'||el.type==='radio'?e.target.checked:el.type==='number'?parseFloat(e.target.value):e.target.value;if(el.type!=='number'||!isNaN(v))setter(v);});}
+_arcBind(_el__a2,function(_bv){_set_message(_bv)});
 _el__a1.textContent=messages;
-_el__a2.value=_message;
+if(document.activeElement!==_el__a2)_el__a2.value=_message;
 })();
-// @realtime connections — auto-generated by Arc
+// @realtime connections: auto-generated by Arc
 (function() {
   function _rt_decode(buf) {
     // Reuse ADP decode if available, else JSON fallback
@@ -40,21 +49,22 @@ _el__a2.value=_message;
 
   // @realtime messages = channel("chat/general")
   let messages = null
+  let _retries_messages = 0
   ;(function _connect_messages() {
     const _url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/_arc/rt/${"chat/general"}`
     const _ws = new WebSocket(_url)
     _ws.binaryType = 'arraybuffer'
+    _ws.onopen = function() { _retries_messages = 0 }
     _ws.onmessage = function(e) {
       try {
         messages = _rt_decode(e.data)
         // Update DOM nodes that depend on messages
-      const _el = document.getElementById('_a1');
-      if (_el) _el.textContent = String(messages ?? '')
+      const _el__a1 = document.getElementById('_a1'); if (_el__a1) _el__a1.textContent = String(messages ?? '')
       } catch(_e) { console.warn('arc realtime:', _e) }
     }
     _ws.onclose = function() {
       // Auto-reconnect with exponential backoff
-      setTimeout(_connect_messages, Math.min(1000 * Math.pow(2, _ws._retries ?? 0), 30000))
+      setTimeout(_connect_messages, Math.min(1000 * Math.pow(2, Math.min(_retries_messages++, 5)), 30000))
     }
     _ws.onerror = function(e) { console.warn('arc realtime ws error:', e) }
   })()

@@ -188,8 +188,8 @@ describe('JS Emitter', () => {
       assert.ok(html.includes('<h2'))
       assert.ok(html.includes('<button'))
 
-      // CSS contains base layer
-      assert.ok(css.includes('@layer base'))
+      // CSS contains base styles (counter has no design block → @layer wrapper stripped)
+      assert.ok(css.includes('box-sizing'))
 
       // JS is non-empty (has reactive state)
       assert.ok(js.trim().length > 0, 'Expected non-empty JS for counter')

@@ -24,9 +24,19 @@ function makeDesignProgram(selector, props) {
 describe('CSS Emitter', () => {
 
   describe('base layer (via compile)', () => {
-    test('CSS output contains @layer base', async () => {
-      const { css } = await compile('page "T"')
+    test('CSS output contains @layer base when user has component styles', async () => {
+      // C5: @layer wrapping is stripped when only one layer is present.
+      // Add a user design block to force component layer → both layers wrap.
+      const { css } = await compile('page "T"\n  text "x"\ndesign\n  body\n    bg: red')
       assert.ok(css.includes('@layer base {'), `Expected @layer base { in:\n${css}`)
+      assert.ok(css.includes('@layer component'), `Expected @layer component in:\n${css}`)
+    })
+
+    test('@layer base wrapper stripped when no user CSS present', async () => {
+      const { css } = await compile('page "T"')
+      assert.ok(!css.includes('@layer base {'), `Expected no @layer wrapper for single-layer output`)
+      // Base styles still present, just unwrapped
+      assert.ok(css.includes('box-sizing: border-box'))
     })
 
     test('@layer base includes box-sizing reset', async () => {
@@ -39,15 +49,15 @@ describe('CSS Emitter', () => {
       assert.ok(css.includes('--arc-font-sans:'))
     })
 
-    test('@layer base includes arc-row flex utility', async () => {
-      const { css } = await compile('page "T"')
-      assert.ok(css.includes('.arc-row'))
-      assert.ok(css.includes('flex-direction: row'))
-    })
-
-    test('@layer base includes arc-col flex utility', async () => {
-      const { css } = await compile('page "T"')
-      assert.ok(css.includes('.arc-col'))
+    test('unused arc-* base utilities are tree-shaken from CSS', async () => {
+      // Base utility classes (.arc-row, .arc-col, .arc-sr-only, etc.) are only
+      // emitted in CSS when their bare class name appears in the HTML.
+      // Arc primitives always emit scoped variants (arc-row_HASH), so the
+      // unscoped utility is dead weight unless a user explicitly references it.
+      const { css } = await compile('page "T"\n  main\n    text "hello"')
+      assert.ok(!/\.arc-row\s*\{/.test(css), 'unused .arc-row should be stripped')
+      assert.ok(!/\.arc-col\s*\{/.test(css), 'unused .arc-col should be stripped')
+      assert.ok(!/\.arc-sr-only\s*\{/.test(css), 'unused .arc-sr-only should be stripped (user main, no auto h1)')
     })
 
     test('@layer base defines shadow CSS variables', async () => {

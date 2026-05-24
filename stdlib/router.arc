@@ -136,13 +136,11 @@ window.addEventListener("popstate", fn() {
 widget Router
   @state let routes = []
 
-  for route in routes {
+  for route in routes
     const result = matchRoute(route.path, _routerPath)
-    if result.matched {
+    if result.matched
       _routerParams = result.params
       route.component
-    }
-  }
 
 // Route declaration widget
 widget Route

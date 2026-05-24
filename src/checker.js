@@ -14,6 +14,9 @@ class Scope {
     }
     return false
   }
+  hasLocal(k) {
+    return this._own.has(k)
+  }
   get(k) {
     for (let s = this; s !== null; s = s._parent) {
       if (s._own.has(k)) return s._own.get(k)
@@ -66,9 +69,17 @@ class Checker {
   }
 
   check(program) {
-    // Collect all declared names at program level
-    const declared = new Scope() // name → node type
+    // Hoist all top-level names into scope BEFORE walking bodies, so forward
+    // references resolve correctly. Matches JS function-hoisting semantics.
+    const declared = new Scope()
+    for (const decl of program.declarations) {
+      if (decl.name && !declared.hasLocal(decl.name)) {
+        declared.set(decl.name, decl.type)
+      }
+    }
 
+    // Now walk and check each declaration's body. checkVarDecl uses hasLocal
+    // for duplicate detection to avoid false positives from the hoist pass.
     for (const decl of program.declarations) {
       this.checkDecl(decl, declared)
     }
@@ -109,9 +120,15 @@ class Checker {
 
   checkVarDecl(decl, declared) {
     const name = decl.name
-    if (declared.has(name)) {
+    // Duplicate detection: track lines we've seen each name at. The hoist pass
+    // doesn't track lines, so the first time a real decl arrives here is fine;
+    // a second decl with the same name + different line is a duplicate.
+    if (!this._declLines) this._declLines = new Map()
+    const firstLine = this._declLines.get(name)
+    if (firstLine != null && firstLine !== decl.line) {
       this.error(`Duplicate declaration: "${name}" already declared`, decl)
     } else {
+      this._declLines.set(name, decl.line)
       declared.set(name, decl.type)
     }
     if (decl.init) {
@@ -121,9 +138,12 @@ class Checker {
 
   checkFnDecl(decl, declared) {
     const name = decl.name
-    if (declared.has(name)) {
+    if (!this._declLines) this._declLines = new Map()
+    const firstLine = this._declLines.get(name)
+    if (firstLine != null && firstLine !== decl.line) {
       this.error(`Duplicate declaration: "${name}" already declared`, decl)
     } else {
+      this._declLines.set(name, decl.line)
       declared.set(name, decl.type)
     }
 
@@ -144,9 +164,12 @@ class Checker {
   checkClassDecl(decl, declared) {
     const name = decl.name
     if (name) {
-      if (declared.has(name)) {
+      if (!this._declLines) this._declLines = new Map()
+      const firstLine = this._declLines.get(name)
+      if (firstLine != null && firstLine !== decl.line) {
         this.error(`Duplicate declaration: "${name}" already declared`, decl)
       } else {
+        this._declLines.set(name, decl.line)
         declared.set(name, 'ClassDecl')
       }
     }
@@ -212,6 +235,12 @@ class Checker {
         this.checkExpr(node.condition, declared, {})
         this.checkTemplateBody(node.consequent ?? [], declared)
         if (node.alternate) this.checkTemplateBody(node.alternate ?? [], declared)
+        break
+      case 'VarDecl':
+        // const/let local to a widget or page body. Check the init expression,
+        // then add the name to scope so subsequent references resolve.
+        if (node.init) this.checkExpr(node.init, declared, {})
+        if (node.name) declared.set(node.name, 'VarDecl')
         break
       case 'TextNode':
         break

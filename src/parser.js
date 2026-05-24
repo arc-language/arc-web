@@ -113,7 +113,12 @@ class Parser {
   }
 
   eatIf(type) {
-    this.skipWhitespace()
+    // Don't skip whitespace if the target IS whitespace — would silently consume
+    // an arbitrary number of DEDENT/INDENT/NEWLINE tokens and break indentation
+    // tracking.
+    if (type !== T.DEDENT && type !== T.INDENT && type !== T.NEWLINE) {
+      this.skipWhitespace()
+    }
     if (this.tokens[this.pos]?.type === type) {
       return this.tokens[this.pos++]
     }
@@ -444,6 +449,11 @@ class Parser {
     if (t.type === T.UNLESS) return this.parseTemplateUnless()
     if (t.type === T.FOR) return this.parseTemplateFor()
     if (t.type === T.MATCH) return this.parseTemplateMatch()
+
+    // Local const/let inside a widget or page body — useful for derived values
+    // referenced by interpolations. Returns a VarDecl-style node that the
+    // checker can add to its scope.
+    if (t.type === T.CONST || t.type === T.LET) return this.parseVarDecl()
 
     // Raw HTML passthrough
     if (t.type === T.RAW) return this.parseRawNode()
@@ -794,6 +804,15 @@ class Parser {
       const pt = this.tokens[this.pos]
       if (!pt) break
 
+      // Bail out if we've slipped past the design block and into a top-level
+      // declaration. This prevents `design { ... }` followed by `const X = ...`
+      // from being swallowed when DEDENT handling is off by one.
+      if (
+        pt.type === T.CONST || pt.type === T.LET || pt.type === T.FN ||
+        pt.type === T.CLASS || pt.type === T.WIDGET || pt.type === T.PAGE ||
+        pt.type === T.IMPORT || pt.type === T.EXPORT
+      ) break
+
       // @condition (@mobile, @dark, @container)
       if (pt.type === T.AT_IDENT) {
         const cond = this.parseStyleCondition()
@@ -903,6 +922,15 @@ class Parser {
 
       const pt = this.tokens[this.pos]
       if (!pt) break
+
+      // Bail out if we've slipped past the style rule and into a top-level
+      // declaration. Same hazard as in parseDesign — fall-through pos++ below
+      // would otherwise eat the rest of the file.
+      if (
+        pt.type === T.CONST || pt.type === T.LET || pt.type === T.FN ||
+        pt.type === T.CLASS || pt.type === T.WIDGET || pt.type === T.PAGE ||
+        pt.type === T.IMPORT || pt.type === T.EXPORT
+      ) break
 
       // Nested rule or condition
       if (pt.type === T.AT_IDENT) {
@@ -1686,6 +1714,11 @@ class Parser {
     // Object literal
     if (t.type === T.LBRACE) {
       this.pos++
+      // Allow multi-line object literals — skip newlines and the optional INDENT/DEDENT
+      // pair the lexer emits when the body starts on the next line.
+      this.consumeNewlines()
+      while (this.tokens[this.pos]?.type === T.INDENT || this.tokens[this.pos]?.type === T.DEDENT) this.pos++
+      this.consumeNewlines()
       const props = []
       while (this.peekType() !== T.RBRACE && this.peekType() !== T.EOF) {
         if (this.tokens[this.pos]?.type === T.SPREAD) {
@@ -1726,6 +1759,8 @@ class Parser {
           }
         }
         this.eatIf(T.COMMA)
+        this.consumeNewlines()
+        while (this.tokens[this.pos]?.type === T.INDENT || this.tokens[this.pos]?.type === T.DEDENT) this.pos++
         this.consumeNewlines()
       }
       this.eat(T.RBRACE)

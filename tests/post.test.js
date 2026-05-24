@@ -26,8 +26,9 @@ describe('PostProcessor.inlineCriticalCss', () => {
     const css = '.x { color: red }'
     const result = pp.inlineCriticalCss(html, css)
     assert.ok(result.html.includes('<style>'), `Expected <style> in:\n${result.html}`)
-    assert.ok(result.html.includes('color: red'), `Expected inlined CSS`)
+    assert.ok(/color:\s*red/.test(result.html), `Expected inlined CSS color rule`)
     assert.ok(!result.html.includes('href="styles.css"'), `Expected stylesheet link removed`)
+    assert.strictEqual(result.cssInlined, true, 'cssInlined flag should be true for small CSS')
   })
 
   test('large CSS (above threshold) creates preload link + inline critical', () => {

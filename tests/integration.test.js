@@ -242,12 +242,12 @@ describe('integration: CSS structural correctness', () => {
     assert.ok(css.trim().length > 0)
   })
 
-  test('hello: CSS uses @layer', async () => {
+  test('hello: CSS contains base styles (with or without @layer wrapper)', async () => {
     const { css } = await buildExample('hello')
-    // Arc emits CSS in @layer blocks. The hello example has a design block,
-    // so CSS must be non-empty and contain @layer.
+    // hello has no design block, so C5 strips the @layer base wrapper.
+    // The base styles (box-sizing reset etc.) still emit.
     assert.ok(css.length > 0, 'hello example must produce CSS')
-    assert.ok(css.includes('@layer'), `expected @layer in CSS, got: ${css.slice(0, 200)}`)
+    assert.ok(css.includes('box-sizing'), `expected base styles in CSS, got: ${css.slice(0, 200)}`)
   })
 
   test('CSS has no syntax errors (basic bracket balance)', async () => {
