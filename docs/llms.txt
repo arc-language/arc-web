@@ -1,0 +1,71 @@
+# Arc
+
+> Arc is a compiled web language. It produces hand-tuned HTML, CSS, and JavaScript from `.arc` source — zero framework runtime, zero production dependencies. Use for: any web app where bundle size, build time, or per-request cost matters.
+
+This index is optimized for LLMs reading the Arc documentation. Read each file linked below for the relevant section.
+
+For a single-file dump of all documentation suitable for LLM context windows, see [`llms-full.txt`](llms-full.txt).
+
+## Getting started
+
+- [Installation](getting-started/installation.md): npm install -g arc-web; Node 20+; optional sharp for image pipeline
+- [Your first page](getting-started/first-page.md): 5-minute tutorial covering static, @state, @build, @live, design
+- [Core concepts](getting-started/concepts.md): the four data contexts, page/widget/design, mental model from React/Astro
+
+## Language reference
+
+- [Syntax with EBNF grammar](language/syntax.md): complete formal grammar; tokens; indentation rules; banned constructs
+- [Data contexts](language/data-contexts.md): @build / @state / @computed / @live / @realtime / @server / @worker / @session — when to use each
+- [Structure](language/structure.md): page/widget/design/import; element vocabulary (layout primitives, semantic HTML, native patterns)
+- [Design vocabulary](language/design-vocabulary.md): complete CSS-equivalent reference (spacing, sizing, layout, colors, typography, state, responsive, dark mode)
+- [Logic + control flow](language/logic.md): variables, functions, classes, if/unless/for/while/match, pipeline operator, Result type
+- [Reactive](language/reactive.md): bind:value, on:click, computed dependency graph, list rendering strategies
+- [Types](language/types.md): primitives, classes, generics, Result, none vs null, built-in field types (Email, Url, etc.)
+- [Standard library](language/stdlib.md): arc/router (View Transitions), arc/store (global state), arc/fetch (typed + ADP), arc/form, arc/icons
+
+## Features
+
+- [SEO + structured data](features/seo.md): canonical, OG, Twitter, JSON-LD; complete meta reference
+- [Image pipeline](features/images.md): AVIF/WebP/JPEG transcoding, smart format selection, dedup, layout-aware srcset, above-fold detection, dominant-color fill
+- [Edge rendering](features/edge-rendering.md): @live + @server; streaming response; Cloudflare/Deno/Bun/Node targets; @session validation
+- [Realtime](features/realtime.md): @realtime channels; ADP binary frames; auto-reconnect
+- [Multi-page sites](features/multi-page.md): arc build-site; shared CSS dedup; sitemap; prefetch + View Transitions
+- [Deployment](features/deployment.md): _headers manifest; Cloudflare Pages / Netlify / Bun / Node / Deno deploy steps
+- [Accessibility](features/accessibility.md): skip link, sr-only, prefers-reduced-motion, ARIA defaults, semantic HTML
+
+## Reference
+
+- [CLI](reference/cli.md): arc build / build-site / dev / check / new / deploy; flags; exit codes; env vars
+- [Configuration](reference/configuration.md): arc.config.json schema; site / csp / session / realtime / deploy / img keys
+- [Compile API](reference/compile-api.md): programmatic compile() function for build pipelines and tools
+- [ADP — Arc Data Protocol](reference/adp.md): binary wire format spec; type tags; encoder/decoder
+- [Error catalog](reference/errors.md): every emitted error and warning with cause and fix
+
+## Guides
+
+- [Migrating from React](guides/migrating-from-react.md): hooks → @state; useEffect → @live or @realtime; component → widget
+- [Migrating from Astro](guides/migrating-from-astro.md): frontmatter → @build; Image → img; getStaticPaths → file-per-route
+- [Migrating from vanilla HTML](guides/migrating-from-vanilla.md): progressive adoption; what Arc adds automatically
+
+## Recipes
+
+- [Auth flow](recipes/auth-flow.md): login → dashboard → logout with @session + @live + @server
+- [Forms](recipes/forms.md): validation, bind:value, server submit, multi-step, file upload, optimistic UI
+- [Routing](recipes/routing.md): file-per-route + arc build-site + prefetch + View Transitions; SPA-feel via arc/router
+- [Dark mode](recipes/dark-mode.md): @dark { ... } in design block; system preference + user toggle
+- [Interactive list](recipes/interactive-list.md): @state + @computed filter/sort/paginate; dependency graph
+- [API fetching](recipes/api-fetching.md): decision tree for @build vs @live vs @server vs @realtime; combinations
+- [Progressive disclosure](recipes/progressive-disclosure.md): native modal, tooltip, accordion — zero JS
+
+## Community
+
+- [Showcase](showcase.md): sites built with Arc + submission guide
+- [Comparisons](comparisons.md): honest side-by-side vs Next.js, Astro, SvelteKit, Vanilla
+
+## Internals
+
+- [Compile pipeline](internals/pipeline.md): full walk-through of all 17 compile stages
+- [Emitters](internals/emitters.md): HTML / CSS / JS / server emitter contracts and extension points
+- [Optimizer](internals/optimizer.md): static loop unrolling, dead code elimination, CSS/JS tree-shaking
+- [Image pipeline internals](internals/image-pipeline.md): F1-F5 implementation details; sharp integration
+- [Contributing](internals/contributing.md): test layout, coverage rules, PR checklist, project structure
