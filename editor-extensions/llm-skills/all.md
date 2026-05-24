@@ -1112,7 +1112,7 @@ Before filing, check `docs/reference/errors.md` for the exact error message. If 
 
 ## Check existing issues
 
-Search `github.com/arc-language/arc/issues` (open + closed) for keywords from the error message. Duplicates close fast; pointing at the existing issue is more useful than filing again.
+Search `github.com/arc-language/arc-web/issues` (open + closed) for keywords from the error message. Duplicates close fast; pointing at the existing issue is more useful than filing again.
 
 ## Template the user fills out
 
@@ -1148,9 +1148,9 @@ arc: error: index.arc:3:5: <error message>
 
 | Symptom | Right channel |
 | --- | --- |
-| Question "how do I do X?" | [GitHub Discussions](https://github.com/arc-language/arc/discussions) |
+| Question "how do I do X?" | [GitHub Discussions](https://github.com/arc-language/arc-web/discussions) |
 | Feature request | Issue with `feature_request.yml` template |
-| Security vulnerability | Privately via [security advisory](https://github.com/arc-language/arc/security/advisories/new) — NEVER public issue |
+| Security vulnerability | Privately via [security advisory](https://github.com/arc-language/arc-web/security/advisories/new) — NEVER public issue |
 | Documentation gap | Issue OR PR with the doc fix |
 | Behavior matches docs but you disagree with the design | Discussion first; if traction, RFC PR |
 
@@ -1190,7 +1190,7 @@ description: Use when a contributor wants to submit a PR to the Arc compiler its
 
 # arc-contributor-pr
 
-**When to use:** the user says "I want to fix a bug in Arc", "I'd like to add a feature to the compiler", "how do I contribute?". This is about contributing to `github.com/arc-language/arc` itself, NOT about writing Arc apps.
+**When to use:** the user says "I want to fix a bug in Arc", "I'd like to add a feature to the compiler", "how do I contribute?". This is about contributing to `github.com/arc-language/arc-web` itself, NOT about writing Arc apps.
 
 **Reference docs:** `CONTRIBUTING.md`, `docs/internals/contributing.md`, `docs/internals/pipeline.md`, `.github/PULL_REQUEST_TEMPLATE.md`.
 
@@ -1812,7 +1812,7 @@ Apply the universal **arc-self-verify** checklist. In addition:
 - [ ] **Fix matches the documented one** in `docs/reference/errors.md`. If you deviate, explain why.
 - [ ] **Side effects considered**: e.g., changing `null → none` may affect comparisons elsewhere; changing `switch → match` requires a catch-all.
 - [ ] **If the error is in stdlib** (`stdlib/*.arc`), tell the user it's a known stdlib issue — don't try to fix the stdlib unless they specifically asked. (Should be 0 errors after Arc 0.1.0.)
-- [ ] **If the error is unrecognized**: don't guess. Tell the user it's not in the catalog and recommend filing an issue at `github.com/arc-language/arc/issues`.
+- [ ] **If the error is unrecognized**: don't guess. Tell the user it's not in the catalog and recommend filing an issue at `github.com/arc-language/arc-web/issues`.
 
 
 ---

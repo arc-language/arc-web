@@ -5,7 +5,7 @@ Thanks for considering contributing! Arc is a small, focused project — every P
 ## Quick start
 
 ```bash
-git clone https://github.com/arc-language/arc
+git clone https://github.com/arc-language/arc-web
 cd arc
 node --test tests/*.test.js     # all 1070+ tests should pass
 ```
@@ -64,5 +64,5 @@ By contributing, you agree that your contributions are licensed under the [MIT L
 
 ## Questions?
 
-- General questions: [GitHub Discussions](https://github.com/arc-language/arc/discussions)
-- Bug reports / feature requests: [GitHub Issues](https://github.com/arc-language/arc/issues)
+- General questions: [GitHub Discussions](https://github.com/arc-language/arc-web/discussions)
+- Bug reports / feature requests: [GitHub Issues](https://github.com/arc-language/arc-web/issues)

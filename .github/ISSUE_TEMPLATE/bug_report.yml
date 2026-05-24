@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for reporting! Please fill in the fields below — they help us
-        reproduce quickly. For security issues, see [SECURITY.md](https://github.com/arc-language/arc/blob/main/SECURITY.md) instead.
+        reproduce quickly. For security issues, see [SECURITY.md](https://github.com/arc-language/arc-web/blob/main/SECURITY.md) instead.
 
   - type: input
     id: arc-version

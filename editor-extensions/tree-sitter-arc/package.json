@@ -8,12 +8,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/arc-language/arc.git",
+    "url": "https://github.com/arc-language/arc-web.git",
     "directory": "editor-extensions/tree-sitter-arc"
   },
-  "homepage": "https://github.com/arc-language/arc#readme",
+  "homepage": "https://github.com/arc-language/arc-web#readme",
   "bugs": {
-    "url": "https://github.com/arc-language/arc/issues"
+    "url": "https://github.com/arc-language/arc-web/issues"
   },
   "scripts": {
     "build": "tree-sitter generate",

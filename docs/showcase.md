@@ -1,6 +1,6 @@
 # Showcase
 
-Sites and apps built with Arc. Add yours by opening a PR or a [Discussion thread](https://github.com/arc-language/arc/discussions/categories/showcase).
+Sites and apps built with Arc. Add yours by opening a PR or a [Discussion thread](https://github.com/arc-language/arc-web/discussions/categories/showcase).
 
 > **Submission criteria:** the site/app should be (a) publicly accessible, (b) built primarily with Arc, and (c) something you're willing to be contacted about for case-study quotes.
 
@@ -47,7 +47,7 @@ These live in this repo under `examples/` and demonstrate specific patterns:
 
 ## Benchmarks
 
-For head-to-head comparisons with other frameworks (Next.js, Astro, vanilla HTML), see [`arc-bench/RESULTS.md`](https://github.com/arc-language/arc-bench/blob/main/RESULTS.md). Reproducible — every number ships with the harness used to generate it.
+For head-to-head comparisons with other frameworks (Next.js, Astro, vanilla HTML), see [`arc-bench/RESULTS.md`](https://github.com/arc-language/arc-web-bench/blob/main/RESULTS.md). Reproducible — every number ships with the harness used to generate it.
 
 ---
 

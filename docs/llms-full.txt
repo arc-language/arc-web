@@ -7232,7 +7232,7 @@ Arc is a small codebase (~5,200 lines of pure Node, zero production deps). Contr
 ## Setup
 
 ```bash
-git clone https://github.com/arc-language/arc
+git clone https://github.com/arc-language/arc-web
 cd arc
 npm install        # optional: only installs sharp for image pipeline tests
 ```
@@ -7394,7 +7394,7 @@ Arc draws inspiration from:
 
 # Showcase
 
-Sites and apps built with Arc. Add yours by opening a PR or a [Discussion thread](https://github.com/arc-language/arc/discussions/categories/showcase).
+Sites and apps built with Arc. Add yours by opening a PR or a [Discussion thread](https://github.com/arc-language/arc-web/discussions/categories/showcase).
 
 > **Submission criteria:** the site/app should be (a) publicly accessible, (b) built primarily with Arc, and (c) something you're willing to be contacted about for case-study quotes.
 
@@ -7441,7 +7441,7 @@ These live in this repo under `examples/` and demonstrate specific patterns:
 
 ## Benchmarks
 
-For head-to-head comparisons with other frameworks (Next.js, Astro, vanilla HTML), see [`arc-bench/RESULTS.md`](https://github.com/arc-language/arc-bench/blob/main/RESULTS.md). Reproducible — every number ships with the harness used to generate it.
+For head-to-head comparisons with other frameworks (Next.js, Astro, vanilla HTML), see [`arc-bench/RESULTS.md`](https://github.com/arc-language/arc-web-bench/blob/main/RESULTS.md). Reproducible — every number ships with the harness used to generate it.
 
 ---
 
@@ -7456,7 +7456,7 @@ Send a short writeup to `showcase@arc-language.dev` (replace with actual contact
 
 # Arc vs other web tools
 
-Honest side-by-side comparisons. Numbers from [`arc-bench/RESULTS.md`](https://github.com/arc-language/arc-bench/blob/main/RESULTS.md) — reproducible.
+Honest side-by-side comparisons. Numbers from [`arc-bench/RESULTS.md`](https://github.com/arc-language/arc-web-bench/blob/main/RESULTS.md) — reproducible.
 
 Quick table first; detailed sections below.
 
@@ -7645,7 +7645,7 @@ Arc's output is the same idea but auto-emits:
 
 ## When NOT to use Arc
 
-- **You need React Native / native mobile UI today** — Arc is web-only at 1.x. Webview-based mobile + desktop is on the 2.x [roadmap](https://github.com/arc-language/arc/blob/main/ROADMAP.md) but not shippable yet.
+- **You need React Native / native mobile UI today** — Arc is web-only at 1.x. Webview-based mobile + desktop is on the 2.x [roadmap](https://github.com/arc-language/arc-web/blob/main/ROADMAP.md) but not shippable yet.
 - **You're integrating into an existing React/Vue/Svelte app** — Arc replaces, doesn't embed
 - **You need full TypeScript types from npm libraries** — Arc has its own type system; `.ts` files aren't compilable input
 - **Your team's existing skills are React/Vue/etc.** — switching cost matters more than payload bytes for many projects
@@ -7658,6 +7658,6 @@ Arc's output is the same idea but auto-emits:
 - **Bytes:** Brotli level 11 of the assets the browser actually downloads
 - **Build time:** `time` of the equivalent CLI command, median of 3 runs
 - **Lighthouse:** mobile profile, simulated Slow 4G + 4× CPU
-- **Reproduce:** [`arc-bench/`](https://github.com/arc-language/arc-bench/blob/main/RESULTS.md) — every number ships with the test harness
+- **Reproduce:** [`arc-bench/`](https://github.com/arc-language/arc-web-bench/blob/main/RESULTS.md) — every number ships with the test harness
 
 If you find these numbers are out of date or wrong, open an issue with your repro setup and we'll investigate.

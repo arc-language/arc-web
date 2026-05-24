@@ -187,7 +187,7 @@ No annotations needed. The compiler reads the image at build time, picks formats
 
 ## 📊 Benchmarks
 
-Measured on Linux 6.8 / Node 24 / Chrome 149. Lighthouse mobile profile (Slow 4G + 4× CPU). Brotli level 11. Full data: [`arc-bench/RESULTS.md`](https://github.com/arc-language/arc-bench/blob/main/RESULTS.md).
+Measured on Linux 6.8 / Node 24 / Chrome 149. Lighthouse mobile profile (Slow 4G + 4× CPU). Brotli level 11. Full data: [`arc-bench/RESULTS.md`](https://github.com/arc-language/arc-web-bench/blob/main/RESULTS.md).
 
 ### Static docs site at full SEO parity (1 page, 20 sections)
 

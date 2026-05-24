@@ -11,7 +11,7 @@ From your Arc project root:
 cp node_modules/arc-web/editor-extensions/llm-skills/all.md .cursorrules
 
 # Or fetch directly from the Arc repo
-curl -o .cursorrules https://raw.githubusercontent.com/arc-language/arc/main/editor-extensions/llm-skills/all.md
+curl -o .cursorrules https://raw.githubusercontent.com/arc-language/arc-web/main/editor-extensions/llm-skills/all.md
 ```
 
 Cursor will now apply Arc's skills + verification checklist on every prompt.
@@ -43,7 +43,7 @@ Now Cursor applies each skill only when the user is working on `.arc` files, and
 If you don't want to commit the full bundle:
 
 ```bash
-echo "When working with .arc files, consult https://github.com/arc-language/arc/tree/main/editor-extensions/llm-skills for the canonical Arc skill set. Always apply the arc-self-verify checklist before returning code." > .cursorrules
+echo "When working with .arc files, consult https://github.com/arc-language/arc-web/tree/main/editor-extensions/llm-skills for the canonical Arc skill set. Always apply the arc-self-verify checklist before returning code." > .cursorrules
 ```
 
 This is the minimal hook. Cursor will fetch context on demand. Slower per-prompt but smaller in your repo.

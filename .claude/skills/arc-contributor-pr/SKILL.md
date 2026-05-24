@@ -5,7 +5,7 @@ description: Use when a contributor wants to submit a PR to the Arc compiler its
 
 # arc-contributor-pr
 
-**When to use:** the user says "I want to fix a bug in Arc", "I'd like to add a feature to the compiler", "how do I contribute?". This is about contributing to `github.com/arc-language/arc` itself, NOT about writing Arc apps.
+**When to use:** the user says "I want to fix a bug in Arc", "I'd like to add a feature to the compiler", "how do I contribute?". This is about contributing to `github.com/arc-language/arc-web` itself, NOT about writing Arc apps.
 
 **Reference docs:** `CONTRIBUTING.md`, `docs/internals/contributing.md`, `docs/internals/pipeline.md`, `.github/PULL_REQUEST_TEMPLATE.md`.
 

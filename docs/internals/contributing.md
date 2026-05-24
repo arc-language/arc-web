@@ -5,7 +5,7 @@ Arc is a small codebase (~5,200 lines of pure Node, zero production deps). Contr
 ## Setup
 
 ```bash
-git clone https://github.com/arc-language/arc
+git clone https://github.com/arc-language/arc-web
 cd arc
 npm install        # optional: only installs sharp for image pipeline tests
 ```

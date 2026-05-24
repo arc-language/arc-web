@@ -1,6 +1,6 @@
 # Arc vs other web tools
 
-Honest side-by-side comparisons. Numbers from [`arc-bench/RESULTS.md`](https://github.com/arc-language/arc-bench/blob/main/RESULTS.md) — reproducible.
+Honest side-by-side comparisons. Numbers from [`arc-bench/RESULTS.md`](https://github.com/arc-language/arc-web-bench/blob/main/RESULTS.md) — reproducible.
 
 Quick table first; detailed sections below.
 
@@ -189,7 +189,7 @@ Arc's output is the same idea but auto-emits:
 
 ## When NOT to use Arc
 
-- **You need React Native / native mobile UI today** — Arc is web-only at 1.x. Webview-based mobile + desktop is on the 2.x [roadmap](https://github.com/arc-language/arc/blob/main/ROADMAP.md) but not shippable yet.
+- **You need React Native / native mobile UI today** — Arc is web-only at 1.x. Webview-based mobile + desktop is on the 2.x [roadmap](https://github.com/arc-language/arc-web/blob/main/ROADMAP.md) but not shippable yet.
 - **You're integrating into an existing React/Vue/Svelte app** — Arc replaces, doesn't embed
 - **You need full TypeScript types from npm libraries** — Arc has its own type system; `.ts` files aren't compilable input
 - **Your team's existing skills are React/Vue/etc.** — switching cost matters more than payload bytes for many projects
@@ -202,6 +202,6 @@ Arc's output is the same idea but auto-emits:
 - **Bytes:** Brotli level 11 of the assets the browser actually downloads
 - **Build time:** `time` of the equivalent CLI command, median of 3 runs
 - **Lighthouse:** mobile profile, simulated Slow 4G + 4× CPU
-- **Reproduce:** [`arc-bench/`](https://github.com/arc-language/arc-bench/blob/main/RESULTS.md) — every number ships with the test harness
+- **Reproduce:** [`arc-bench/`](https://github.com/arc-language/arc-web-bench/blob/main/RESULTS.md) — every number ships with the test harness
 
 If you find these numbers are out of date or wrong, open an issue with your repro setup and we'll investigate.

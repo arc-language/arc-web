@@ -83,4 +83,4 @@ Apply the universal **arc-self-verify** checklist. In addition:
 - [ ] **Fix matches the documented one** in `docs/reference/errors.md`. If you deviate, explain why.
 - [ ] **Side effects considered**: e.g., changing `null → none` may affect comparisons elsewhere; changing `switch → match` requires a catch-all.
 - [ ] **If the error is in stdlib** (`stdlib/*.arc`), tell the user it's a known stdlib issue — don't try to fix the stdlib unless they specifically asked. (Should be 0 errors after Arc 0.1.0.)
-- [ ] **If the error is unrecognized**: don't guess. Tell the user it's not in the catalog and recommend filing an issue at `github.com/arc-language/arc/issues`.
+- [ ] **If the error is unrecognized**: don't guess. Tell the user it's not in the catalog and recommend filing an issue at `github.com/arc-language/arc-web/issues`.

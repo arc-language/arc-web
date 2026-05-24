@@ -17,7 +17,7 @@ Once Arc reaches 1.0, this table will list the last two minor versions as suppor
 
 Report privately via one of:
 
-1. **GitHub Security Advisories** (preferred): https://github.com/arc-language/arc/security/advisories/new
+1. **GitHub Security Advisories** (preferred): https://github.com/arc-language/arc-web/security/advisories/new
 2. **Email:** `security@arc-language.dev` (replace with actual maintainer contact)
 
 Include in your report:

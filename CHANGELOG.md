@@ -120,5 +120,5 @@ First public release. Compiler is feature-complete for static, reactive, server-
 ### Known issues
 - `arc check` against `stdlib/{form,icons,router}.arc` emits 21 errors + 2 warnings due to widget-parameter scoping in the checker — does not affect user code or compilation, only stdlib introspection. Fix planned for 0.2.
 
-[Unreleased]: https://github.com/arc-language/arc/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/arc-language/arc/releases/tag/v0.1.0
+[Unreleased]: https://github.com/arc-language/arc-web/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/arc-language/arc-web/releases/tag/v0.1.0

@@ -94,6 +94,6 @@ These have been raised and rejected as misaligned with Arc's design:
 
 ## Want to influence this roadmap?
 
-- **Quick feedback:** [GitHub Discussions](https://github.com/arc-language/arc/discussions)
-- **Specific feature request:** [Open an issue](https://github.com/arc-language/arc/issues/new/choose) with the feature template
+- **Quick feedback:** [GitHub Discussions](https://github.com/arc-language/arc-web/discussions)
+- **Specific feature request:** [Open an issue](https://github.com/arc-language/arc-web/issues/new/choose) with the feature template
 - **Wanting to drive an item?** Comment on the relevant issue (or open one) saying you'd like to take it on. Maintainers will assign + scope.

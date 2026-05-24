@@ -11,11 +11,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/arc-language/arc.git"
+    "url": "git+https://github.com/arc-language/arc-web.git"
   },
-  "homepage": "https://github.com/arc-language/arc#readme",
+  "homepage": "https://github.com/arc-language/arc-web#readme",
   "bugs": {
-    "url": "https://github.com/arc-language/arc/issues"
+    "url": "https://github.com/arc-language/arc-web/issues"
   },
   "author": "Arc contributors",
   "files": [

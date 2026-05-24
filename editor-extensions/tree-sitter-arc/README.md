@@ -1,6 +1,6 @@
 # tree-sitter-arc
 
-Tree-sitter grammar for the [Arc language](https://github.com/arc-language/arc).
+Tree-sitter grammar for the [Arc language](https://github.com/arc-language/arc-web).
 
 > **Status: scaffold / 0.1.0**
 >
@@ -25,7 +25,7 @@ Add to your `init.lua` (with nvim-treesitter):
 local parser_config = require('nvim-treesitter.parsers').get_parser_configs()
 parser_config.arc = {
   install_info = {
-    url = 'https://github.com/arc-language/arc',
+    url = 'https://github.com/arc-language/arc-web',
     files = { 'editor-extensions/tree-sitter-arc/src/parser.c' },
     branch = 'main',
   },
@@ -44,7 +44,7 @@ parser_config.arc = {
 
 ## Roadmap
 
-See the [main Arc roadmap](https://github.com/arc-language/arc/blob/main/ROADMAP.md).
+See the [main Arc roadmap](https://github.com/arc-language/arc-web/blob/main/ROADMAP.md).
 Tracking work for this grammar:
 
 - [ ] External scanner for INDENT / DEDENT / NEWLINE

@@ -81,13 +81,13 @@ cat editor-extensions/llm-skills/arc-self-verify.md \
 The skills are hosted at:
 
 ```
-https://github.com/arc-language/arc/tree/main/editor-extensions/llm-skills/
+https://github.com/arc-language/arc-web/tree/main/editor-extensions/llm-skills/
 ```
 
 Tools that support URL-based context (some browser-based LLMs, agentic frameworks) can fetch:
 
 ```
-https://raw.githubusercontent.com/arc-language/arc/main/editor-extensions/llm-skills/all.md
+https://raw.githubusercontent.com/arc-language/arc-web/main/editor-extensions/llm-skills/all.md
 ```
 
 ## Verify it's working

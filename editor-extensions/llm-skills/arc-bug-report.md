@@ -41,7 +41,7 @@ Before filing, check `docs/reference/errors.md` for the exact error message. If 
 
 ## Check existing issues
 
-Search `github.com/arc-language/arc/issues` (open + closed) for keywords from the error message. Duplicates close fast; pointing at the existing issue is more useful than filing again.
+Search `github.com/arc-language/arc-web/issues` (open + closed) for keywords from the error message. Duplicates close fast; pointing at the existing issue is more useful than filing again.
 
 ## Template the user fills out
 
@@ -77,9 +77,9 @@ arc: error: index.arc:3:5: <error message>
 
 | Symptom | Right channel |
 | --- | --- |
-| Question "how do I do X?" | [GitHub Discussions](https://github.com/arc-language/arc/discussions) |
+| Question "how do I do X?" | [GitHub Discussions](https://github.com/arc-language/arc-web/discussions) |
 | Feature request | Issue with `feature_request.yml` template |
-| Security vulnerability | Privately via [security advisory](https://github.com/arc-language/arc/security/advisories/new) — NEVER public issue |
+| Security vulnerability | Privately via [security advisory](https://github.com/arc-language/arc-web/security/advisories/new) — NEVER public issue |
 | Documentation gap | Issue OR PR with the doc fix |
 | Behavior matches docs but you disagree with the design | Discussion first; if traction, RFC PR |
 
