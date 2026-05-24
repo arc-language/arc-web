@@ -1,0 +1,82 @@
+name: Bug report
+description: Something the Arc compiler does wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please fill in the fields below — they help us
+        reproduce quickly. For security issues, see [SECURITY.md](https://github.com/arc-language/arc/blob/main/SECURITY.md) instead.
+
+  - type: input
+    id: arc-version
+    attributes:
+      label: Arc version
+      description: Output of `arc --version`
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: Output of `node --version`
+      placeholder: "v22.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other (describe in reproduction)
+    validations:
+      required: true
+
+  - type: textarea
+    id: source
+    attributes:
+      label: Minimal .arc source that triggers the bug
+      description: The smallest source file that reproduces the issue
+      render: arc
+      placeholder: |
+        page "Bug repro"
+          main
+            text "..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      render: bash
+      placeholder: arc build
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the full error message and any stack trace
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, related issues, hypotheses — all welcome

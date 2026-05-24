@@ -1,0 +1,31 @@
+{
+  "name": "tree-sitter-arc",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for the Arc language",
+  "main": "bindings/node",
+  "keywords": ["parser", "tree-sitter", "arc", "arc-language"],
+  "author": "Arc contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arc-language/arc.git",
+    "directory": "editor-extensions/tree-sitter-arc"
+  },
+  "homepage": "https://github.com/arc-language/arc#readme",
+  "bugs": {
+    "url": "https://github.com/arc-language/arc/issues"
+  },
+  "scripts": {
+    "build": "tree-sitter generate",
+    "test": "tree-sitter test"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.arc",
+      "file-types": ["arc"]
+    }
+  ],
+  "devDependencies": {
+    "tree-sitter-cli": "^0.22.0"
+  }
+}

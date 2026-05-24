@@ -1,0 +1,36 @@
+# Code owners for Arc.
+# This file defines who reviews PRs that touch each part of the repo.
+# Replace @arc-lang/maintainers with actual GitHub usernames when the team exists.
+
+# Default: anything not matched below
+*                              @arc-lang/maintainers
+
+# Core compiler — high-risk, requires careful review
+/src/lexer.js                  @arc-lang/maintainers
+/src/parser.js                 @arc-lang/maintainers
+/src/checker.js                @arc-lang/maintainers
+/src/optimizer.js              @arc-lang/maintainers
+/src/cli.js                    @arc-lang/maintainers
+
+# Emitters — output correctness matters
+/src/emitters/                 @arc-lang/maintainers
+/src/edge/                     @arc-lang/maintainers
+/src/realtime/                 @arc-lang/maintainers
+/src/img-pipeline.js           @arc-lang/maintainers
+
+# ADP wire format — versioning sensitive
+/adp/                          @arc-lang/maintainers
+
+# Stdlib — moderate risk, broader ownership OK once it grows
+/stdlib/                       @arc-lang/maintainers
+
+# Tests — anyone can extend; review still required
+/tests/                        @arc-lang/maintainers
+
+# Docs — broader ownership encouraged
+/docs/                         @arc-lang/maintainers
+
+# Build / release infrastructure — restricted
+/.github/workflows/            @arc-lang/maintainers
+/package.json                  @arc-lang/maintainers
+/CHANGELOG.md                  @arc-lang/maintainers

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions / discussion
+    url: https://github.com/arc-language/arc/discussions
+    about: Ask "how would I do X in Arc?" or talk through an idea before opening an issue.
+  - name: Security vulnerabilities
+    url: https://github.com/arc-language/arc/security/advisories/new
+    about: Report security issues privately. See SECURITY.md for details — please do NOT file public issues.
+  - name: Documentation
+    url: https://github.com/arc-language/arc/tree/main/docs
+    about: Full reference, recipes, internals. Search before filing.

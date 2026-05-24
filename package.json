@@ -1,7 +1,7 @@
 {
-  "name": "arc",
+  "name": "arc-web",
   "version": "0.1.0",
-  "description": "Arc — a new language for the web. Compiles to optimal HTML, CSS, and JS.",
+  "description": "Arc — a new language for the web. Compiles to optimal HTML, CSS, and JS. Zero runtime, zero dependencies.",
   "main": "src/cli.js",
   "bin": {
     "arc": "src/cli.js"
@@ -11,18 +11,60 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/arc-lang/arc"
+    "url": "git+https://github.com/arc-language/arc.git"
   },
-  "files": ["src", "stdlib", "adp"],
+  "homepage": "https://github.com/arc-language/arc#readme",
+  "bugs": {
+    "url": "https://github.com/arc-language/arc/issues"
+  },
+  "author": "Arc contributors",
+  "files": [
+    "src",
+    "stdlib",
+    "adp",
+    "docs",
+    ".claude/skills",
+    "editor-extensions/llm-skills",
+    "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md"
+  ],
   "scripts": {
     "test": "node --test 'tests/**/*.test.js'",
     "test:coverage": "node --test --experimental-test-coverage 'tests/**/*.test.js'",
     "lint": "node --check src/**/*.js adp/**/*.js",
     "build": "node src/cli.js build",
+    "build-site": "node src/cli.js build-site",
     "dev": "node src/cli.js dev",
-    "start": "node src/cli.js dev"
+    "start": "node src/cli.js dev",
+    "skills:build": "bash scripts/build-llm-skills.sh"
   },
-  "keywords": ["arc", "compiler", "web", "language"],
+  "keywords": [
+    "arc",
+    "arc-language",
+    "compiler",
+    "web",
+    "html",
+    "css",
+    "javascript",
+    "static-site-generator",
+    "edge",
+    "edge-rendering",
+    "cloudflare-workers",
+    "jamstack",
+    "zero-dependency",
+    "zero-runtime",
+    "web-framework"
+  ],
   "license": "MIT",
-  "devDependencies": {}
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "optionalDependencies": {
+    "sharp": "^0.34.5"
+  }
 }

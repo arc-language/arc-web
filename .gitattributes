@@ -1,0 +1,27 @@
+# Tell GitHub linguist + various tools how to classify Arc source files.
+# Once `.arc` is registered with github-linguist/linguist, this overrides
+# the auto-detection to use Arc-specific syntax highlighting on GitHub.
+*.arc linguist-language=Arc
+
+# Generated benchmark + dist outputs shouldn't count toward project stats
+arc-bench/** linguist-generated=true
+examples/*/dist/** linguist-generated=true
+
+# Tests don't count toward project stats either (common convention)
+tests/** linguist-detectable=false
+
+# Normalize line endings on checkin
+* text=auto eol=lf
+*.{cmd,[cC][mM][dD]} text eol=crlf
+*.{bat,[bB][aA][tT]} text eol=crlf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.avif binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

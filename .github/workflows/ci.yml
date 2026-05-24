@@ -28,9 +28,34 @@ jobs:
       - name: Test coverage
         run: find tests -name '*.test.js' | xargs node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=70
         if: matrix.node == 22
-      - name: Build smoke test
+      - name: Build smoke test (every example)
         if: matrix.node == 22
         run: |
-          node src/cli.js build examples/counter
-          test -s examples/counter/dist/index.html
-          grep -q '<!DOCTYPE html>' examples/counter/dist/index.html
+          for ex in examples/*/; do
+            rm -rf "$ex/dist"
+            node src/cli.js build "$ex"
+            test -s "$ex/dist/index.html"
+            grep -q '<!DOCTYPE html>' "$ex/dist/index.html"
+          done
+
+      - name: Build-site smoke test (multi-page command)
+        if: matrix.node == 22
+        run: |
+          mkdir -p /tmp/buildsite-smoke
+          cat > /tmp/buildsite-smoke/a.arc <<'EOF'
+          page "A" canonical="https://x.example/a"
+            main
+              heading "A"
+              link href="b.html" "→ B"
+          EOF
+          cat > /tmp/buildsite-smoke/b.arc <<'EOF'
+          page "B" canonical="https://x.example/b"
+            main
+              heading "B"
+              link href="a.html" "→ A"
+          EOF
+          node src/cli.js build-site /tmp/buildsite-smoke
+          test -s /tmp/buildsite-smoke/dist/sitemap.xml
+          test -s /tmp/buildsite-smoke/dist/_headers
+          test -s /tmp/buildsite-smoke/dist/robots.txt
+          ls /tmp/buildsite-smoke/dist/shared.*.css

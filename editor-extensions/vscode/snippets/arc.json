@@ -1,0 +1,126 @@
+{
+  "Page": {
+    "prefix": "page",
+    "body": [
+      "page \"${1:Title}\"",
+      "  main",
+      "    heading \"${2:Heading}\"",
+      "    text \"${3:Body text}\""
+    ],
+    "description": "Top-level page declaration"
+  },
+  "Widget": {
+    "prefix": "widget",
+    "body": [
+      "widget ${1:Name}(${2:param})",
+      "  ${3:card}",
+      "    ${0}"
+    ],
+    "description": "Reusable widget"
+  },
+  "@state": {
+    "prefix": "state",
+    "body": [
+      "@state let ${1:name} = ${2:value}"
+    ],
+    "description": "Reactive client state"
+  },
+  "@build": {
+    "prefix": "build",
+    "body": [
+      "@build const ${1:name} = ${2:value}"
+    ],
+    "description": "Compile-time inlined value"
+  },
+  "@computed": {
+    "prefix": "computed",
+    "body": [
+      "@computed let ${1:name} = ${2:expression}"
+    ],
+    "description": "Derived reactive value"
+  },
+  "@live": {
+    "prefix": "live",
+    "body": [
+      "@server fn ${1:getData}() -> ${2:any}",
+      "  return ${3:await fetch(\"/api\")}",
+      "",
+      "@live let ${4:data} = ${1:getData}()"
+    ],
+    "description": "Edge-rendered server value"
+  },
+  "@realtime": {
+    "prefix": "realtime",
+    "body": [
+      "@realtime let ${1:messages} = channel(\"${2:room}\")"
+    ],
+    "description": "WebSocket channel"
+  },
+  "@server fn": {
+    "prefix": "server",
+    "body": [
+      "@server fn ${1:name}(${2:args}) -> ${3:Result}",
+      "  ${0}"
+    ],
+    "description": "Server-side function callable from client"
+  },
+  "for loop": {
+    "prefix": "for",
+    "body": [
+      "for ${1:item} in ${2:items}",
+      "  ${0}"
+    ]
+  },
+  "if/else": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition}",
+      "  ${2:// then}",
+      "else",
+      "  ${3:// else}"
+    ]
+  },
+  "match": {
+    "prefix": "match",
+    "body": [
+      "match ${1:value} {",
+      "  ${2:case}  => ${3:result}",
+      "  _         => ${4:default}",
+      "}"
+    ]
+  },
+  "design block": {
+    "prefix": "design",
+    "body": [
+      "design",
+      "  ${1:card}",
+      "    p: ${2:24px}",
+      "    radius: ${3:md}",
+      "    bg: ${4:#fff}",
+      "    @dark { bg: ${5:#1a1a1a} }"
+    ]
+  },
+  "card": {
+    "prefix": "card",
+    "body": [
+      "card",
+      "  heading \"${1:Title}\"",
+      "  text \"${2:Body}\""
+    ]
+  },
+  "button on:click": {
+    "prefix": "button",
+    "body": [
+      "button on:click={ ${1:handler} } \"${2:Label}\""
+    ]
+  },
+  "form bind:value": {
+    "prefix": "form",
+    "body": [
+      "@state let ${1:value} = \"\"",
+      "form on:submit={ ${2:submit}(${1:value}) }",
+      "  input type=\"${3:text}\" bind:value={${1:value}} required",
+      "  button type=\"submit\" \"${4:Send}\""
+    ]
+  }
+}

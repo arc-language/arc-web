@@ -1,0 +1,66 @@
+name: Feature request
+description: Suggest a new feature, syntax, or compiler behavior
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Arc favors small, focused additions over large abstractions. Before
+        proposing major changes (new syntax, new data context, new emitter),
+        please skim [CONTRIBUTING.md](https://github.com/arc-language/arc/blob/main/CONTRIBUTING.md)
+        for what tends to be in or out of scope.
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Concrete use case
+      description: A real problem you're trying to solve. Not a theoretical capability.
+      placeholder: |
+        I'm building X. To do Y, I currently have to write Z, which is awkward
+        because…
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: What Arc currently lets you do (or not)
+      description: Show the current workaround, if any
+      render: arc
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed syntax or behavior
+      render: arc
+      placeholder: |
+        // sketch of how the new feature would look
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other frameworks (Astro, Next.js, Svelte, Vue, etc.) do for this; why their approach doesn't fit Arc
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Small (a few lines in one file)
+        - Medium (new helper or emitter rule)
+        - Large (new syntax, new emitter, breaking change)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to open a PR for this
+        - label: I'd like to discuss first; PR if approved

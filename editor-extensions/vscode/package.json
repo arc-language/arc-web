@@ -1,0 +1,49 @@
+{
+  "name": "arc-language-vscode",
+  "displayName": "Arc",
+  "description": "Syntax highlighting and snippets for the Arc language (.arc files)",
+  "version": "0.1.0",
+  "publisher": "arc-language",
+  "icon": "icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arc-language/arc.git",
+    "directory": "editor-extensions/vscode"
+  },
+  "homepage": "https://github.com/arc-language/arc#readme",
+  "bugs": {
+    "url": "https://github.com/arc-language/arc/issues"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": ["arc", "arc-language", "web", "compiler"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "arc",
+        "aliases": ["Arc", "arc"],
+        "extensions": [".arc"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "arc",
+        "scopeName": "source.arc",
+        "path": "./syntaxes/arc.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "arc",
+        "path": "./snippets/arc.json"
+      }
+    ]
+  }
+}
