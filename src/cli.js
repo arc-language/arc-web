@@ -12,6 +12,7 @@ const { CssEmitter } = require('./emitters/css')
 const { JsEmitter } = require('./emitters/js')
 const { ServerEmitter } = require('./emitters/server')
 const { EdgeRenderer } = require('./edge/renderer')
+const { ImagePipeline, collectImgRefs } = require('./img-pipeline')
 const { RealtimeEmitter } = require('./realtime/client')
 const { Checker } = require('./checker')
 const { postProcess } = require('./post')
@@ -138,13 +139,46 @@ async function compile(source, filename = '<input>', options = {}) {
   const optimizer = new Optimizer(buildContext)
   program = optimizer.optimizeProgram(program)
 
+  // 5b. Image pipeline: collect <img src=...> refs, run sharp-based pre-pass.
+  // Pipeline is a no-op when sharp is unavailable (returns null from emitPicture);
+  // emitter then falls back to plain <img>.
+  const imgRefs = collectImgRefs(program)
+  let imgPipeline = null
+  if (imgRefs.length > 0 && options.distDir) {
+    // Per-page meta.imageFormats opt-out: default ['avif','webp','original'].
+    // Find the first PageDecl with imageFormats meta (multi-page builds set this).
+    let formats
+    for (const d of program.declarations ?? []) {
+      if (d.type === 'PageDecl' && d.meta?.imageFormats) {
+        const v = d.meta.imageFormats
+        // Static array literal expected
+        if (v?.type === 'ArrayLiteral' || Array.isArray(v?.elements)) {
+          formats = (v.elements ?? v).map(e => e?.value ?? e).filter(Boolean)
+        }
+        break
+      }
+    }
+    imgPipeline = new ImagePipeline({
+      srcDir: projectDir,
+      outDir: options.distDir,
+      ...(formats ? { formats } : {}),
+    })
+    try { await imgPipeline.processAll(imgRefs) } catch (e) {
+      console.warn(`arc: image pipeline error: ${e.message}`)
+      imgPipeline = null
+    }
+  }
+
   // 6. HTML emit (also collects stateBindings + eventBindings)
-  const htmlEmitter = new HtmlEmitter({ hash, buildContext })
+  const htmlEmitter = new HtmlEmitter({ hash, buildContext, imgPipeline })
   const html = htmlEmitter.emitProgram(program)
 
   // 7. CSS emit
   const cssEmitter = new CssEmitter({ hash })
-  const css = cssEmitter.emitProgram(program)
+  let css = cssEmitter.emitProgram(program)
+  // Tree-shake unused base utility classes (sr-only, skip-link, row, col, etc.)
+  // based on what's actually referenced in the emitted HTML.
+  css = treeshakeBaseCss(css, html)
 
   // 8. @server function compilation
   const serverEmitter = new ServerEmitter({ hash })
@@ -182,10 +216,45 @@ const _te=new TextEncoder();function _adpEncode(v){const b=[];function w(x){if(x
 function _adpDecode(buf){let p=0;function rv(){const t=buf[p++];if(t===0)return null;if(t===1)return true;if(t===2)return false;if(t===3)return buf[p++];if(t===4){const v=(buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3];p+=4;return v;}if(t===5){const d=new DataView(buf.buffer,buf.byteOffset+p,8);p+=8;return d.getFloat64(0,false);}if(t===6){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return new TextDecoder().decode(buf.subarray(p,p+=l));}if(t===7){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return Array.from({length:l},rv);}if(t===8){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}const o={};for(let i=0;i<l;i++){let kl=0,ks=0;while(true){const b=buf[p++];kl|=(b&127)<<ks;if(!(b&128))break;ks+=7;}const k=new TextDecoder().decode(buf.subarray(p,p+=kl));const v=rv();if(k!=='__proto__'&&k!=='constructor'&&k!=='prototype')o[k]=v;}return o;}throw new Error('ADP: unknown tag '+t);}return rv();}
 `.trim()
 
+// Strip base utility CSS rules whose class names never appear in the emitted HTML.
+// Safe: utilities are simple single-class selectors; if the class isn't referenced,
+// the rule cannot match anything.
+function treeshakeBaseCss(css, html) {
+  const utilities = [
+    'arc-row', 'arc-col', 'arc-center', 'arc-spacer', 'arc-wrap',
+    'arc-sr-only', 'arc-skip-link',
+  ]
+  for (const cls of utilities) {
+    const used = new RegExp(`class\\s*=\\s*"[^"]*\\b${cls}\\b`).test(html)
+    if (used) continue
+    // Remove "  .arc-foo { ... }" lines (including any pseudo selectors like .arc-skip-link:focus)
+    const re = new RegExp(`^\\s*\\.${cls}(:[a-z-]+)?\\s*\\{[^}]*\\}\\s*\\n?`, 'gm')
+    css = css.replace(re, '')
+  }
+  return css
+}
+
 function composeClientJs(reactive, stubs, realtime) {
+  // Tree-shake: if the reactive/realtime code never actually invokes any
+  // @server stub function, the stubs + ADP runtime are dead weight. This
+  // happens when @server fns are only used by @live (resolved at edge render
+  // time, never called from client JS).
+  let stubsToShip = stubs
+  let adpNeeded = !!realtime
+  if (stubs) {
+    // Each stub starts with `async function NAME(` — collect names.
+    const names = [...stubs.matchAll(/async\s+function\s+([A-Za-z_$][\w$]*)\s*\(/g)].map(m => m[1])
+    const used = names.some(n => {
+      const re = new RegExp(`\\b${n}\\s*\\(`)
+      return re.test(reactive) || re.test(realtime || '')
+    })
+    if (!used) stubsToShip = ''
+    else adpNeeded = true
+  }
+
   const parts = []
-  if (stubs || realtime) parts.push(ADP_MINI_RUNTIME)
-  if (stubs) parts.push(stubs)
+  if (adpNeeded) parts.push(ADP_MINI_RUNTIME)
+  if (stubsToShip) parts.push(stubsToShip)
   if (reactive) parts.push(reactive)
   if (realtime) parts.push(realtime)
   return parts.join('\n')
@@ -265,7 +334,7 @@ async function build(projectDir) {
 
   let result
   try {
-    result = await compile(source, filename, { projectDir: absDir, sourceMap: sourceMapBuilder })
+    result = await compile(source, filename, { projectDir: absDir, distDir: path.join(absDir, 'dist'), sourceMap: sourceMapBuilder })
   } catch (e) {
     formatError(e, source, filename)
     process.exit(1)
@@ -275,14 +344,17 @@ async function build(projectDir) {
 
   // Post-process: inline critical CSS, minify HTML, resource hints
   const withAssets = injectAssets(result.html, result.js)
-  const { html: finalHtml, css: finalCss } = postProcess(withAssets, result.css)
+  const { html: finalHtml, css: finalCss, cssInlined } = postProcess(withAssets, result.css)
 
   try {
     fs.mkdirSync(distDir, { recursive: true })
     fs.writeFileSync(path.join(distDir, 'index.html'), finalHtml)
 
-    // Write CSS (still needed for non-inlined / cache reuse)
-    fs.writeFileSync(path.join(distDir, 'styles.css'), finalCss)
+    // Write CSS only when it isn't fully inlined into the HTML. When inlined,
+    // no <link> remains and the separate file would be dead weight on disk.
+    if (!cssInlined && finalCss && finalCss.trim()) {
+      fs.writeFileSync(path.join(distDir, 'styles.css'), finalCss)
+    }
 
     // Write JS (only if non-empty) + source map
     if (result.js.trim()) {
@@ -327,6 +399,200 @@ async function build(projectDir) {
   console.log(`  JS    ${jsSize === 0 ? '0 bytes (static)' : fmt(jsSize)}`)
   if (edgeSize > 0) console.log(`  Edge  ${fmt(edgeSize)} (@server functions)`)
   if (liveSize > 0) console.log(`  Live  ${fmt(liveSize)} (@live edge renderer)`)
+  console.log(`  → ${path.relative(process.cwd(), distDir)}/`)
+}
+
+// Split a (minified or not) CSS string into top-level rules — selectors and
+// @-rules counted as single units. Bracket-counting handles nesting correctly.
+function splitCssRules(css) {
+  const rules = []
+  let depth = 0, start = 0, inString = null
+  for (let i = 0; i < css.length; i++) {
+    const c = css[i]
+    if (inString) { if (c === inString && css[i - 1] !== '\\') inString = null; continue }
+    if (c === '"' || c === "'") { inString = c; continue }
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) {
+        const r = css.slice(start, i + 1).trim()
+        if (r) rules.push(r)
+        start = i + 1
+      }
+    }
+  }
+  // Any trailing content that wasn't terminated by a brace (rare, possibly invalid)
+  const tail = css.slice(start).trim()
+  if (tail) rules.push(tail)
+  return rules
+}
+
+// Multi-page site build: compiles every .arc in the directory, then extracts
+// CSS rules used by ALL pages into a single content-hashed shared.<sha>.css.
+// Each page's HTML references the shared file via <link> + inlines any
+// page-specific rules. Result: browser caches the shared CSS once across all
+// routes; per-page HTML is dramatically smaller.
+async function buildSite(projectDir) {
+  const absDir = path.resolve(projectDir)
+  const distDir = path.join(absDir, 'dist')
+
+  let arcFiles
+  try {
+    arcFiles = fs.readdirSync(absDir).filter(f => f.endsWith('.arc'))
+  } catch (e) {
+    console.error(`arc: cannot read ${absDir}: ${e.message}`); process.exit(1)
+  }
+  if (arcFiles.length === 0) {
+    console.error(`arc: no .arc files in ${absDir}`); process.exit(1)
+  }
+  if (arcFiles.length === 1) {
+    // Single page: defer to regular build
+    return build(projectDir)
+  }
+
+  // Compile each .arc into html + raw CSS (pre-post-process). We post-process
+  // ourselves below so the inlined-CSS strategy can be replaced with the
+  // shared-file strategy.
+  fs.mkdirSync(distDir, { recursive: true })
+  const compiled = []
+  for (const f of arcFiles) {
+    const source = fs.readFileSync(path.join(absDir, f), 'utf8')
+    let result
+    try {
+      result = await compile(source, f, { projectDir: absDir, distDir })
+    } catch (e) { formatError(e, source, f); process.exit(1) }
+    // Pull page-level meta (canonical, etc.) for sitemap emission
+    const pageDecl = result.program?.declarations?.find(d => d.type === 'PageDecl')
+    const metaResolved = {}
+    if (pageDecl?.meta) {
+      for (const [k, v] of Object.entries(pageDecl.meta)) {
+        if (v?.type === 'Literal') metaResolved[k] = v.value
+        else if (typeof v !== 'object') metaResolved[k] = v
+      }
+    }
+    compiled.push({
+      file: f,
+      slug: path.basename(f, '.arc'),
+      meta: metaResolved,
+      html: result.html, css: result.css, js: result.js,
+      edgeFunctions: result.edgeFunctions, liveEdgeFunction: result.liveEdgeFunction,
+    })
+  }
+
+  // Compute rule occurrences across all pages.
+  const rulesByPage = compiled.map(c => splitCssRules(c.css))
+  const ruleOccurrences = new Map()  // rule string → Set of page indices
+  rulesByPage.forEach((rules, pageIdx) => {
+    for (const r of rules) {
+      if (!ruleOccurrences.has(r)) ruleOccurrences.set(r, new Set())
+      ruleOccurrences.get(r).add(pageIdx)
+    }
+  })
+
+  // Rules used by ≥2 pages go into shared.css; rules unique to one page stay
+  // inline. (Used by ALL N pages would be most cacheable, but ≥2 captures more
+  // bytes; the shared file is content-hashed so cacheability isn't affected.)
+  const sharedRules = []
+  const pageOnlyRules = compiled.map(() => [])
+  for (const [rule, pages] of ruleOccurrences) {
+    if (pages.size >= 2) sharedRules.push(rule)
+    else for (const i of pages) pageOnlyRules[i].push(rule)
+  }
+
+  const { PostProcessor } = require('./post')
+  const pp = new PostProcessor()
+  const sharedCssMinified = pp.minifyCss(sharedRules.join('\n'))
+  const sharedSha = hashString(sharedCssMinified).toString(16).slice(0, 8)
+  const sharedFilename = sharedCssMinified ? `shared.${sharedSha}.css` : null
+  if (sharedFilename) {
+    fs.writeFileSync(path.join(distDir, sharedFilename), sharedCssMinified)
+  }
+
+  // Emit per-page HTML: replace the existing <link rel="stylesheet" href="styles.css">
+  // (or any inlined <style>) with a link to the shared file plus inline page-specific rules.
+  for (let i = 0; i < compiled.length; i++) {
+    const c = compiled[i]
+    const baseName = path.basename(c.file, '.arc')
+    const pageCss = pp.minifyCss(pageOnlyRules[i].join('\n'))
+    const withAssets = injectAssets(c.html, c.js)
+
+    // Start from the raw emitted HTML (still has <link rel="stylesheet" href="styles.css">)
+    // and patch it. We bypass postProcess.inlineCriticalCss to avoid full inlining.
+    const linkTag = sharedFilename ? `<link rel="stylesheet" href="${sharedFilename}">` : ''
+    const pageStyle = pageCss.trim() ? `<style>${pageCss.replace(/<\/style>/gi, '<\\/style>')}</style>` : ''
+    let html = withAssets.replace(
+      '<link rel="stylesheet" href="styles.css">',
+      linkTag + pageStyle
+    )
+    // Apply HTML minification + resource hints from post-processor
+    html = pp.addResourceHints(html)
+    html = pp.minifyHtml(html)
+
+    fs.writeFileSync(path.join(distDir, `${baseName}.html`), html)
+
+    if (c.js?.trim()) {
+      fs.writeFileSync(path.join(distDir, `${baseName}.js`), c.js)
+    }
+  }
+
+  // Auto-emit sitemap.xml + robots.txt from collected page metadata.
+  const { emit: emitSiteMeta } = require('./emitters/site-meta')
+  const { sitemap, robots, baseUrl } = emitSiteMeta(compiled.map(c => ({ slug: c.slug, meta: c.meta })))
+  if (sitemap) fs.writeFileSync(path.join(distDir, 'sitemap.xml'), sitemap)
+  if (robots) fs.writeFileSync(path.join(distDir, 'robots.txt'), robots)
+
+  // Auto-emit _headers (Cloudflare Pages / Netlify compatible). When this is
+  // emitted, the per-page CSP meta tag becomes redundant — strip it from HTML.
+  const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
+  const headersText = emitHeadersManifest({ sharedCssFilename: sharedFilename })
+  fs.writeFileSync(path.join(distDir, '_headers'), headersText)
+
+  // I2 post-pass: inject <link rel="prefetch"> for every same-site link target
+  // + <meta name="view-transition" content="same-origin"> for instant SPA-feel
+  // cross-page navigation. Also strip the now-redundant CSP meta tag.
+  const cspMetaRe = /<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/i
+  const allSlugs = new Set(compiled.map(c => c.slug + '.html'))
+  for (const c of compiled) {
+    const p = path.join(distDir, c.slug + '.html')
+    if (!fs.existsSync(p)) continue
+    let html = fs.readFileSync(p, 'utf8').replace(cspMetaRe, '')
+
+    // Find all <a href> targets pointing to another page in this site.
+    const linkedHrefs = new Set()
+    const aRe = /<a\s+[^>]*href="([^"]+)"/gi
+    let m
+    while ((m = aRe.exec(html))) {
+      const href = m[1].split('#')[0].split('?')[0]
+      if (allSlugs.has(href) && href !== c.slug + '.html') {
+        linkedHrefs.add(href)
+      }
+    }
+
+    // Build injection payload
+    const prefetchTags = [...linkedHrefs]
+      .map(h => `<link rel="prefetch" href="${h}">`)
+      .join('')
+    const viewTransition = c.meta?.viewTransitions === false
+      ? ''
+      : '<meta name="view-transition" content="same-origin">'
+    const inject = viewTransition + prefetchTags
+    if (inject) {
+      html = html.replace('</head>', inject + '</head>')
+    }
+    fs.writeFileSync(p, html)
+  }
+
+  // Stats summary
+  const htmlBytes = compiled.reduce((s, c, i) => {
+    const p = path.join(distDir, path.basename(c.file, '.arc') + '.html')
+    return s + (fs.existsSync(p) ? fs.statSync(p).size : 0)
+  }, 0)
+  const sharedBytes = sharedFilename ? fs.statSync(path.join(distDir, sharedFilename)).size : 0
+
+  console.log(`arc: built site (${compiled.length} pages)`)
+  console.log(`  HTML  ${fmt(htmlBytes)} total (${compiled.length} files)`)
+  if (sharedFilename) console.log(`  CSS   ${fmt(sharedBytes)} shared (${sharedFilename})`)
+  if (sitemap) console.log(`  SEO   sitemap.xml (${compiled.filter(c => c.meta.canonical).length} urls) + robots.txt`)
   console.log(`  → ${path.relative(process.cwd(), distDir)}/`)
 }
 
@@ -823,6 +1089,10 @@ async function main() {
       await build(args[0] ?? '.')
       break
 
+    case 'build-site':
+      await buildSite(args[0] ?? '.')
+      break
+
     case 'check':
       if (args.length === 0) {
         const found = findArcFiles('.')
@@ -873,6 +1143,7 @@ async function main() {
       console.log('')
       console.log('Usage:')
       console.log('  arc build [dir]     Compile to HTML/CSS/JS')
+      console.log('  arc build-site [dir] Build all .arc files in dir with shared CSS + sitemap + _headers')
       console.log('  arc dev [dir]       Build and watch for changes')
       console.log('  arc check [files]   Type-check without emitting')
       console.log('  arc new <name>      Create a new Arc project (--template default|counter|blog)')

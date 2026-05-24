@@ -78,17 +78,18 @@ class EdgeRenderer {
   }
 
   emitLiveResolver(liveDecls) {
-    const assignments = liveDecls.map(d => {
-      const call = this.jsEmitter.emitExpr(d.init)
-      return `  const ${d.name} = await (${call})`
-    }).join('\n')
+    // Resolve all @live decls in parallel — they're independent by construction
+    // (each one calls a server/fetch fn; the resolver is the *only* place to
+    // parallelize, since user code can't `await Promise.all` declaratively).
+    const calls = liveDecls.map(d => `(${this.jsEmitter.emitExpr(d.init)})`).join(', ')
+    const names = liveDecls.map(d => d.name).join(', ')
 
     return [
       `async function _resolveData(request) {`,
       `  const _session = request._arc_session ?? {}`,
       `  try {`,
-      assignments,
-      `    return { ${liveDecls.map(d => d.name).join(', ')} }`,
+      `    const [${names}] = await Promise.all([${calls}])`,
+      `    return { ${names} }`,
       `  } catch (e) {`,
       `    console.error('[arc] @live data error:', e instanceof Error ? e.message : String(e))
     return { __arc_render_error__: true }`,
@@ -166,26 +167,58 @@ class EdgeRenderer {
 
   emitFetchHandler() {
     return [
+      `// Streaming HTML: flush <head> immediately, then await @live data, then flush body.`,
+      `// On any network with >0 latency to the data source, the browser starts parsing`,
+      `// the head (CSS, fonts, preconnects) before the data round-trip completes.`,
+      `function _splitHeadBody(html) {`,
+      `  const i = html.indexOf('</head>')`,
+      `  if (i === -1) return { head: '', rest: html }`,
+      `  const end = i + '</head>'.length`,
+      `  let head = html.slice(0, end)`,
+      `  head = head.replace('<link rel="stylesheet" href="styles.css">', \`<style>\${BASE_CSS.replace(/<\\/style>/gi, '<\\/style>')}</style>\`)`,
+      `  return { head, rest: html.slice(end) }`,
+      `}`,
+      ``,
+      `const _RESPONSE_HEADERS = {`,
+      `  'Content-Type': 'text/html; charset=utf-8',`,
+      `  'Cache-Control': 'private, no-cache',`,
+      `  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",`,
+      `  'X-Content-Type-Options': 'nosniff',`,
+      `  'X-Frame-Options': 'SAMEORIGIN',`,
+      `  'Referrer-Policy': 'strict-origin-when-cross-origin',`,
+      `  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',`,
+      `  'Transfer-Encoding': 'chunked',`,
+      `}`,
+      ``,
       `// WinterCG fetch handler (Cloudflare Workers / Deno Deploy / Bun)`,
       `export default {`,
       `  async fetch(request, env, ctx) {`,
       `    try {`,
-      `      const data = await _resolveData(request)`,
-      `      if (data.__arc_render_error__) {`,
-      `        return new Response('Internal Server Error', { status: 500 })`,
-      `      }`,
-      `      const html = _fillHtml(data)`,
-      `      return new Response(html, {`,
-      `        headers: {`,
-      `          'Content-Type': 'text/html; charset=utf-8',`,
-      `          'Cache-Control': 'private, no-cache',`,
-      `          'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",`,
-      `          'X-Content-Type-Options': 'nosniff',`,
-      `          'X-Frame-Options': 'SAMEORIGIN',`,
-      `          'Referrer-Policy': 'strict-origin-when-cross-origin',`,
-      `          'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',`,
+      `      const enc = new TextEncoder()`,
+      `      const { head, rest } = _splitHeadBody(BASE_HTML)`,
+      `      const stream = new ReadableStream({`,
+      `        async start(controller) {`,
+      `          // Flush head immediately — browser starts parsing CSS / fonts now`,
+      `          controller.enqueue(enc.encode(head))`,
+      `          try {`,
+      `            const data = await _resolveData(request)`,
+      `            if (data.__arc_render_error__) {`,
+      `              controller.enqueue(enc.encode('<body><!-- @live data error --></body></html>'))`,
+      `              controller.close(); return`,
+      `            }`,
+      `            // Fill spans + inline JS, then emit body remainder`,
+      `            const filled = _fillHtml(data)`,
+      `            const { rest: filledRest } = _splitHeadBody(filled)`,
+      `            controller.enqueue(enc.encode(filledRest))`,
+      `            controller.close()`,
+      `          } catch (e) {`,
+      `            console.error('[arc] edge render error:', e instanceof Error ? e.message : String(e))`,
+      `            controller.enqueue(enc.encode('<body><!-- render error --></body></html>'))`,
+      `            controller.close()`,
+      `          }`,
       `        },`,
       `      })`,
+      `      return new Response(stream, { headers: _RESPONSE_HEADERS })`,
       `    } catch (e) {`,
       `      console.error('[arc] edge render error:', e instanceof Error ? e.message : String(e))`,
       `      return new Response('Internal Server Error', { status: 500 })`,
@@ -193,8 +226,8 @@ class EdgeRenderer {
       `  }`,
       `}`,
       ``,
-      `// Node.js / Bun / Deno adapter`,
-      `if (typeof module !== 'undefined') module.exports = { _resolveData, _fillHtml }`,
+      `// Node.js / Bun / Deno adapter (non-streaming fallback for direct require())`,
+      `if (typeof module !== 'undefined') module.exports = { _resolveData, _fillHtml, _splitHeadBody }`,
     ].join('\n')
   }
 }

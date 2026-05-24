@@ -240,7 +240,14 @@ class CssEmitter {
       .filter(Boolean)
       .join('\n')
 
-    const baseCSS = this.baseStyles ? this.emitBase() : ''
+    let baseCSS = this.baseStyles ? this.emitBase() : ''
+
+    // C5: when there are no user component rules, the @layer base { } wrapper
+    // serves no cascade purpose — strip it. Saves ~20 bytes raw.
+    if (baseCSS && rules.length === 0) {
+      const m = baseCSS.match(/^@layer base \{([\s\S]*)\}\s*$/)
+      if (m) baseCSS = m[1].trim()
+    }
 
     return [
       baseCSS,

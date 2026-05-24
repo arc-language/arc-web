@@ -18,8 +18,7 @@ class PostProcessor {
 
   // Main entry point: returns { html, css }
   process(html, css) {
-    let result = { html, css }
-    result = this.inlineCriticalCss(result.html, result.css)
+    let result = this.inlineCriticalCss(html, css)
     result.html = this.addResourceHints(result.html)
     result.html = this.minifyHtml(result.html)
     return result
@@ -33,18 +32,19 @@ class PostProcessor {
   // When CSS is small (<= threshold), just inline all of it: no split needed.
 
   inlineCriticalCss(html, css) {
-    if (!css || !css.trim()) return { html, css }
+    if (!css || !css.trim()) return { html, css, cssInlined: false }
 
     const cssBytes = Buffer.byteLength(css)
 
     // Escape </style> sequences that could break out of inline style tags
     const safeInline = (s) => s.replace(/<\/style>/gi, '<\\/style>')
 
-    // Small CSS: inline everything, no external file needed
+    // Small CSS: inline everything (minified), no external file needed
     if (cssBytes <= this.criticalCssThreshold) {
+      const minified = this.minifyCss(css)
       const inlined = html
-        .replace('<link rel="stylesheet" href="styles.css">', `<style>${safeInline(css)}</style>`)
-      return { html: inlined, css }
+        .replace('<link rel="stylesheet" href="styles.css">', `<style>${safeInline(minified)}</style>`)
+      return { html: inlined, css, cssInlined: true }
     }
 
     // Large CSS: split critical (@layer base + first component layer) from rest
@@ -56,10 +56,33 @@ class PostProcessor {
 
     const inlined = html.replace(
       '<link rel="stylesheet" href="styles.css">',
-      `<style>${safeInline(critical)}</style>\n${preload}`
+      `<style>${safeInline(this.minifyCss(critical))}</style>\n${preload}`
     )
 
-    return { html: inlined, css }
+    return { html: inlined, css, cssInlined: false }
+  }
+
+  // Conservative CSS minifier — strips comments, collapses whitespace, removes
+  // spaces around { } : ; , and the trailing ; before }. Preserves string content.
+  minifyCss(css) {
+    // Pull out strings so we don't mangle their content
+    const strings = []
+    let s = css.replace(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g, (m) => {
+      strings.push(m)
+      return `__S${strings.length - 1}__`
+    })
+    // Strip /* ... */ comments
+    s = s.replace(/\/\*[\s\S]*?\*\//g, '')
+    // Collapse all whitespace runs to a single space
+    s = s.replace(/\s+/g, ' ')
+    // Remove spaces adjacent to syntactic tokens
+    s = s.replace(/\s*([{}:;,>+~])\s*/g, '$1')
+    // Drop trailing ; right before }
+    s = s.replace(/;}/g, '}')
+    s = s.trim()
+    // Restore strings
+    s = s.replace(/__S(\d+)__/g, (_, i) => strings[parseInt(i, 10)])
+    return s
   }
 
   splitCriticalCss(css) {

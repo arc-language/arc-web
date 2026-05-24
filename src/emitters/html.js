@@ -109,6 +109,9 @@ class HtmlEmitter {
     this.indent = 0
     this.widgets = new Map()      // name → WidgetDecl
     this.currentAttrs = {}        // @attr values for current widget invocation
+    this.imgPipeline = options.imgPipeline ?? null  // optional ImagePipeline instance
+    this._imgOrdinal = 0          // increments for each img encountered (for above-fold detection)
+    this._sawSection = false      // toggles true after first <section>
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -134,6 +137,20 @@ class HtmlEmitter {
     const title = node.title ? this.evalStaticExpr(node.title) : 'Arc App'
     const lang = node.meta?.lang ? this.evalStaticExpr(node.meta.lang) : 'en'
     const description = node.meta?.description ? this.evalStaticExpr(node.meta.description) : ''
+    const meta = node.meta ?? {}
+    const evalMeta = (k) => meta[k] ? this.evalStaticExpr(meta[k]) : ''
+    const seo = {
+      canonical: evalMeta('canonical'),
+      image: evalMeta('image'),
+      author: evalMeta('author'),
+      published: evalMeta('published'),
+      modified: evalMeta('modified'),
+      keywords: evalMeta('keywords'),
+      schemaType: evalMeta('schemaType') || (meta.schemaType ? 'Article' : ''),
+      twitterSite: evalMeta('twitterSite'),
+      ogType: evalMeta('ogType') || 'website',
+      siteName: evalMeta('siteName'),
+    }
 
     // Don't double-wrap if the page already has a top-level <main>
     const hasUserMain = (node.body ?? []).some(
@@ -152,18 +169,48 @@ class HtmlEmitter {
 
     const bodyContent = this.emitChildren(bodyNodes)
 
+    // Build JSON-LD only when a schemaType was requested
+    const jsonLd = seo.schemaType ? {
+      '@context': 'https://schema.org',
+      '@type': seo.schemaType,
+      name: title,
+      headline: title,
+      ...(description && { description }),
+      ...(seo.image && { image: seo.image }),
+      ...(seo.author && { author: { '@type': 'Person', name: seo.author } }),
+      ...(seo.published && { datePublished: seo.published }),
+      ...(seo.modified && { dateModified: seo.modified }),
+      ...(seo.canonical && { url: seo.canonical }),
+    } : null
+
     return [
       '<!DOCTYPE html>',
       `<html lang="${this.escape(lang)}">`,
       '<head>',
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
+      '<meta name="robots" content="index,follow">',
       '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'; object-src \'none\'; base-uri \'self\'; form-action \'self\';">',
       `<title>${this.escape(title)}</title>`,
       description ? `<meta name="description" content="${this.escape(description)}">` : '',
+      seo.keywords ? `<meta name="keywords" content="${this.escape(seo.keywords)}">` : '',
+      seo.author ? `<meta name="author" content="${this.escape(seo.author)}">` : '',
+      seo.canonical ? `<link rel="canonical" href="${this.escape(seo.canonical)}">` : '',
+      // Open Graph
       `<meta property="og:title" content="${this.escape(title)}">`,
       description ? `<meta property="og:description" content="${this.escape(description)}">` : '',
-      '<meta property="og:type" content="website">',
+      `<meta property="og:type" content="${this.escape(seo.ogType)}">`,
+      seo.canonical ? `<meta property="og:url" content="${this.escape(seo.canonical)}">` : '',
+      seo.image ? `<meta property="og:image" content="${this.escape(seo.image)}">` : '',
+      seo.siteName ? `<meta property="og:site_name" content="${this.escape(seo.siteName)}">` : '',
+      // Twitter Card
+      `<meta name="twitter:card" content="${seo.image ? 'summary_large_image' : 'summary'}">`,
+      `<meta name="twitter:title" content="${this.escape(title)}">`,
+      description ? `<meta name="twitter:description" content="${this.escape(description)}">` : '',
+      seo.image ? `<meta name="twitter:image" content="${this.escape(seo.image)}">` : '',
+      seo.twitterSite ? `<meta name="twitter:site" content="${this.escape(seo.twitterSite)}">` : '',
+      // JSON-LD structured data
+      jsonLd ? `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, '\\u003c')}</script>` : '',
       '<link rel="stylesheet" href="styles.css">',
       '</head>',
       '<body>',
@@ -257,6 +304,21 @@ class HtmlEmitter {
     if (tag === 'modal') return this.emitModal(node)
     if (tag === 'tooltip') return this.emitTooltip(node)
     if (tag === 'accordion') return this.emitAccordion(node)
+    if (tag === 'section') this._sawSection = true
+
+    // <img>: route through the image pipeline when available (sharp + processed).
+    // Pipeline handles AVIF/WebP transcoding, srcset, lazy/eager, dominant color.
+    if (tag === 'img' && this.imgPipeline) {
+      const rawSrc = attrs.src
+      const src = (rawSrc && rawSrc.type) ? this.evalStaticExpr(rawSrc) : rawSrc
+      if (typeof src === 'string') {
+        const alt = (attrs.alt && attrs.alt.type) ? this.evalStaticExpr(attrs.alt) : (attrs.alt ?? '')
+        const ordinal = this._imgOrdinal++
+        const position = (!this._sawSection && ordinal < 2) ? 'above-fold' : 'below-fold'
+        const picture = this.imgPipeline.emitPicture(src, alt, position)
+        if (picture) return picture
+      }
+    }
 
     // tooltip="" attribute on any element: wrap with tooltip anchor
     if (attrs.tooltip) {
