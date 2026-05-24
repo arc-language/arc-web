@@ -1,3 +1,6 @@
 .optimizer-cache/
 .testproof-cache/
 .cleanproof-cache/
+node_modules/
+package-lock.json
+*.log
