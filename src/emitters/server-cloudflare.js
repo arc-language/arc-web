@@ -216,7 +216,8 @@ async function _job_${job.name}(${params}${params ? ', ' : ''}env) {
     return `
 // Route: ${route.method} ${route.path}${requiresAuth ? ' [auth]' : ''}
 async function ${name}(req, params, env) {
-  const _traceId = req.headers.get('x-request-id') ?? crypto.randomUUID()
+  const _clientId = req.headers.get('x-request-id') ?? ''
+  const _traceId = /^[a-zA-Z0-9_-]{1,64}$/.test(_clientId) ? _clientId : crypto.randomUUID()
   try {
     ${hasDb ? 'const db = _makeDb(env.DB)' : ''}
     ${pathParams ? pathParams + '\n    ' : ''}${authGuard ? authGuard + '\n    ' : ''}const json = (data, status = 200) => _json(data, status)

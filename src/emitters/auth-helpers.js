@@ -87,23 +87,21 @@ const auth = {
     return _sessionDecode(cookies[_SESSION_COOKIE])
   },
 
-  // Set session cookie on a Response (mutates headers)
+  // Set session cookie on a Response (preserves all existing headers including duplicate Set-Cookie)
   set: async (res, payload) => {
     const value = await _sessionEncode(payload)
     const cookie = \`\${_SESSION_COOKIE}=\${value}; HttpOnly; SameSite=Lax; Max-Age=\${_SESSION_MAX_AGE}; Path=/\${process.env.NODE_ENV === 'production' ? '; Secure' : ''}\`
-    return new Response(res.body, {
-      status: res.status,
-      headers: { ...Object.fromEntries(res.headers), 'Set-Cookie': cookie }
-    })
+    const h = new Headers(res.headers)
+    h.set('Set-Cookie', cookie)
+    return new Response(res.body, { status: res.status, headers: h })
   },
 
   // Clear session cookie on a Response
   clear: (res) => {
     const cookie = \`\${_SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/\${process.env.NODE_ENV === 'production' ? '; Secure' : ''}\`
-    return new Response(res.body, {
-      status: res.status,
-      headers: { ...Object.fromEntries(res.headers), 'Set-Cookie': cookie }
-    })
+    const h = new Headers(res.headers)
+    h.set('Set-Cookie', cookie)
+    return new Response(res.body, { status: res.status, headers: h })
   },
 
   // Require auth: return 401 if no session, else return session payload
