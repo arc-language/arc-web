@@ -130,7 +130,7 @@ class ServerEmitter {
       `      headers: { 'Content-Type': 'application/x-adp', 'Content-Length': String(_encoded.length) }`,
       `    })`,
       `  } catch (_e) {`,
-      `    console.error('[arc] @server ${fn.name} error:', _e)`,
+      `    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', fn: '${fn.name}', msg: _e?.message ?? String(_e) }))`,
       `    return new Response(JSON.stringify({ error: 'Internal server error' }), {`,
       `      status: 500, headers: { 'Content-Type': 'application/json' }`,
       `    })`,

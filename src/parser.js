@@ -632,13 +632,7 @@ class Parser {
         // or end-of-attrs (NEWLINE, INDENT, DEDENT, EOF, STRING, LBRACE).
         // Never consume if followed by DEDENT/EOF: that would be a child element.
         if (/^[a-z]/.test(t.value)) {
-          const afterNext = this.tokens[this.pos + 1]
-          const isEndOfAttrs = !afterNext || afterNext.type === T.NEWLINE ||
-            afterNext.type === T.DEDENT || afterNext.type === T.EOF ||
-            afterNext.type === T.STRING || afterNext.type === T.LBRACE
-          const isMoreAttrs = afterNext?.type === T.IDENT || afterNext?.type === T.EQ ||
-            afterNext?.type === T.COLON || afterNext?.type === T.INDENT
-          if (isEndOfAttrs || isMoreAttrs) {
+          if (this._isBareAttrSafe(t.value)) {
             attrs[t.value] = true
             this.pos++
             continue
@@ -649,6 +643,16 @@ class Parser {
       break
     }
     return attrs
+  }
+
+  _isBareAttrSafe(attrName) {
+    const afterNext = this.tokens[this.pos + 1]
+    const isEndOfAttrs = !afterNext || afterNext.type === T.NEWLINE ||
+      afterNext.type === T.DEDENT || afterNext.type === T.EOF ||
+      afterNext.type === T.STRING || afterNext.type === T.LBRACE
+    const isMoreAttrs = afterNext?.type === T.IDENT || afterNext?.type === T.EQ ||
+      afterNext?.type === T.COLON || afterNext?.type === T.INDENT
+    return isEndOfAttrs || isMoreAttrs
   }
 
   parseInlineContent() {
@@ -844,15 +848,7 @@ class Parser {
       if (pt.type === T.IDENT) {
         const next = this.tokens[this.pos + 1]
         if (next?.type === T.COLON) {
-          let name = this.tokens[this.pos++].value
-          // Handle hyphenated property names at root level too
-          while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.IDENT) {
-            this.pos++
-            name += '-' + this.tokens[this.pos++].value
-          }
-          this.pos++ // consume colon
-          const value = this.parseStyleValue()
-          rootProps.push(N.StyleProp(name, value, pt.line))
+          rootProps.push(this._parseDesignPropEntry(pt))
           this.consumeNewlines()
           continue
         }
@@ -880,6 +876,18 @@ class Parser {
     return N.DesignBlock(rules, tok.line)
   }
 
+  _parseDesignPropEntry(pt) {
+    let name = this.tokens[this.pos++].value
+    // Handle hyphenated property names at root level too
+    while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.IDENT) {
+      this.pos++
+      name += '-' + this.tokens[this.pos++].value
+    }
+    this.pos++ // consume colon
+    const value = this.parseStyleValue()
+    return N.StyleProp(name, value, pt.line)
+  }
+
   parseStyleRule() {
     const t = this.tokens[this.pos]
     if (!t) return null
@@ -897,19 +905,7 @@ class Parser {
     }
 
     // Build selector string
-    while (this.tokens[this.pos]) {
-      const cur = this.tokens[this.pos]
-      if (cur.type === T.IDENT) { selector += cur.value; this.pos++ }
-      else if (cur.type === T.DOT) { selector += '.'; this.pos++ }
-      else if (cur.type === T.HASH) { selector += '#'; this.pos++ }
-      else if (cur.type === T.COLON) { selector += ':'; this.pos++ }
-      else if (cur.type === T.GT) { selector += '>'; this.pos++ }
-      else if (cur.type === T.PLUS) { selector += '+'; this.pos++ }
-      else if (cur.type === T.STAR) { selector += '*'; this.pos++ }
-      else if (cur.type === T.MINUS) { selector += '-'; this.pos++ }
-      else if (cur.type === T.COMMA) { selector += ', '; this.pos++ }
-      else break
-    }
+    selector = this._buildSelector(selector)
 
     if (!selector.trim()) { this.pos++; return null }
 
@@ -974,25 +970,7 @@ class Parser {
           this.pos++
           // hover: { ... } / focus: { ... } → nested pseudo-class rule
           if (_PSEUDO_SHORTHANDS[propName] && this.tokens[this.pos]?.type === T.LBRACE) {
-            this.pos++ // consume {
-            const pseudoProps = []
-            while (this.tokens[this.pos]?.type !== T.RBRACE && this.tokens[this.pos]?.type !== T.EOF) {
-              this.consumeNewlines()
-              if (this.tokens[this.pos]?.type === T.RBRACE) break
-              const ppt = this.tokens[this.pos]
-              if (ppt?.type === T.IDENT) {
-                let pName = this.tokens[this.pos++].value
-                while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.IDENT) {
-                  this.pos++; pName += '-' + this.tokens[this.pos++].value
-                }
-                if (this.tokens[this.pos]?.type === T.COLON) {
-                  this.pos++
-                  pseudoProps.push(N.StyleProp(pName, this.parseStyleValue(), ppt.line))
-                }
-              } else this.pos++
-            }
-            this.eatIf(T.RBRACE)
-            children.push(N.StyleRule(_PSEUDO_SHORTHANDS[propName], pseudoProps, [], pt.line))
+            children.push(this._parsePseudoBlock(_PSEUDO_SHORTHANDS[propName], pt))
           } else {
             const value = this.parseStyleValue()
             props.push(N.StyleProp(propName, value, pt.line))
@@ -1007,6 +985,46 @@ class Parser {
     this.eatIf(T.DEDENT)
 
     return N.StyleRule(selector, props, children, t.line)
+  }
+
+  _buildSelector(initial) {
+    let selector = initial
+    while (this.tokens[this.pos]) {
+      const cur = this.tokens[this.pos]
+      if (cur.type === T.IDENT) { selector += cur.value; this.pos++ }
+      else if (cur.type === T.DOT) { selector += '.'; this.pos++ }
+      else if (cur.type === T.HASH) { selector += '#'; this.pos++ }
+      else if (cur.type === T.COLON) { selector += ':'; this.pos++ }
+      else if (cur.type === T.GT) { selector += '>'; this.pos++ }
+      else if (cur.type === T.PLUS) { selector += '+'; this.pos++ }
+      else if (cur.type === T.STAR) { selector += '*'; this.pos++ }
+      else if (cur.type === T.MINUS) { selector += '-'; this.pos++ }
+      else if (cur.type === T.COMMA) { selector += ', '; this.pos++ }
+      else break
+    }
+    return selector
+  }
+
+  _parsePseudoBlock(pseudoSelector, pt) {
+    this.pos++ // consume {
+    const pseudoProps = []
+    while (this.tokens[this.pos]?.type !== T.RBRACE && this.tokens[this.pos]?.type !== T.EOF) {
+      this.consumeNewlines()
+      if (this.tokens[this.pos]?.type === T.RBRACE) break
+      const ppt = this.tokens[this.pos]
+      if (ppt?.type === T.IDENT) {
+        let pName = this.tokens[this.pos++].value
+        while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.IDENT) {
+          this.pos++; pName += '-' + this.tokens[this.pos++].value
+        }
+        if (this.tokens[this.pos]?.type === T.COLON) {
+          this.pos++
+          pseudoProps.push(N.StyleProp(pName, this.parseStyleValue(), ppt.line))
+        }
+      } else this.pos++
+    }
+    this.eatIf(T.RBRACE)
+    return N.StyleRule(pseudoSelector, pseudoProps, [], pt.line)
   }
 
   parseStyleCondition() {
@@ -1707,109 +1725,17 @@ class Parser {
 
     // Parenthesized expr or arrow fn params
     if (t.type === T.LPAREN) {
-      this.pos++
-      if (this.peekType() === T.RPAREN) {
-        this.eat(T.RPAREN)
-        this.eat(T.ARROW)
-        const body = this.parseExpr()
-        return N.ArrowFn([], body, false, t.line)
-      }
-      const expr = this.parseExpr()
-      if (this.eatIf(T.RPAREN)) {
-        if (this.tokens[this.pos]?.type === T.ARROW) {
-          this.pos++
-          const body = this.parseExpr()
-          const params = expr.type === 'Identifier'
-            ? [N.Param(expr.name, null, null, false, expr.line)]
-            : [expr]
-          return N.ArrowFn(params, body, false, t.line)
-        }
-        return expr
-      }
-      // Multiple params
-      const params = [N.Param(expr.name ?? '__p', null, null, false, expr.line)]
-      while (this.eatIf(T.COMMA)) {
-        const rest = this.eatIf(T.SPREAD)
-        const name = this.eat(T.IDENT).value
-        params.push(N.Param(name, null, null, !!rest, t.line))
-      }
-      this.eat(T.RPAREN)
-      this.eat(T.ARROW)
-      const body = this.parseExpr()
-      return N.ArrowFn(params, body, false, t.line)
+      return this._parseArrowFnFromParens(t)
     }
 
     // Array literal
     if (t.type === T.LBRACKET) {
-      this.pos++
-      const elements = []
-      while (this.peekType() !== T.RBRACKET && this.peekType() !== T.EOF) {
-        if (this.tokens[this.pos]?.type === T.SPREAD) {
-          const st = this.tokens[this.pos++]
-          elements.push(N.SpreadElement(this.parseExpr(), st.line))
-        } else {
-          elements.push(this.parseExpr())
-        }
-        this.eatIf(T.COMMA)
-      }
-      this.eat(T.RBRACKET)
-      return N.ArrayLiteral(elements, t.line)
+      return this._parseArrayLiteralExpr(t)
     }
 
     // Object literal
     if (t.type === T.LBRACE) {
-      this.pos++
-      // Allow multi-line object literals - skip newlines and the optional INDENT/DEDENT
-      // pair the lexer emits when the body starts on the next line.
-      this.consumeNewlines()
-      while (this.tokens[this.pos]?.type === T.INDENT || this.tokens[this.pos]?.type === T.DEDENT) this.pos++
-      this.consumeNewlines()
-      const props = []
-      while (this.peekType() !== T.RBRACE && this.peekType() !== T.EOF) {
-        if (this.tokens[this.pos]?.type === T.SPREAD) {
-          const st = this.tokens[this.pos++]
-          props.push(N.SpreadElement(this.parseExpr(), st.line))
-        } else {
-          // Key can be: IDENT, STRING (for "Content-Type"), or any keyword used as key
-          const keyTok = this.tokens[this.pos]
-          let key
-          if (keyTok?.type === T.STRING) {
-            key = keyTok.value
-            this.pos++
-          } else if (keyTok?.type === T.LBRACKET) {
-            // Computed key: [expr]
-            this.pos++
-            const keyExpr = this.parseExpr()
-            this.eat(T.RBRACKET)
-            const val = this.eatIf(T.COLON) ? this.parseExpr() : null
-            props.push(N.ObjectProp(null, val, false, t.line, keyExpr))
-            this.eatIf(T.COMMA)
-            this.consumeNewlines()
-            continue
-          } else {
-            // Allow any keyword as property key (get, set, delete, etc.)
-            key = this.tokens[this.pos]?.value
-            this.pos++
-          }
-          if (this.eatIf(T.COLON)) {
-            const val = this.parseExpr()
-            props.push(N.ObjectProp(key, val, false, t.line))
-          } else if (this.peekType() === T.LPAREN) {
-            // Method shorthand: key(...) { ... }
-            const params = this.parseParams()
-            const body = this.parseBlock()
-            props.push(N.ObjectProp(key, N.ArrowFn(params, body, false, t.line), false, t.line))
-          } else {
-            props.push(N.ObjectProp(key, N.Identifier(key, t.line), true, t.line))
-          }
-        }
-        this.eatIf(T.COMMA)
-        this.consumeNewlines()
-        while (this.tokens[this.pos]?.type === T.INDENT || this.tokens[this.pos]?.type === T.DEDENT) this.pos++
-        this.consumeNewlines()
-      }
-      this.eat(T.RBRACE)
-      return N.ObjectLiteral(props, t.line)
+      return this._parseObjectLiteralExpr(t)
     }
 
     // fn (anonymous)
@@ -1851,6 +1777,110 @@ class Parser {
     // Skip unknown
     this.pos++
     return N.Literal(undefined, 'none', t.line)
+  }
+
+  _parseArrowFnFromParens(t) {
+    this.pos++
+    if (this.peekType() === T.RPAREN) {
+      this.eat(T.RPAREN)
+      this.eat(T.ARROW)
+      const body = this.parseExpr()
+      return N.ArrowFn([], body, false, t.line)
+    }
+    const expr = this.parseExpr()
+    if (this.eatIf(T.RPAREN)) {
+      if (this.tokens[this.pos]?.type === T.ARROW) {
+        this.pos++
+        const body = this.parseExpr()
+        const params = expr.type === 'Identifier'
+          ? [N.Param(expr.name, null, null, false, expr.line)]
+          : [expr]
+        return N.ArrowFn(params, body, false, t.line)
+      }
+      return expr
+    }
+    // Multiple params
+    const params = [N.Param(expr.name ?? '__p', null, null, false, expr.line)]
+    while (this.eatIf(T.COMMA)) {
+      const rest = this.eatIf(T.SPREAD)
+      const name = this.eat(T.IDENT).value
+      params.push(N.Param(name, null, null, !!rest, t.line))
+    }
+    this.eat(T.RPAREN)
+    this.eat(T.ARROW)
+    const body = this.parseExpr()
+    return N.ArrowFn(params, body, false, t.line)
+  }
+
+  _parseArrayLiteralExpr(t) {
+    this.pos++
+    const elements = []
+    while (this.peekType() !== T.RBRACKET && this.peekType() !== T.EOF) {
+      if (this.tokens[this.pos]?.type === T.SPREAD) {
+        const st = this.tokens[this.pos++]
+        elements.push(N.SpreadElement(this.parseExpr(), st.line))
+      } else {
+        elements.push(this.parseExpr())
+      }
+      this.eatIf(T.COMMA)
+    }
+    this.eat(T.RBRACKET)
+    return N.ArrayLiteral(elements, t.line)
+  }
+
+  _parseObjectLiteralExpr(t) {
+    this.pos++
+    // Allow multi-line object literals - skip newlines and the optional INDENT/DEDENT
+    // pair the lexer emits when the body starts on the next line.
+    this.consumeNewlines()
+    while (this.tokens[this.pos]?.type === T.INDENT || this.tokens[this.pos]?.type === T.DEDENT) this.pos++
+    this.consumeNewlines()
+    const props = []
+    while (this.peekType() !== T.RBRACE && this.peekType() !== T.EOF) {
+      if (this.tokens[this.pos]?.type === T.SPREAD) {
+        const st = this.tokens[this.pos++]
+        props.push(N.SpreadElement(this.parseExpr(), st.line))
+      } else {
+        // Key can be: IDENT, STRING (for "Content-Type"), or any keyword used as key
+        const keyTok = this.tokens[this.pos]
+        let key
+        if (keyTok?.type === T.STRING) {
+          key = keyTok.value
+          this.pos++
+        } else if (keyTok?.type === T.LBRACKET) {
+          // Computed key: [expr]
+          this.pos++
+          const keyExpr = this.parseExpr()
+          this.eat(T.RBRACKET)
+          const val = this.eatIf(T.COLON) ? this.parseExpr() : null
+          props.push(N.ObjectProp(null, val, false, t.line, keyExpr))
+          this.eatIf(T.COMMA)
+          this.consumeNewlines()
+          continue
+        } else {
+          // Allow any keyword as property key (get, set, delete, etc.)
+          key = this.tokens[this.pos]?.value
+          this.pos++
+        }
+        if (this.eatIf(T.COLON)) {
+          const val = this.parseExpr()
+          props.push(N.ObjectProp(key, val, false, t.line))
+        } else if (this.peekType() === T.LPAREN) {
+          // Method shorthand: key(...) { ... }
+          const params = this.parseParams()
+          const body = this.parseBlock()
+          props.push(N.ObjectProp(key, N.ArrowFn(params, body, false, t.line), false, t.line))
+        } else {
+          props.push(N.ObjectProp(key, N.Identifier(key, t.line), true, t.line))
+        }
+      }
+      this.eatIf(T.COMMA)
+      this.consumeNewlines()
+      while (this.tokens[this.pos]?.type === T.INDENT || this.tokens[this.pos]?.type === T.DEDENT) this.pos++
+      this.consumeNewlines()
+    }
+    this.eat(T.RBRACE)
+    return N.ObjectLiteral(props, t.line)
   }
 
   // ── Type annotations ───────────────────────────────────────────────────────

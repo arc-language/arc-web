@@ -164,10 +164,7 @@ async function compile(source, filename = '<input>', options = {}) {
       outDir: options.distDir,
       ...(formats ? { formats } : {}),
     })
-    try { await imgPipeline.processAll(imgRefs) } catch (e) {
-      console.warn(`arc: image pipeline error: ${e.message}`)
-      imgPipeline = null
-    }
+    await imgPipeline.processAll(imgRefs)
   }
 
   // 6. HTML emit (also collects stateBindings + eventBindings)

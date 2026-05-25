@@ -7,6 +7,7 @@ const cloudflare = require('../src/deploy/cloudflare')
 const denoTarget = require('../src/deploy/deno')
 const bun = require('../src/deploy/bun')
 const node = require('../src/deploy/node')
+const { getContentType } = require('../src/deploy/utils')
 
 // ── Cloudflare tests ────────────────────────────────────────────────────────
 
@@ -105,7 +106,6 @@ test('cloudflare: generated Worker correctly serves / and /styles.css paths', ()
 // ── Content-type tests ───────────────────────────────────────────────────────
 
 test('cloudflare: content-type helper returns correct types', () => {
-  const { getContentType } = require('../src/deploy/cloudflare')
   assert.equal(getContentType('/index.html'), 'text/html; charset=utf-8')
   assert.equal(getContentType('/styles.css'), 'text/css')
   assert.equal(getContentType('/app.js'), 'application/javascript')

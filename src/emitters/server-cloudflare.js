@@ -17,6 +17,7 @@ const { compileRoutes } = require('../compilers/route-compiler')
 const { emitAuthPreamble } = require('./auth-helpers')
 const { emitEmailPreamble } = require('./queue-helpers')
 const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
+const { routeHandlerName } = require('./route-utils')
 
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
@@ -174,10 +175,7 @@ ${blocks.join('\n')}
 
   // ── Job handlers ──────────────────────────────────────────────────────────────
 
-  routeHandlerName(route) {
-    const slug = route.path.replace(/[^a-zA-Z0-9]/g, '_').replace(/^_+|_+$/g, '') || 'root'
-    return `_route_${route.method.toLowerCase()}_${slug}`
-  }
+  routeHandlerName(route) { return routeHandlerName(route) }
 
   emitJobHandler(job, schemas) {
     if (!_SAFE_IDENT.test(job.name)) throw new Error(`Arc codegen: unsafe job name: ${JSON.stringify(job.name)}`)
@@ -278,7 +276,7 @@ function _makeEmail(env) {
       const { job, args = [] } = msg.body
       const fn = _jobRegistry[job]
       if (fn) {
-        try { await fn(...args, env); msg.ack() } catch (e) { console.error('[arc:queue]', e); msg.retry() }
+        try { await fn(...args, env); msg.ack() } catch (e) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: e?.message ?? String(e) })); msg.retry() }
       } else {
         msg.ack()
       }

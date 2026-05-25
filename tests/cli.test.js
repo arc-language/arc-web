@@ -483,7 +483,7 @@ page "T"
       const stderr = r.stderr.toString()
       const stdout = r.stdout.toString()
       // Should warn but still complete (note: stderr might contain the warning, or it might compile)
-      assert.ok(stderr.length > 0 || stdout.length > 0 || r.status === 0,
+      assert.ok(stderr.length > 0 || stdout.length > 0,
         `Expected some output: stderr=${stderr}, stdout=${stdout}`)
     } finally { rmDir(dir) }
   })
@@ -675,25 +675,58 @@ describe('cli: formatError edge cases', () => {
   const { formatError, showSourceContext } = require('../src/cli')._internal
 
   test('formatError works without filename', () => {
-    // Just ensure it doesn't throw
     const err = new Error('test error message')
-    formatError(err, null, null)
+    const logged = []
+    const orig = console.error
+    console.error = (...args) => logged.push(args.join(' '))
+    try {
+      formatError(err, null, null)
+    } finally {
+      console.error = orig
+    }
+    assert.ok(logged.some(c => c.includes('test error message')))
   })
 
   test('formatError extracts line:col from message and shows source context', () => {
     const err = new SyntaxError('test.arc:3:5: something went wrong')
     const source = 'line1\nline2\nline3 here\nline4'
-    // Capture stderr to ensure no throw
-    formatError(err, source, 'test.arc')
+    const logged = []
+    const orig = console.error
+    console.error = (...args) => logged.push(args.join(' '))
+    try {
+      formatError(err, source, 'test.arc')
+    } finally {
+      console.error = orig
+    }
+    assert.ok(logged.some(c => c.includes('something went wrong')))
+    assert.ok(logged.some(c => c.includes('line3 here')))
   })
 
   test('showSourceContext handles missing line gracefully', () => {
-    showSourceContext('line1\nline2', null, null)
-    showSourceContext('line1\nline2', 999, 1)  // line out of range
+    const logged = []
+    const orig = console.error
+    console.error = (...args) => logged.push(args.join(' '))
+    try {
+      showSourceContext('line1\nline2', null, null)
+      showSourceContext('line1\nline2', 999, 1)  // line out of range
+    } finally {
+      console.error = orig
+    }
+    // Both calls should be silent (no output) since lineNum is null or out of range
+    assert.equal(logged.length, 0)
   })
 
   test('showSourceContext displays col indicator when col provided', () => {
-    showSourceContext('hello world', 1, 7)  // col=7 → points at 'w'
+    const logged = []
+    const orig = console.error
+    console.error = (...args) => logged.push(args.join(' '))
+    try {
+      showSourceContext('hello world', 1, 7)  // col=7 → points at 'w'
+    } finally {
+      console.error = orig
+    }
+    assert.ok(logged.some(c => c.includes('hello world')))
+    assert.ok(logged.some(c => c.includes('^')))
   })
 })
 

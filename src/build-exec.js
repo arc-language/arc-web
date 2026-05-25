@@ -20,6 +20,19 @@ const ALLOWED_OBJ_METHODS = new Set([
   'trim', 'split', 'replace', 'toUpperCase', 'toLowerCase',
 ])
 
+const _TOP_LEVEL_CALLERS = {
+  fetch: async (expr, locals, executor) => {
+    if (!expr.args || expr.args.length === 0) throw new Error('@build fetch: requires a URL argument')
+    const url = await executor.evalExpr(expr.args[0], locals)
+    return executor.doFetch(url)
+  },
+  readFile: async (expr, locals, executor) => {
+    if (!expr.args || expr.args.length === 0) throw new Error('@build readFile: requires a path argument')
+    const filePath = await executor.evalExpr(expr.args[0], locals)
+    return executor.doReadFile(filePath)
+  },
+}
+
 class BuildExecutor {
   constructor(projectDir = '.') {
     this.projectDir = projectDir
@@ -147,18 +160,9 @@ class BuildExecutor {
   async evalCall(expr, locals) {
     const callee = expr.callee
 
-    // fetch(url): HTTP/HTTPS request
-    if (callee.type === 'Identifier' && callee.name === 'fetch') {
-      if (!expr.args || expr.args.length === 0) throw new Error('@build fetch: requires a URL argument')
-      const url = await this.evalExpr(expr.args[0], locals)
-      return this.doFetch(url)
-    }
-
-    // readFile(path): local file read
-    if (callee.type === 'Identifier' && callee.name === 'readFile') {
-      if (!expr.args || expr.args.length === 0) throw new Error('@build readFile: requires a path argument')
-      const filePath = await this.evalExpr(expr.args[0], locals)
-      return await this.doReadFile(filePath)
+    // Dispatch table for top-level function calls by name
+    if (callee.type === 'Identifier' && Object.prototype.hasOwnProperty.call(_TOP_LEVEL_CALLERS, callee.name)) {
+      return _TOP_LEVEL_CALLERS[callee.name](expr, locals, this)
     }
 
     // Array.from(iterable)
@@ -309,22 +313,14 @@ class BuildExecutor {
 
   // ── I/O helpers ─────────────────────────────────────────────────────────────
 
-  doFetch(url) {
-    // Validate URL to prevent SSRF
-    let parsed
-    try { parsed = new URL(url) } catch { throw new Error(`@build fetch: invalid URL: ${url}`) }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error(`@build fetch: only http/https allowed, got ${parsed.protocol}`)
-    }
-    // URL.hostname for IPv6 includes brackets (e.g. "[::1]"): strip them for consistent checks
-    const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  _isBlockedHost(hostname) {
     // Block IPv4 private/loopback/unspecified ranges
     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
         hostname === '100.100.100.200' || // Alibaba Cloud instance metadata
         hostname === 'metadata.google.internal' || hostname === 'metadata.goog' || // GCP instance metadata
         hostname.startsWith('169.254.') || hostname.startsWith('10.') ||
         hostname.startsWith('192.168.') || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
-      throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
+      return true
     }
     // Block IPv6 private/loopback/link-local/ULA/IPv4-mapped ranges
     // '::' is the IPv6 unspecified address - Linux routes it to loopback,
@@ -339,8 +335,21 @@ class BuildExecutor {
         hostname.startsWith('::ffff:0:10.') || hostname.startsWith('::ffff:0:127.') ||
         hostname.startsWith('::ffff:0:192.168.') ||
         /^::ffff:0:172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
-      throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
+      return true
     }
+    return false
+  }
+
+  doFetch(url) {
+    // Validate URL to prevent SSRF
+    let parsed
+    try { parsed = new URL(url) } catch { throw new Error(`@build fetch: invalid URL: ${url}`) }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error(`@build fetch: only http/https allowed, got ${parsed.protocol}`)
+    }
+    // URL.hostname for IPv6 includes brackets (e.g. "[::1]"): strip them for consistent checks
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+    if (this._isBlockedHost(hostname)) throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
 
     return new Promise((resolve, reject) => {
       // settled must be hoisted to executor scope: error/timeout handlers fire

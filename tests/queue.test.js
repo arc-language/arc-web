@@ -128,9 +128,7 @@ job SendWelcome(userId: Int)
 
 // ── Queue runtime logic (pure JS, no Bun needed) ─────────────────────────────
 
-test('queue runtime: enqueue and process jobs in order', async () => {
-  // Inline the queue runtime to test it without Bun
-  const results = []
+function makeQueueRuntime() {
   const _queue = {
     _items: [],
     _running: false,
@@ -154,6 +152,12 @@ test('queue runtime: enqueue and process jobs in order', async () => {
       check()
     }),
   }
+  return { _queue, Queue }
+}
+
+test('queue runtime: enqueue and process jobs in order', async () => {
+  const { _queue, Queue } = makeQueueRuntime()
+  const results = []
 
   Queue.enqueue(async (n) => results.push(n), 1)
   Queue.enqueue(async (n) => results.push(n), 2)
@@ -164,30 +168,8 @@ test('queue runtime: enqueue and process jobs in order', async () => {
 })
 
 test('queue runtime: failed jobs do not block the queue', async () => {
+  const { _queue, Queue } = makeQueueRuntime()
   const results = []
-  const _queue = {
-    _items: [],
-    _running: false,
-    enqueue(fn, args, retries = 0) {
-      this._items.push({ fn, args, retries })
-      if (!this._running) this._process()
-    },
-    async _process() {
-      this._running = true
-      while (this._items.length > 0) {
-        const { fn, args } = this._items.shift()
-        try { await fn(...args) } catch {}
-      }
-      this._running = false
-    }
-  }
-  const Queue = {
-    enqueue: (fn, ...args) => _queue.enqueue(fn, args),
-    drain: () => new Promise(resolve => {
-      const check = () => _queue._items.length === 0 && !_queue._running ? resolve() : setTimeout(check, 10)
-      check()
-    }),
-  }
 
   Queue.enqueue(async () => { throw new Error('boom') })
   Queue.enqueue(async (n) => results.push(n), 'after-fail')

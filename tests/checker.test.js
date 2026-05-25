@@ -149,7 +149,7 @@ describe('Checker: JS globals are not errors', () => {
   test('fetch is valid in @build', () => {
     // fetch is a global: should not error (it would fail at runtime if URL is bad,
     // but that's a @build execution error, not a check error)
-    assert.ok(clean('page "T"\n  @state let x = 0\n  text "{x}"'))
+    assert.ok(clean('page "Test"\n  @build const data = fetch("https://example.com")\n  text "{data}"'))
   })
 })
 

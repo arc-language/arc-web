@@ -1,15 +1,6 @@
 'use strict'
 
-function getContentType(p) {
-  if (p.endsWith('.html')) return 'text/html; charset=utf-8'
-  if (p.endsWith('.css')) return 'text/css'
-  if (p.endsWith('.js')) return 'application/javascript'
-  if (p.endsWith('.json')) return 'application/json'
-  if (p.endsWith('.svg')) return 'image/svg+xml'
-  if (p.endsWith('.png')) return 'image/png'
-  if (p.endsWith('.ico')) return 'image/x-icon'
-  return 'application/octet-stream'
-}
+const { getContentType } = require('./utils')
 
 const _SAFE_HANDLER_NAME_CF = /^_handler_[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
@@ -124,4 +115,4 @@ command = ""
   ]
 }
 
-module.exports = { generate, getContentType }
+module.exports = { generate }

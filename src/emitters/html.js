@@ -186,6 +186,24 @@ class HtmlEmitter {
     return [
       '<!DOCTYPE html>',
       `<html lang="${this.escape(lang)}">`,
+      ...this._emitHead(title, description, seo, jsonLd),
+      '</head>',
+      '<body>',
+      // Skip link text can be overridden via page meta { skipLinkText: "..." }
+      `<a href="#main-content" class="arc-skip-link">${this.escape(
+        node.meta?.skipLinkText ? this.evalStaticExpr(node.meta.skipLinkText) : 'Skip to main content'
+      )}</a>`,
+      hasUserMain ? '' : `<main id="main-content">`,
+      hasUserMain ? '' : `<h1 class="arc-sr-only">${this.escape(title)}</h1>`,
+      bodyContent,
+      hasUserMain ? '' : '</main>',
+      '</body>',
+      '</html>',
+    ].filter(Boolean).join('\n')
+  }
+
+  _emitHead(title, description, seo, jsonLd) {
+    return [
       '<head>',
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
@@ -212,19 +230,7 @@ class HtmlEmitter {
       // JSON-LD structured data
       jsonLd ? `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, '\\u003c')}</script>` : '',
       '<link rel="stylesheet" href="styles.css">',
-      '</head>',
-      '<body>',
-      // Skip link text can be overridden via page meta { skipLinkText: "..." }
-      `<a href="#main-content" class="arc-skip-link">${this.escape(
-        node.meta?.skipLinkText ? this.evalStaticExpr(node.meta.skipLinkText) : 'Skip to main content'
-      )}</a>`,
-      hasUserMain ? '' : `<main id="main-content">`,
-      hasUserMain ? '' : `<h1 class="arc-sr-only">${this.escape(title)}</h1>`,
-      bodyContent,
-      hasUserMain ? '' : '</main>',
-      '</body>',
-      '</html>',
-    ].filter(Boolean).join('\n')
+    ]
   }
 
   emitWidget(node) {
@@ -329,36 +335,8 @@ class HtmlEmitter {
 
     // Single pass: collect bind:/on: bindings AND pre-filter static attrs for HTML output.
     // This eliminates the second traversal in buildAttrs which would otherwise re-scan all attrs.
-    const staticAttrs = {}
-    for (const [key, value] of Object.entries(attrs)) {
-      if (key.startsWith('bind:')) {
-        if (!id) id = this.getReactiveId(`bind_${tag}_${node.line}`)
-        if (value?.type === 'MemberExpr') {
-          // Dotted path: user.name → expr="user.name", bindRoot="user"
-          const exprStr = this.exprToString(value)
-          const bindRoot = this._extractRootIdent(value)
-          if (!bindRoot) {
-            throw new Error(`Arc: bind:value path must be a simple variable or dotted path (e.g. user.name), got: ${exprStr}`)
-          }
-          this.stateBindings.push({ id, expr: exprStr, bindRoot, kind: 'bind', line: node.line })
-        } else {
-          const boundName = value?.type === 'Identifier' ? value.name
-            : value?.type === 'AtProperty' ? value.name
-            : (typeof value === 'string' ? value : null)
-          if (boundName) {
-            this.stateBindings.push({ id, expr: boundName, kind: 'bind', line: node.line })
-          }
-        }
-        // bind: attrs are JS-only: don't include in HTML output
-      } else if (key.startsWith('on:')) {
-        if (!id) id = this.getReactiveId(`ev_${tag}_${node.line}`)
-        const event = key.slice(3)
-        this.eventBindings.push({ elementId: id, event, handler: value, line: node.line })
-        // on: attrs are JS-only: don't include in HTML output
-      } else {
-        staticAttrs[key] = value
-      }
-    }
+    const { staticAttrs, id: collectedId } = this._collectBindings(node)
+    if (collectedId && !id) id = collectedId
 
     let htmlTag = ELEMENT_MAP[tag] ?? tag
 
@@ -395,6 +373,44 @@ class HtmlEmitter {
     }
 
     return `<${htmlTag}${attrStr}>${inner}</${htmlTag}>`
+  }
+
+  // Single-pass collection of bind:/on: bindings and static attrs.
+  // Returns { staticAttrs, id } where id is the reactive element id (or null).
+  _collectBindings(node) {
+    const { tag, attrs = {} } = node
+    let id = node.id ?? null
+    const staticAttrs = {}
+    for (const [key, value] of Object.entries(attrs)) {
+      if (key.startsWith('bind:')) {
+        if (!id) id = this.getReactiveId(`bind_${tag}_${node.line}`)
+        if (value?.type === 'MemberExpr') {
+          // Dotted path: user.name → expr="user.name", bindRoot="user"
+          const exprStr = this.exprToString(value)
+          const bindRoot = this._extractRootIdent(value)
+          if (!bindRoot) {
+            throw new Error(`Arc: bind:value path must be a simple variable or dotted path (e.g. user.name), got: ${exprStr}`)
+          }
+          this.stateBindings.push({ id, expr: exprStr, bindRoot, kind: 'bind', line: node.line })
+        } else {
+          const boundName = value?.type === 'Identifier' ? value.name
+            : value?.type === 'AtProperty' ? value.name
+            : (typeof value === 'string' ? value : null)
+          if (boundName) {
+            this.stateBindings.push({ id, expr: boundName, kind: 'bind', line: node.line })
+          }
+        }
+        // bind: attrs are JS-only: don't include in HTML output
+      } else if (key.startsWith('on:')) {
+        if (!id) id = this.getReactiveId(`ev_${tag}_${node.line}`)
+        const event = key.slice(3)
+        this.eventBindings.push({ elementId: id, event, handler: value, line: node.line })
+        // on: attrs are JS-only: don't include in HTML output
+      } else {
+        staticAttrs[key] = value
+      }
+    }
+    return { staticAttrs, id }
   }
 
   // attrs has already had bind:/on: filtered out by emitElement.
@@ -441,19 +457,35 @@ class HtmlEmitter {
       if (value === true) {
         parts.push(this.escape(key))
       } else if (value !== false && value !== undefined) {
-        // Block dangerous URI schemes in URL attributes
-        if (key === 'href' || key === 'src' || key === 'action' || key === 'formaction') {
-          const strVal = String(value).replace(/[\t\n\r ]/g, '').toLowerCase()
-          if (strVal.startsWith('javascript:') || strVal.startsWith('data:') || strVal.startsWith('vbscript:')) {
-            parts.push(`${this.escape(key)}="#"`)
-            continue
-          }
+        const safeValue = this._safeUri(key, value)
+        if (safeValue === null) {
+          parts.push(`${this.escape(key)}="#"`)
+          continue
         }
-        parts.push(`${this.escape(key)}="${this.escape(String(value))}"`)
+        parts.push(`${this.escape(key)}="${this.escape(String(safeValue))}"`)
       }
     }
 
-    // Auto-enhancements
+    this._applyAutoAttrs(node, attrs, parts)
+
+    return parts.length > 0 ? ' ' + parts.join(' ') : ''
+  }
+
+  // Returns the safe string value for URI attributes, or null if the value is dangerous.
+  // Non-URI attributes are returned as-is (the value unchanged).
+  _safeUri(key, value) {
+    if (key === 'href' || key === 'src' || key === 'action' || key === 'formaction') {
+      const strVal = String(value).replace(/[\t\n\r ]/g, '').toLowerCase()
+      if (strVal.startsWith('javascript:') || strVal.startsWith('data:') || strVal.startsWith('vbscript:')) {
+        return null
+      }
+    }
+    return value
+  }
+
+  // Applies HTML semantic auto-enhancements by pushing additional attribute strings onto parts.
+  // Handles: img defaults, button type injection, external link rel/target, icon aria-hidden.
+  _applyAutoAttrs(node, attrs, parts) {
     if (node.tag === 'img') {
       if (!attrs.loading) parts.push('loading="lazy"')
       if (!attrs.decoding) parts.push('decoding="async"')
@@ -480,8 +512,6 @@ class HtmlEmitter {
       if (!attrs['aria-label']) parts.push('aria-hidden="true"')
       else parts.push('role="img"')
     }
-
-    return parts.length > 0 ? ' ' + parts.join(' ') : ''
   }
 
   emitText(node) {
@@ -621,13 +651,23 @@ class HtmlEmitter {
   // Emit a for-loop body as a JS template-literal source string.
   // Item property expressions are inlined as ${_esc(item.field)}: no global reactive spans needed.
   // When keyExpr is provided, strips key= from the root element and injects data-arc-key instead.
-  emitForBodyTemplate(bodyNodes, itemName, indexName, keyExpr) {
+  _withForContext(itemName, indexName, fn) {
     if (!this._forStack) this._forStack = []
     this._forStack.push({ itemName: this._forItemName, indexName: this._forIndexName, inFor: this._inForTemplate })
     this._forItemName = itemName
     this._forIndexName = indexName
     this._inForTemplate = true
+    try {
+      return fn()
+    } finally {
+      const frame = this._forStack.pop()
+      this._forItemName = frame.itemName
+      this._forIndexName = frame.indexName
+      this._inForTemplate = frame.inFor
+    }
+  }
 
+  emitForBodyTemplate(bodyNodes, itemName, indexName, keyExpr) {
     // Strip key= from root element attrs before emitting, then inject data-arc-key
     let nodes = bodyNodes
     if (keyExpr && bodyNodes?.[0]?.type === 'Element' && bodyNodes[0].attrs?.key) {
@@ -635,11 +675,7 @@ class HtmlEmitter {
       nodes = [{ ...bodyNodes[0], attrs: rest }, ...bodyNodes.slice(1)]
     }
 
-    let html = this.emitChildren(nodes)
-    const frame = this._forStack.pop()
-    this._forItemName = frame.itemName
-    this._forIndexName = frame.indexName
-    this._inForTemplate = frame.inFor
+    let html = this._withForContext(itemName, indexName, () => this.emitChildren(nodes))
 
     // Escape backticks and bare $ in the static HTML portions, then return as template-literal source
     html = html.replace(/`/g, '\\`').replace(/\$(?!\{)/g, '\\$')

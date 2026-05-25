@@ -176,22 +176,7 @@ class JsEmitter {
       )
       for (const b of bindBindings) {
         const setterCall = b.bindRoot
-          ? (() => {
-              // Dotted path: generate a deep immutable update
-              // e.g. user.name → _set_user({..._user, name: _bv})
-              // e.g. user.profile.email → _set_user({..._user, profile:{..._user.profile, email:_bv}})
-              _assertSafeIdent(b.bindRoot, 'bind root')
-              const parts2 = b.expr.split('.')
-              const root = parts2[0]
-              const keys = parts2.slice(1)
-              let setter = `_bv`
-              for (let i = keys.length - 1; i >= 0; i--) {
-                // Use _ prefix for root so the runtime reads the state variable, not a bare name
-                const path = ['_' + root, ...keys.slice(0, i)].join('.')
-                setter = `{...((${path})??{}),${JSON.stringify(keys[i])}:${setter}}`
-              }
-              return `_set_${root}(${setter})`
-            })()
+          ? this._buildDeepSetter(b.bindRoot, b.expr)
           : `_set_${b.expr}(_bv)`
         if (!b.bindRoot && !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(b.expr)) {
           throw new Error(`Arc codegen: bind:value only supports simple variable names or dotted paths, got: ${JSON.stringify(b.expr)}`)
@@ -302,46 +287,54 @@ class JsEmitter {
     const renderFn = `function _renderItem(${item},${idx}){${tplFnBody}}`
 
     if (b.keyExpr) {
-      // Keyed reconciliation: preserves focus, scroll, and input state for unchanged items
-      return [
-        `(function(){`,
-        renderFn,
-        `const _items=${items};`,
-        `if(!Array.isArray(_items)){${el}.innerHTML='';return;}`,
-        // Save focused element id before mutation
-        `const _fa=document.activeElement;const _fid=_fa&&${el}.contains(_fa)?_fa.id:null;`,
-        // Build key→node map from current DOM
-        `const _km=new Map();`,
-        `for(let _c=${el}.firstElementChild;_c;_c=_c.nextElementSibling){`,
-        `  const _k=_c.dataset&&_c.dataset.arcKey;if(_k!==undefined)_km.set(_k,_c);`,
-        `}`,
-        // Render and reconcile
-        `const _kept=new Set();`,
-        `const _newNodes=_items.map(function(${item},${idx}){`,
-        `  const _kv=(${b.keyExpr});const _k=String(_kv!=null?_kv:${idx});`,
-        `  const _html=_renderItem(${item},${idx});`,
-        `  if(_km.has(_k)){`,
-        `    const _ex=_km.get(_k);_kept.add(_k);`,
-        `    const _tmp=document.createElement('div');_tmp.innerHTML=_html;`,
-        `    const _nn=_tmp.firstChild;`,
-        `    if(_nn&&_ex.outerHTML!==_nn.outerHTML){_ex.replaceWith(_nn);return _nn;}`,
-        `    return _ex;`,
-        `  }`,
-        `  const _tmp=document.createElement('div');_tmp.innerHTML=_html;`,
-        `  return _tmp.firstChild;`,
-        `});`,
-        // Remove old nodes not in new set
-        `for(const[_k,_n]of _km){if(!_kept.has(_k)&&_n.parentNode)_n.parentNode.removeChild(_n);}`,
-        // Append/reorder to match new order
-        `_newNodes.forEach(function(_n,_i){`,
-        `  const _cur=${el}.children[_i];if(_cur!==_n)${el}.insertBefore(_n,_cur||null);`,
-        `});`,
-        // Restore focus
-        `if(_fid){const _fe=document.getElementById(_fid);if(_fe)_fe.focus({preventScroll:true});}`,
-        `})();`,
-      ].join('\n')
+      return this._emitKeyedListUpdate(b, el, items, item, idx, renderFn)
     }
 
+    return this._emitSimpleListUpdate(b, el, items, item, idx, renderFn)
+  }
+
+  _emitKeyedListUpdate(b, el, items, item, idx, renderFn) {
+    // Keyed reconciliation: preserves focus, scroll, and input state for unchanged items
+    return [
+      `(function(){`,
+      renderFn,
+      `const _items=${items};`,
+      `if(!Array.isArray(_items)){${el}.innerHTML='';return;}`,
+      // Save focused element id before mutation
+      `const _fa=document.activeElement;const _fid=_fa&&${el}.contains(_fa)?_fa.id:null;`,
+      // Build key→node map from current DOM
+      `const _km=new Map();`,
+      `for(let _c=${el}.firstElementChild;_c;_c=_c.nextElementSibling){`,
+      `  const _k=_c.dataset&&_c.dataset.arcKey;if(_k!==undefined)_km.set(_k,_c);`,
+      `}`,
+      // Render and reconcile
+      `const _kept=new Set();`,
+      `const _newNodes=_items.map(function(${item},${idx}){`,
+      `  const _kv=(${b.keyExpr});const _k=String(_kv!=null?_kv:${idx});`,
+      `  const _html=_renderItem(${item},${idx});`,
+      `  if(_km.has(_k)){`,
+      `    const _ex=_km.get(_k);_kept.add(_k);`,
+      `    const _tmp=document.createElement('div');_tmp.innerHTML=_html;`,
+      `    const _nn=_tmp.firstChild;`,
+      `    if(_nn&&_ex.outerHTML!==_nn.outerHTML){_ex.replaceWith(_nn);return _nn;}`,
+      `    return _ex;`,
+      `  }`,
+      `  const _tmp=document.createElement('div');_tmp.innerHTML=_html;`,
+      `  return _tmp.firstChild;`,
+      `});`,
+      // Remove old nodes not in new set
+      `for(const[_k,_n]of _km){if(!_kept.has(_k)&&_n.parentNode)_n.parentNode.removeChild(_n);}`,
+      // Append/reorder to match new order
+      `_newNodes.forEach(function(_n,_i){`,
+      `  const _cur=${el}.children[_i];if(_cur!==_n)${el}.insertBefore(_n,_cur||null);`,
+      `});`,
+      // Restore focus
+      `if(_fid){const _fe=document.getElementById(_fid);if(_fe)_fe.focus({preventScroll:true});}`,
+      `})();`,
+    ].join('\n')
+  }
+
+  _emitSimpleListUpdate(b, el, items, item, idx, renderFn) {
     // Non-keyed update: small lists use individual node replacement, large use innerHTML batch
     // Focus within the list is restored after update
     return [
@@ -363,6 +356,23 @@ class JsEmitter {
       `if(_fid){const _fe=document.getElementById(_fid);if(_fe)_fe.focus({preventScroll:true});}`,
       `})();`,
     ].join('\n')
+  }
+
+  _buildDeepSetter(bindRoot, pathExpr) {
+    // Dotted path: generate a deep immutable update
+    // e.g. user.name → _set_user({..._user, name: _bv})
+    // e.g. user.profile.email → _set_user({..._user, profile:{..._user.profile, email:_bv}})
+    _assertSafeIdent(bindRoot, 'bind root')
+    const parts2 = pathExpr.split('.')
+    const root = parts2[0]
+    const keys = parts2.slice(1)
+    let setter = `_bv`
+    for (let i = keys.length - 1; i >= 0; i--) {
+      // Use _ prefix for root so the runtime reads the state variable, not a bare name
+      const path = ['_' + root, ...keys.slice(0, i)].join('.')
+      setter = `{...((${path})??{}),${JSON.stringify(keys[i])}:${setter}}`
+    }
+    return `_set_${root}(${setter})`
   }
 
   // ── Event listeners ────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ const { compileRoutes } = require('../compilers/route-compiler')
 const { emitAuthPreamble } = require('./auth-helpers')
 const { emitQueuePreamble, emitEmailPreamble, emitJobEnqueueWrapper } = require('./queue-helpers')
 const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
+const { routeHandlerName } = require('./route-utils')
 
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
@@ -117,12 +118,6 @@ async function _parseBody(req) {
   return {}
 }
 
-// Route-level aliases (shared across all handlers)
-const _alias_json = (data, status = 200) => _json(data, status)
-const _alias_html = (body, status = 200) => _html(body, status)
-const _alias_text = (body, status = 200) => _text(body, status)
-const _alias_redirect = (loc, status = 302) => _redirect(loc, status)
-const _alias_parseBody = (req) => _parseBody(req)
 `.trim()
   }
 
@@ -363,10 +358,7 @@ async function _job_${job.name}(${params}) {
 
   // ── Route handlers ────────────────────────────────────────────────────────────
 
-  routeHandlerName(route) {
-    const slug = route.path.replace(/[^a-zA-Z0-9]/g, '_').replace(/^_+|_+$/g, '') || 'root'
-    return `_route_${route.method.toLowerCase()}_${slug}`
-  }
+  routeHandlerName(route) { return routeHandlerName(route) }
 
   emitRouteHandler(route) {
     const name = this.routeHandlerName(route)
@@ -386,11 +378,11 @@ async function _job_${job.name}(${params}) {
 async function ${name}(req, params) {
   const _traceId = req._traceId
   try {
-    ${pathParams ? pathParams + '\n  ' : ''}${authGuard ? authGuard + '\n  ' : ''}const json = _alias_json
-    const html = _alias_html
-    const text = _alias_text
-    const redirect = _alias_redirect
-    const parseBody = _alias_parseBody
+    ${pathParams ? pathParams + '\n  ' : ''}${authGuard ? authGuard + '\n  ' : ''}const json = _json
+    const html = _html
+    const text = _text
+    const redirect = _redirect
+    const parseBody = _parseBody
     const request = req
     ${body}
   } catch (_e) {
