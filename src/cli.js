@@ -223,11 +223,11 @@ function _adpDecode(buf){let p=0;function rv(){const t=buf[p++];if(t===0)return 
 function treeshakeBaseCss(css, html) {
   const utilities = [
     'arc-row', 'arc-col', 'arc-center', 'arc-spacer', 'arc-wrap',
-    'arc-sr-only', 'arc-skip-link',
+    'arc-sr-only', 'arc-skip-link', 'arc-card',
   ]
   // Single HTML scan to determine which utilities are referenced
   const usedClasses = new Set()
-  const classRe = /class\s*=\s*"([^"]*)"/g
+  const classRe = /class\s*=\s*["']([^"']*)["']/g
   let m
   while ((m = classRe.exec(html))) {
     for (const cls of m[1].split(/\s+/)) if (cls) usedClasses.add(cls)
@@ -1335,7 +1335,7 @@ async function serve(projectDir, flags = {}) {
           clearTimeout(debounceTimer)
           debounceTimer = setTimeout(() => {
             console.log(`${DIM}arc: ${path.relative(absDir, f)} changed — rebuilding...${RESET}`)
-            rebuild()
+            rebuild().catch(e => console.error(`arc: rebuild error: ${e.message}`))
           }, 150)
         })
       }
@@ -1601,9 +1601,7 @@ async function runSeed(seedFile, projectDir, opts = {}) {
   const jsEmitter = new JsEmitter({ hash: 'arc' })
   const seedBody = jsEmitter.emitBody(program.declarations)
 
-  const urlExport = opts.db === 'postgres'
-    ? `process.env.DATABASE_URL = process.env.DATABASE_URL ?? '${opts.url}'`
-    : `process.env.DATABASE_URL = process.env.DATABASE_URL ?? '${opts.url}'`
+  const urlExport = `process.env.DATABASE_URL = process.env.DATABASE_URL ?? '${opts.url}'`
 
   const seedScript = `
 'use strict'

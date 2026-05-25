@@ -16,6 +16,7 @@ const { JsEmitter } = require('./js')
 const { compileRoutes } = require('../compilers/route-compiler')
 const { emitAuthPreamble } = require('./auth-helpers')
 const { emitQueuePreamble, emitEmailPreamble, emitJobEnqueueWrapper } = require('./queue-helpers')
+const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
 
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
@@ -66,7 +67,7 @@ class BunServerEmitter {
     }))
     parts.push(compileRoutes(routeSpecs))
 
-    parts.push(this.emitBunServe(routes))
+    parts.push(this.emitBunServe(routes, schemas))
 
     return parts.filter(Boolean).join('\n\n')
   }
@@ -103,15 +104,16 @@ async function _parseBody(req) {
   const length = +(req.headers.get('content-length') ?? 0)
   if (length > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
   const ct = req.headers.get('content-type') ?? ''
-  if (ct.includes('application/json')) return req.json()
-  if (ct.includes('application/x-www-form-urlencoded')) {
-    const text = await req.text()
-    return Object.fromEntries(new URLSearchParams(text))
-  }
   if (ct.includes('multipart/form-data')) {
     const fd = await req.formData()
     return Object.fromEntries(fd.entries())
   }
+  // Read actual bytes to enforce limit for chunked requests (no Content-Length)
+  const buf = await req.arrayBuffer()
+  if (buf.byteLength > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
+  const text = new TextDecoder().decode(buf)
+  if (ct.includes('application/json')) return JSON.parse(text)
+  if (ct.includes('application/x-www-form-urlencoded')) return Object.fromEntries(new URLSearchParams(text))
   return {}
 }
 
@@ -222,26 +224,7 @@ globalThis.db = db`.trim()
   }
 
   arcTypeToSql(arcType, dialect = 'sqlite') {
-    if (dialect === 'postgres') {
-      switch (arcType) {
-        case 'Int':      return 'INTEGER'
-        case 'Float':    return 'REAL'
-        case 'Bool':     return 'BOOLEAN'
-        case 'DateTime': return 'TIMESTAMPTZ'
-        case 'Email':    return 'TEXT'
-        case 'String':   return 'TEXT'
-        default:         return 'TEXT'
-      }
-    }
-    switch (arcType) {
-      case 'Int':      return 'INTEGER'
-      case 'Float':    return 'REAL'
-      case 'Bool':     return 'INTEGER'
-      case 'DateTime': return 'TEXT'
-      case 'Email':    return 'TEXT'
-      case 'String':   return 'TEXT'
-      default:         return 'TEXT'
-    }
+    return _arcTypeToSql(arcType, dialect)
   }
 
   // ── Job handlers ──────────────────────────────────────────────────────────────
@@ -264,9 +247,9 @@ async function _job_${job.name}(${params}) {
   // async helpers (parseBody, auth.*, oauth.*, jwt.*) need `await`.
 
   // Calls that always return a Response and should be prefixed with `return`
-  static _RETURN_FUNS = new Set(['json', 'redirect', 'html', 'text'])
+  static _RETURN_FUNS = new Set(['json', 'redirect', 'html', 'text', 'auth.clear'])
   // Calls that return a Response and are async — prefix with `return await`
-  static _RETURN_AWAIT_FUNS = new Set(['auth.set', 'auth.clear'])
+  static _RETURN_AWAIT_FUNS = new Set(['auth.set'])
   // Async call RHS in VarDecl — prefix with `await`
   static _AWAIT_FUNS = new Set([
     'parseBody',
@@ -409,7 +392,7 @@ async function ${name}(req, params) {
   } catch (_e) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
     if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e) }))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: req?._traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e) }))
     return _json({ error: 'Internal server error' }, 500)
   }
 }`.trim()
@@ -417,16 +400,27 @@ async function ${name}(req, params) {
 
   // ── Bun.serve() entry ─────────────────────────────────────────────────────────
 
-  emitBunServe(routes) {
+  emitBunServe(routes, schemas) {
     const port = '+(process.env.PORT ?? 3000)'
+    const hasDb = schemas && schemas.length > 0
+    const dbProbe = hasDb
+      ? (this.isPg
+        ? `let _dbOk=false;try{await _pool.query('SELECT 1');_dbOk=true}catch{}`
+        : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch{}`)
+      : ''
+    const healthBody = hasDb
+      ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime() })`
+      : `return _json({ status: 'ok', uptime: process.uptime() })`
     return `
 // Start Bun server
 const _server = Bun.serve({
   port: ${port},
   async fetch(req) {
     const url = new URL(req.url)
-    if (url.pathname === '/health') return _json({ status: 'ok', uptime: process.uptime() })
-    req._traceId = Math.random().toString(36).slice(2, 10)
+    if (url.pathname === '/health') {
+    ${healthBody}
+    }
+    req._traceId = req.headers.get('x-request-id') ?? Math.random().toString(36).slice(2, 10)
     return _dispatch(req, url)
   }
 })

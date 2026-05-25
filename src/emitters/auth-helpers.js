@@ -30,12 +30,11 @@ async function _hmacSign(data, secret) {
 }
 
 async function _hmacVerify(data, sig, secret) {
-  const expected = await _hmacSign(data, secret)
   const enc = new TextEncoder()
-  const a = enc.encode(expected)
-  const b = enc.encode(sig)
-  if (a.length !== b.length) return false
-  try { return require('crypto').timingSafeEqual(a, b) } catch { return expected === sig }
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'])
+  const padded = sig.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - sig.length % 4) % 4)
+  const sigBytes = Uint8Array.from(atob(padded), c => c.charCodeAt(0))
+  try { return await crypto.subtle.verify('HMAC', key, sigBytes, enc.encode(data)) } catch { return false }
 }
 
 // Session: encode/decode signed cookie value
@@ -80,7 +79,7 @@ const auth = {
   // Set session cookie on a Response (mutates headers)
   set: async (res, payload) => {
     const value = await _sessionEncode(payload)
-    const cookie = \`\${_SESSION_COOKIE}=\${value}; HttpOnly; SameSite=Lax; Max-Age=\${_SESSION_MAX_AGE}; Path=/; Secure\`
+    const cookie = \`\${_SESSION_COOKIE}=\${value}; HttpOnly; SameSite=Lax; Max-Age=\${_SESSION_MAX_AGE}; Path=/\${process.env.NODE_ENV === 'production' ? '; Secure' : ''}\`
     return new Response(res.body, {
       status: res.status,
       headers: { ...Object.fromEntries(res.headers), 'Set-Cookie': cookie }
@@ -145,7 +144,7 @@ const oauth = {
       const code = url.searchParams.get('code')
       const state = url.searchParams.get('state')
       if (!code) return { ok: false, error: 'no_code' }
-      if (expectedState && state !== expectedState) return { ok: false, error: 'auth_failed' }
+      if (!state || !expectedState || state !== expectedState) return { ok: false, error: 'auth_failed' }
       const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -187,7 +186,7 @@ const oauth = {
       const code = url.searchParams.get('code')
       const state = url.searchParams.get('state')
       if (!code) return { ok: false, error: 'no_code' }
-      if (expectedState && state !== expectedState) return { ok: false, error: 'auth_failed' }
+      if (!state || !expectedState || state !== expectedState) return { ok: false, error: 'auth_failed' }
       const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? ''
       const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',

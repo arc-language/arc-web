@@ -16,6 +16,7 @@ const { JsEmitter } = require('./js')
 const { compileRoutes } = require('../compilers/route-compiler')
 const { emitAuthPreamble } = require('./auth-helpers')
 const { emitEmailPreamble } = require('./queue-helpers')
+const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
 
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
@@ -64,7 +65,7 @@ class CloudflareEmitter {
     parts.push(compileRoutes(routeSpecs, { extraParam: 'env' }))
 
     // CF Worker export
-    parts.push(this.emitWorkerExport(jobs))
+    parts.push(this.emitWorkerExport(jobs, schemas))
 
     const worker = parts.filter(Boolean).join('\n\n')
 
@@ -137,7 +138,7 @@ ${blocks.join('\n')}
 
     return `
   const ${lc} = {
-    findMany: async () => (await D1.prepare('SELECT * FROM ${lc}').all()).results,
+    findMany: async (opts = {}) => (await D1.prepare('SELECT * FROM ${lc} LIMIT ?1 OFFSET ?2').bind(opts?.limit ?? 1000, opts?.offset ?? 0).all()).results,
     find: async (id) => D1.prepare('SELECT * FROM ${lc} WHERE id = ?').bind(id).first(),
     ${colList ? `create: async (data) => D1.prepare('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *').bind(${fieldArgs.join(', ')}).first(),` : ''}
     ${colList ? `update: async (id, data) => D1.prepare('UPDATE ${lc} SET ${updates} WHERE id = ? RETURNING *').bind(${fieldArgs.join(', ')}, id).first(),` : ''}
@@ -161,15 +162,7 @@ ${blocks.join('\n')}
   }
 
   arcTypeToSql(arcType) {
-    switch (arcType) {
-      case 'Int':      return 'INTEGER'
-      case 'Float':    return 'REAL'
-      case 'Bool':     return 'INTEGER'
-      case 'DateTime': return 'TEXT'
-      case 'Email':    return 'TEXT'
-      case 'String':   return 'TEXT'
-      default:         return 'TEXT'
-    }
+    return _arcTypeToSql(arcType, 'sqlite')
   }
 
   // ── Job handlers ──────────────────────────────────────────────────────────────
@@ -216,6 +209,7 @@ async function _job_${job.name}(${params}${params ? ', ' : ''}env) {
     return `
 // Route: ${route.method} ${route.path}${requiresAuth ? ' [auth]' : ''}
 async function ${name}(req, params, env) {
+  const _traceId = req.headers.get('x-request-id') ?? crypto.randomUUID().slice(0, 8)
   try {
     ${hasDb ? 'const db = _makeDb(env.DB)' : ''}
     ${pathParams ? pathParams + '\n    ' : ''}${authGuard ? authGuard + '\n    ' : ''}const json = (data, status = 200) => _json(data, status)
@@ -229,7 +223,7 @@ async function ${name}(req, params, env) {
     ${body}
   } catch (_e) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
-    console.error('[arc] route ${route.method} ${route.path} error:', _e)
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e) }))
     return _json({ error: 'Internal server error' }, 500)
   }
 }`.trim()
@@ -241,20 +235,25 @@ async function ${name}(req, params, env) {
         const key = typeof env !== 'undefined' ? env.RESEND_API_KEY : undefined
         const apiKey = key ?? process.env?.RESEND_API_KEY
         if (!apiKey) { console.warn('[arc:email] Set RESEND_API_KEY binding'); return }
-        await fetch('https://api.resend.com/emails', {
+        const _r = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { Authorization: \`Bearer \${apiKey}\`, 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(15000),
           body: JSON.stringify({ from: opts.from ?? 'noreply@example.com', to: Array.isArray(opts.to) ? opts.to : [opts.to], subject: opts.subject, text: opts.text, html: opts.html }),
         })
+        if (!_r.ok) { const _err = await _r.text().catch(() => _r.status); throw new Error(\`[arc:email] Resend error: \${_err}\`) }
       }
     }`
   }
 
   // ── CF Worker export ──────────────────────────────────────────────────────────
 
-  emitWorkerExport(jobs) {
+  emitWorkerExport(jobs, schemas) {
     const jobRegistry = jobs.length > 0
-      ? `const _jobRegistry = {\n${jobs.map(j => `  '${j.name}': _job_${j.name},`).join('\n')}\n}`
+      ? `const _jobRegistry = {\n${jobs.map(j => {
+          if (!_SAFE_IDENT.test(j.name)) throw new Error(`Arc codegen: unsafe job name in registry: ${JSON.stringify(j.name)}`)
+          return `  '${j.name}': _job_${j.name},`
+        }).join('\n')}\n}`
       : 'const _jobRegistry = {}'
 
     const queueHandler = jobs.length > 0 ? `
@@ -276,7 +275,12 @@ ${jobRegistry}
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url)
-    if (url.pathname === '/health') return new Response(JSON.stringify({ status: 'ok' }), { headers: { 'Content-Type': 'application/json' } })
+    if (url.pathname === '/health') {
+      let _dbOk = false
+      if (env.DB) { try { await env.DB.prepare('SELECT 1').first(); _dbOk = true } catch {} }
+      else { _dbOk = true }
+      return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a' }), { headers: { 'Content-Type': 'application/json' } })
+    }
     return _dispatch(req, url, env)
   },${queueHandler}
 }`.trim()

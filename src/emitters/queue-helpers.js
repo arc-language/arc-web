@@ -36,6 +36,7 @@ const _queue = {
           setTimeout(() => this.enqueue(fn, args, retries + 1), delay)
         } else {
           console.error('[arc:queue] job permanently failed after 3 retries — moved to dead letter queue')
+          if (this._dead.length >= 1000) this._dead.shift()
           this._dead.push({ fn, args, error: _e?.message ?? String(_e), failedAt: new Date().toISOString() })
         }
       }

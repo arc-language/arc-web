@@ -6,30 +6,7 @@
 // Supports SQLite (via bun:sqlite / better-sqlite3) and PostgreSQL (via pg).
 
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
-
-// Arc type → SQL type per dialect
-function arcTypeToSql(arcType, dialect = 'sqlite') {
-  if (dialect === 'postgres') {
-    switch (arcType) {
-      case 'Int':      return 'INTEGER'
-      case 'Float':    return 'REAL'
-      case 'Bool':     return 'BOOLEAN'
-      case 'DateTime': return 'TIMESTAMPTZ'
-      case 'Email':    return 'TEXT'
-      case 'String':   return 'TEXT'
-      default:         return 'TEXT'
-    }
-  }
-  switch (arcType) {
-    case 'Int':      return 'INTEGER'
-    case 'Float':    return 'REAL'
-    case 'Bool':     return 'INTEGER'
-    case 'DateTime': return 'TEXT'
-    case 'Email':    return 'TEXT'
-    case 'String':   return 'TEXT'
-    default:         return 'TEXT'
-  }
-}
+const { arcTypeToSql } = require('./sql-types')
 
 // Derive table name from model name (Post → posts, User → users)
 function tableName(modelName) {
@@ -98,6 +75,7 @@ async function getExistingColumnsSqlite(dbPath) {
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name)
   const result = new Map()
   for (const tbl of tables) {
+    if (!_SAFE_IDENT.test(tbl)) continue
     const cols = db.prepare(`PRAGMA table_info(${tbl})`).all()
     result.set(tbl, new Set(cols.map(c => c.name)))
   }
@@ -215,3 +193,4 @@ async function migrate(schemas, opts = {}) {
 }
 
 module.exports = { migrate, generateModelMigration, desiredColumns, tableName, arcTypeToSql }
+
