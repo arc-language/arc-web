@@ -4,6 +4,14 @@
 // Includes response helpers and body parser — identical across Bun and Cloudflare.
 
 const SHARED_RESPONSE_HELPERS = `
+// Pick only the listed keys from an object — used by db helpers to strip unexpected request fields
+function _pick(obj, keys) {
+  if (!obj || typeof obj !== 'object') return {}
+  const out = Object.create(null)
+  for (const k of keys) if (Object.prototype.hasOwnProperty.call(obj, k)) out[k] = obj[k]
+  return out
+}
+
 // Response helpers
 const _json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {

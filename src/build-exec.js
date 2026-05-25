@@ -360,6 +360,10 @@ class BuildExecutor {
     // URL.hostname for IPv6 includes brackets (e.g. "[::1]"): strip them for consistent checks
     const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
     if (_isBlockedHost(hostname)) throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
+    // DNS rebinding note: this check runs pre-connection against the URL hostname. An attacker-controlled
+    // DNS server can return a public IP here, then switch to a private IP when the TCP connection resolves.
+    // The primary defense against DNS rebinding is network-level egress filtering (firewall rules blocking
+    // private RFC-1918 ranges from outbound connections). This blocklist provides defense-in-depth only.
 
     return new Promise((resolve, reject) => {
       // settled must be hoisted to executor scope: error/timeout handlers fire

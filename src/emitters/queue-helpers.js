@@ -4,6 +4,9 @@
 // Zero external dependencies — works in Bun and Node 18+.
 //
 // Queue: in-process async queue with retry (exponential backoff, max 3 retries).
+//   IMPORTANT: this queue is NOT persistent — jobs enqueued during a crash or restart
+//   will be lost. For durable queues, use arc build --target cloudflare (CF Queues)
+//   or integrate a persistent queue adapter (BullMQ + Redis, etc.).
 // Email: Resend API (HTTP) primary, nodemailer SMTP fallback.
 
 function emitQueuePreamble() {
@@ -26,28 +29,32 @@ const _queue = {
     if (!this._running) this._process()
   },
   async _process() {
+    // Set _running before any await so re-entrant enqueue() calls don't spawn a second _process()
     this._running = true
-    while (this._items.length > 0) {
-      const { fn, args, retries } = this._items.shift()
-      try {
-        await Promise.race([fn(...args), _jobTimeout(_JOB_TIMEOUT_MS)])
-      } catch (_e) {
-        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: fn?.name ?? 'unknown', msg: _e?.message ?? String(_e) }))
-        if (retries < 3) {
-          const delay = Math.pow(2, retries) * 1000
-          this._pendingRetries++
-          setTimeout(() => { this._pendingRetries--; this.enqueue(fn, args, retries + 1) }, delay)
-        } else {
-          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: fn?.name ?? 'unknown', event: 'dlq', msg: '[arc:queue] job permanently failed after 3 retries — moved to dead letter queue', error: _e?.message ?? String(_e) }))
-          if (this._dead.length >= 1000) { this._dead.shift(); console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:queue] DLQ cap reached — oldest entry evicted' })) }
-          this._dead.push({ fn, args, error: _e?.message ?? String(_e), failedAt: new Date().toISOString() })
+    try {
+      while (this._items.length > 0) {
+        const { fn, args, retries } = this._items.shift()
+        try {
+          await Promise.race([fn(...args), _jobTimeout(_JOB_TIMEOUT_MS)])
+        } catch (_e) {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: fn?.name ?? 'unknown', msg: _e?.message ?? String(_e) }))
+          if (retries < 3) {
+            const delay = Math.pow(2, retries) * 1000
+            this._pendingRetries++
+            setTimeout(() => { this._pendingRetries--; this.enqueue(fn, args, retries + 1) }, delay)
+          } else {
+            console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: fn?.name ?? 'unknown', event: 'dlq', msg: '[arc:queue] job permanently failed after 3 retries — moved to dead letter queue', error: _e?.message ?? String(_e) }))
+            if (this._dead.length >= 1000) { this._dead.shift(); console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:queue] DLQ cap reached — oldest entry evicted' })) }
+            this._dead.push({ fn, args, error: _e?.message ?? String(_e), failedAt: new Date().toISOString() })
+          }
         }
       }
-    }
-    this._running = false
-    if (this._items.length === 0 && this._pendingRetries === 0) {
-      const resolvers = this._drainResolvers.splice(0)
-      for (const resolve of resolvers) resolve()
+    } finally {
+      this._running = false
+      if (this._items.length === 0 && this._pendingRetries === 0) {
+        const resolvers = this._drainResolvers.splice(0)
+        for (const resolve of resolvers) resolve()
+      }
     }
   }
 }
