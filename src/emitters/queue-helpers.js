@@ -92,8 +92,8 @@ const email = {
         }),
       })
       if (!res.ok) {
-        const err = await res.text().catch(() => res.status)
-        throw new Error(\`[arc:email] Resend error: \${err}\`)
+        const _errBody = await res.text().catch(() => '')
+        throw new Error(\`[arc:email] Resend error: HTTP \${res.status}\${_errBody ? ' — ' + _errBody.slice(0, 120) : ''}\`)
       }
       return res.json()
     }

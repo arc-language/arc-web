@@ -35,7 +35,7 @@ jobs:
           fi
 
       - name: Lint (syntax check)
-        run: find src adp -name '*.js' | xargs node --check
+        run: find src adp tests -name '*.js' | xargs node --check
 
       - name: Run tests
         run: find tests -name '*.test.js' | xargs node --test

@@ -21,6 +21,8 @@ function _hasH1(nodes, depth = 0) {
   return false
 }
 
+const _INTERACTIVE_TAGS = new Set(['button', 'a', 'input', 'select', 'textarea', 'summary'])
+
 const _ESC_RE = /[&<>"']/g
 const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }
 
@@ -485,7 +487,7 @@ class HtmlEmitter {
       parts.push(`onclick="${_action}"`)
       // Keyboard accessibility: non-interactive elements need tabindex + role so keyboard users can trigger them
       const tag = node?.tag ?? ''
-      const _interactiveTags = new Set(['button', 'a', 'input', 'select', 'textarea', 'summary'])
+      const _interactiveTags = _INTERACTIVE_TAGS
       if (!_interactiveTags.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
@@ -500,7 +502,7 @@ class HtmlEmitter {
       const _action = `var _d=document.getElementById(${safeId});if(_d)_d.close()`
       parts.push(`onclick="${_action}"`)
       const tag = node?.tag ?? ''
-      const _interactiveTags = new Set(['button', 'a', 'input', 'select', 'textarea', 'summary'])
+      const _interactiveTags = _INTERACTIVE_TAGS
       if (!_interactiveTags.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')

@@ -139,10 +139,8 @@ const _db = {
   emitModelHelpers(schema) {
     const name = schema.name
     if (!_SAFE_IDENT.test(name)) throw new Error(`Arc codegen: unsafe schema name: ${JSON.stringify(name)}`)
-
-    return this.isPg
-      ? this._emitModelHelpersPg(schema)
-      : this._emitModelHelpersSqlite(schema)
+    if (this.isPg) throw new Error('Arc codegen: isPg schemas must use emitPgSchemaInit, not emitModelHelpers')
+    return this._emitModelHelpersSqlite(schema)
   }
 
   _emitModelHelpersSqlite(schema) {
@@ -210,29 +208,6 @@ ${tableInits}
 ${dbEntries}
   }
 })().catch(e => { console.error('[arc] schema init failed:', e.message); process.exit(1) })`.trim()
-  }
-
-  _emitModelHelpersPg(schema) {
-    const { lc, fields, colList, colDefs } = this._schemaVars(schema, 'postgres')
-    // PostgreSQL uses $1, $2, ... placeholders and SERIAL for autoincrement
-    const placeholders = fields.map((_, i) => `$${i + 1}`).join(', ')
-    const updates = fields.map((f, i) => `${f.name} = $${i + 1}`).join(', ')
-    const selectCols = colList ? `id, ${colList}` : 'id'
-    const fieldNames = JSON.stringify(fields.map(f => f.name))
-
-    return `
-// Schema: ${schema.name}
-Object.assign(globalThis.db ?? (globalThis.db = {}), {
-  ${lc}: (() => { const _flds = ${fieldNames}; return {
-    findMany: async (opts = {}) => _pool.query('SELECT ${selectCols} FROM ${lc} LIMIT $1 OFFSET $2', [Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows),
-    find: async (id) => _pool.query('SELECT ${selectCols} FROM ${lc} WHERE id = $1', [id]).then(r => r.rows[0] ?? null),
-    ${colList ? `create: async (data) => { const _d = _pick(data, _flds); return _pool.query('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}]).then(r => r.rows[0]) },` : ''}
-    ${colList ? `update: async (id, data) => { const _d = _pick(data, _flds); return _pool.query('UPDATE ${lc} SET ${updates} WHERE id = $${fields.length + 1} RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}, id]).then(r => r.rows[0]) },` : ''}
-    delete: async (id) => { await _pool.query('DELETE FROM ${lc} WHERE id = $1', [id]); return true },
-    count: async () => _pool.query('SELECT COUNT(*) as count FROM ${lc}').then(r => +r.rows[0].count),
-  }})(),
-})
-const db = globalThis.db`.trim()
   }
 
   _schemaVars(schema, dialect) {

@@ -73,7 +73,7 @@ function _parseCookies(req) {
   const cookies = {}
   for (const part of header.split(';')) {
     const [k, ...vs] = part.trim().split('=')
-    if (k) cookies[k.trim()] = decodeURIComponent(vs.join('='))
+    if (k) { try { cookies[k.trim()] = decodeURIComponent(vs.join('=')) } catch { cookies[k.trim()] = vs.join('=') } }
   }
   return cookies
 }

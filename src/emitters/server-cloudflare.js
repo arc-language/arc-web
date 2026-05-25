@@ -100,7 +100,7 @@ function _routeCtx(req, env) {
     redirect: (loc, status = 302) => _redirect(loc, status),
     parseBody: () => _parseBody(req),
     request: req,
-    Queue: { enqueue: (job, ...args) => env.QUEUE?.send({ job, args }) },
+    Queue: { enqueue: (job, ...args) => { if (!env.QUEUE) { console.warn('[arc:queue] env.QUEUE binding not configured — job dropped:', job); return } return env.QUEUE.send({ job, args }) } },
   }
 }`.trim()
   }
@@ -113,6 +113,7 @@ function _routeCtx(req, env) {
 // D1 database helpers — cached per D1 binding instance to avoid per-request allocation
 const _dbCache = new WeakMap()
 function _getDb(D1) {
+  if (!D1) throw new Error('[arc] env.DB is not bound — add a D1 binding named DB in wrangler.toml')
   let db = _dbCache.get(D1)
   if (!db) { db = _makeDb(D1); _dbCache.set(D1, db) }
   return db
@@ -232,7 +233,9 @@ function _makeEmail(env) {
         signal: AbortSignal.timeout(15000),
         body: JSON.stringify({ from: opts.from ?? 'noreply@example.com', to: Array.isArray(opts.to) ? opts.to : [opts.to], subject: opts.subject, text: opts.text, html: opts.html }),
       })
-      if (!_r.ok) { const _err = await _r.text().catch(() => _r.status); console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: \`[arc:email] Resend error: \${_err}\` })); return { ok: false, error: String(_err) } }
+      if (!_r.ok) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: \`[arc:email] Resend error: HTTP \${_r.status}\` })); return { ok: false, error: 'HTTP ' + _r.status } }
+      const _body = await _r.json().catch(() => ({}))
+      return { ok: true, id: _body?.id }
     }
   }
 }`.trim()
@@ -259,7 +262,8 @@ function _makeEmail(env) {
       const args = Array.isArray(_rawArgs) ? _rawArgs : []
       const fn = _jobRegistry[job]
       if (fn) {
-        try { await fn(...args, env); msg.ack() } catch (e) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: e?.message ?? String(e) })); if (msg.attempts >= 3) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'dlq', msg: 'max retries exceeded' })); msg.ack() } else { msg.retry() } }
+        try { await fn(...args, env) } catch (e) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: e?.message ?? String(e) })); if (msg.attempts >= 3) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'dlq', msg: 'max retries exceeded' })); msg.ack() } else { msg.retry() }; continue }
+        msg.ack()
       } else {
         msg.ack()
       }

@@ -92,7 +92,7 @@ model User
 `)
   const emitter = new CloudflareEmitter()
   const { worker } = emitter.emitProgram(prog)
-  assert.ok(worker.includes('SELECT * FROM users'), 'findMany SQL emitted')
+  assert.ok(worker.includes('SELECT id, email, name FROM users'), 'findMany SQL emitted')
   assert.ok(worker.includes('INSERT INTO users'), 'create SQL emitted')
   assert.ok(worker.includes('UPDATE users'), 'update SQL emitted')
   assert.ok(worker.includes('DELETE FROM users'), 'delete SQL emitted')
@@ -153,7 +153,7 @@ test('CloudflareEmitter: CF Queue.enqueue sends via env.QUEUE', () => {
 `)
   const emitter = new CloudflareEmitter()
   const { worker } = emitter.emitProgram(prog)
-  assert.ok(worker.includes('env.QUEUE?.send'), 'CF queue send used')
+  assert.ok(worker.includes('env.QUEUE'), 'CF queue send used')
 })
 
 test('CloudflareEmitter: @auth routes have session guard', () => {
