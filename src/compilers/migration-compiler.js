@@ -72,15 +72,18 @@ async function getExistingColumnsSqlite(dbPath) {
   }
 
   const db = new Database(dbPath)
-  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name)
-  const result = new Map()
-  for (const tbl of tables) {
-    if (!_SAFE_IDENT.test(tbl)) continue
-    const cols = db.prepare(`PRAGMA table_info(${tbl})`).all()
-    result.set(tbl, new Set(cols.map(c => c.name).filter(n => _SAFE_IDENT.test(n))))
+  try {
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name)
+    const result = new Map()
+    for (const tbl of tables) {
+      if (!_SAFE_IDENT.test(tbl)) continue
+      const cols = db.prepare(`PRAGMA table_info(${tbl})`).all()
+      result.set(tbl, new Set(cols.map(c => c.name).filter(n => _SAFE_IDENT.test(n))))
+    }
+    return result
+  } finally {
+    db.close()
   }
-  db.close()
-  return result
 }
 
 // Inspect existing PostgreSQL DB via pg
@@ -122,7 +125,7 @@ async function applyMigrationSqlite(statements, dbPath) {
     }
     db.exec('COMMIT')
   } catch (e) {
-    try { db.exec('ROLLBACK') } catch {}
+    try { db.exec('ROLLBACK') } catch (rbErr) { console.warn('[arc:migrate] rollback attempted after error:', rbErr.message) }
     throw e
   } finally {
     db.close()

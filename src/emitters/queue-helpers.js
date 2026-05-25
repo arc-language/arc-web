@@ -19,6 +19,8 @@ const _queue = {
   _items: [],
   _dead: [],
   _running: false,
+  _pendingRetries: 0,
+  _drainResolvers: [],
   enqueue(fn, args, retries = 0) {
     this._items.push({ fn, args, retries })
     if (!this._running) this._process()
@@ -33,7 +35,8 @@ const _queue = {
         console.error('[arc:queue] job error:', _e?.message ?? _e)
         if (retries < 3) {
           const delay = Math.pow(2, retries) * 200
-          setTimeout(() => this.enqueue(fn, args, retries + 1), delay)
+          this._pendingRetries++
+          setTimeout(() => { this._pendingRetries--; this.enqueue(fn, args, retries + 1) }, delay)
         } else {
           console.error('[arc:queue] job permanently failed after 3 retries — moved to dead letter queue')
           if (this._dead.length >= 1000) { this._dead.shift(); console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:queue] DLQ cap reached — oldest entry evicted' })) }
@@ -42,6 +45,10 @@ const _queue = {
       }
     }
     this._running = false
+    if (this._items.length === 0 && this._pendingRetries === 0) {
+      const resolvers = this._drainResolvers.splice(0)
+      for (const resolve of resolvers) resolve()
+    }
   }
 }
 
@@ -50,8 +57,8 @@ const Queue = {
   size: () => _queue._items.length,
   dead: () => [..._queue._dead],
   drain: () => new Promise(resolve => {
-    const check = () => _queue._items.length === 0 && !_queue._running ? resolve() : setTimeout(check, 10)
-    check()
+    if (_queue._items.length === 0 && !_queue._running && _queue._pendingRetries === 0) return resolve()
+    _queue._drainResolvers.push(resolve)
   }),
 }`.trim()
 }

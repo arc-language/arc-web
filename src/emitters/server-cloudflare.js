@@ -135,18 +135,21 @@ ${blocks.join('\n')}
 
     const lc = name.toLowerCase() + 's'
     const fields = (schema.fields ?? []).filter(f => f.name && !f.decorators?.includes('@id'))
+    for (const f of fields) {
+      if (!_SAFE_IDENT.test(f.name)) throw new Error(`Arc codegen: unsafe field name: ${JSON.stringify(f.name)}`)
+    }
     const colList = fields.map(f => f.name).join(', ')
-    const placeholders = fields.map(() => '?').join(', ')
-    const updates = fields.map(f => `${f.name} = ?`).join(', ')
+    const placeholders = fields.map((_, i) => `?${i + 1}`).join(', ')
+    const updates = fields.map((f, i) => `${f.name} = ?${i + 1}`).join(', ')
     const fieldArgs = fields.map(f => `data.${f.name}`)
 
     return `
   const ${lc} = {
     findMany: async (opts = {}) => (await D1.prepare('SELECT * FROM ${lc} LIMIT ?1 OFFSET ?2').bind(opts?.limit ?? 1000, opts?.offset ?? 0).all()).results,
-    find: async (id) => D1.prepare('SELECT * FROM ${lc} WHERE id = ?').bind(id).first(),
+    find: async (id) => D1.prepare('SELECT * FROM ${lc} WHERE id = ?1').bind(id).first(),
     ${colList ? `create: async (data) => D1.prepare('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *').bind(${fieldArgs.join(', ')}).first(),` : ''}
-    ${colList ? `update: async (id, data) => D1.prepare('UPDATE ${lc} SET ${updates} WHERE id = ? RETURNING *').bind(${fieldArgs.join(', ')}, id).first(),` : ''}
-    delete: async (id) => (await D1.prepare('DELETE FROM ${lc} WHERE id = ?').bind(id).run(), true),
+    ${colList ? `update: async (id, data) => D1.prepare('UPDATE ${lc} SET ${updates} WHERE id = ?${fields.length + 1} RETURNING *').bind(${fieldArgs.join(', ')}, id).first(),` : ''}
+    delete: async (id) => (await D1.prepare('DELETE FROM ${lc} WHERE id = ?1').bind(id).run(), true),
     count: async () => (await D1.prepare('SELECT COUNT(*) as count FROM ${lc}').first())?.count ?? 0,
   }`.trim()
   }
@@ -291,7 +294,7 @@ export default {
       let _dbOk = false
       if (env.DB) { try { await Promise.race([env.DB.prepare('SELECT 1').first(), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]); _dbOk = true } catch {} }
       else { _dbOk = true }
-      return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a' }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
+      return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a', ts: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
     }
     return _dispatch(req, url, env)
   },${queueHandler}

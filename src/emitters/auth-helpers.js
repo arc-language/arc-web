@@ -23,15 +23,14 @@ const _SESSION_COOKIE = '${cookieName}'
 const _SESSION_MAX_AGE = ${sessionMaxAge}
 
 // HMAC-SHA256 sign/verify (Web Crypto — built into Bun + Node 18+)
-// Cached key — import once per secret value to avoid per-request overhead
-let _hmacKeyCache = null
-let _hmacKeyCacheSecret = null
-async function _getHmacKey(secret, usage) {
-  if (_hmacKeyCache && _hmacKeyCacheSecret === secret) return _hmacKeyCache
+// Key cache — Map keyed by secret, safe for concurrent calls with different secrets
+const _hmacKeyCache = new Map()
+async function _getHmacKey(secret) {
+  if (_hmacKeyCache.has(secret)) return _hmacKeyCache.get(secret)
   const enc = new TextEncoder()
-  _hmacKeyCache = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
-  _hmacKeyCacheSecret = secret
-  return _hmacKeyCache
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
+  _hmacKeyCache.set(secret, key)
+  return key
 }
 
 async function _hmacSign(data, secret) {

@@ -214,6 +214,9 @@ globalThis.db = db`.trim()
   _schemaVars(schema, dialect) {
     const lc = schema.name.toLowerCase() + 's'
     const fields = (schema.fields ?? []).filter(f => f.name && !f.decorators?.includes('@id'))
+    for (const f of fields) {
+      if (!_SAFE_IDENT.test(f.name)) throw new Error(`Arc codegen: unsafe field name: ${JSON.stringify(f.name)}`)
+    }
     const colList = fields.map(f => f.name).join(', ')
     const idDef = dialect === 'postgres' ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'
     const colDefs = [
@@ -381,6 +384,7 @@ async function _job_${job.name}(${params}) {
     return `
 // Route: ${route.method} ${route.path}${requiresAuth ? ' [auth]' : ''}
 async function ${name}(req, params) {
+  const _traceId = req._traceId
   try {
     ${pathParams ? pathParams + '\n  ' : ''}${authGuard ? authGuard + '\n  ' : ''}const json = _alias_json
     const html = _alias_html
@@ -392,7 +396,7 @@ async function ${name}(req, params) {
   } catch (_e) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
     if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: req?._traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e) }))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e) }))
     return _json({ error: 'Internal server error' }, 500)
   }
 }`.trim()
@@ -407,7 +411,7 @@ async function ${name}(req, params) {
     const dbProbe = hasDb
       ? (this.isPg
         ? `let _dbOk=false;try{await Promise.race([_pool.query('SELECT 1'),${_timeout2s}]);_dbOk=true}catch{}`
-        : `let _dbOk=false;try{await Promise.race([Promise.resolve(_db.query('SELECT 1').get()),${_timeout2s}]);_dbOk=true}catch{}`)
+        : `let _dbOk=false;try{await Promise.race([new Promise((res,rej)=>{try{_db.query('SELECT 1').get();res()}catch(e){rej(e)}}),${_timeout2s}]);_dbOk=true}catch{}`)
       : ''
     const healthBody = hasDb
       ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
@@ -417,7 +421,8 @@ async function ${name}(req, params) {
 const _server = Bun.serve({
   port: ${port},
   async fetch(req) {
-    req._traceId = req.headers.get('x-request-id') ?? crypto.randomUUID().slice(0, 8)
+    const _clientId = req.headers.get('x-request-id') ?? ''
+    req._traceId = /^[a-zA-Z0-9_-]{1,64}$/.test(_clientId) ? _clientId : crypto.randomUUID().slice(0, 8)
     const url = new URL(req.url)
     if (url.pathname === '/health') {
       try {

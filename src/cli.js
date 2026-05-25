@@ -581,7 +581,7 @@ async function buildSite(projectDir) {
 
     // Build injection payload
     const prefetchTags = [...linkedHrefs]
-      .map(h => `<link rel="prefetch" href="${h}">`)
+      .map(h => `<link rel="prefetch" href="${h.replace(/"/g, '&quot;')}">`)
       .join('')
     const viewTransition = c.meta?.viewTransitions === false
       ? ''
