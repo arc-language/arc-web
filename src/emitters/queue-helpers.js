@@ -36,7 +36,7 @@ const _queue = {
           setTimeout(() => this.enqueue(fn, args, retries + 1), delay)
         } else {
           console.error('[arc:queue] job permanently failed after 3 retries — moved to dead letter queue')
-          if (this._dead.length >= 1000) this._dead.shift()
+          if (this._dead.length >= 1000) { this._dead.shift(); console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:queue] DLQ cap reached — oldest entry evicted' })) }
           this._dead.push({ fn, args, error: _e?.message ?? String(_e), failedAt: new Date().toISOString() })
         }
       }
@@ -108,6 +108,7 @@ const email = {
 
 // Emit the public enqueue wrapper for a job: `const JobName = (...args) => Queue.enqueue(_job_JobName, ...args)`
 function emitJobEnqueueWrapper(jobName) {
+  if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(jobName)) throw new Error(`Arc codegen: unsafe job name: ${JSON.stringify(jobName)}`)
   return `const ${jobName} = (...args) => Queue.enqueue(_job_${jobName}, ...args)`
 }
 

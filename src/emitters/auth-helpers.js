@@ -16,22 +16,34 @@ function emitAuthPreamble(opts = {}) {
 
 const _AUTH_SECRET = process.env.SESSION_SECRET ?? 'change-me-in-production'
 if (_AUTH_SECRET === 'change-me-in-production') {
+  if (process.env.NODE_ENV === 'production') throw new Error('[arc:auth] SESSION_SECRET must be set in production — set SESSION_SECRET env var')
   console.warn('[arc:auth] WARNING: SESSION_SECRET is not set. Set SESSION_SECRET env var before deploying to production.')
 }
 const _SESSION_COOKIE = '${cookieName}'
 const _SESSION_MAX_AGE = ${sessionMaxAge}
 
 // HMAC-SHA256 sign/verify (Web Crypto — built into Bun + Node 18+)
+// Cached key — import once per secret value to avoid per-request overhead
+let _hmacKeyCache = null
+let _hmacKeyCacheSecret = null
+async function _getHmacKey(secret, usage) {
+  if (_hmacKeyCache && _hmacKeyCacheSecret === secret) return _hmacKeyCache
+  const enc = new TextEncoder()
+  _hmacKeyCache = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
+  _hmacKeyCacheSecret = secret
+  return _hmacKeyCache
+}
+
 async function _hmacSign(data, secret) {
   const enc = new TextEncoder()
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const key = await _getHmacKey(secret)
   const sig = await crypto.subtle.sign('HMAC', key, enc.encode(data))
   return btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=/g, '')
 }
 
 async function _hmacVerify(data, sig, secret) {
   const enc = new TextEncoder()
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'])
+  const key = await _getHmacKey(secret)
   const padded = sig.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - sig.length % 4) % 4)
   const sigBytes = Uint8Array.from(atob(padded), c => c.charCodeAt(0))
   try { return await crypto.subtle.verify('HMAC', key, sigBytes, enc.encode(data)) } catch { return false }
@@ -88,7 +100,7 @@ const auth = {
 
   // Clear session cookie on a Response
   clear: (res) => {
-    const cookie = \`\${_SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/\`
+    const cookie = \`\${_SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/\${process.env.NODE_ENV === 'production' ? '; Secure' : ''}\`
     return new Response(res.body, {
       status: res.status,
       headers: { ...Object.fromEntries(res.headers), 'Set-Cookie': cookie }
@@ -110,7 +122,7 @@ const jwt = {
     const now = Math.floor(Date.now() / 1000)
     const claims = { ...payload, iat: now, exp: now + expiresIn }
     const enc = new TextEncoder()
-    const b64url = (obj) => btoa(JSON.stringify(obj)).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=/g, '')
+    const b64url = (obj) => { const s = encodeURIComponent(JSON.stringify(obj)).replace(/%([0-9A-F]{2})/g, (_, p) => String.fromCharCode(parseInt(p, 16))); return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=/g, '') }
     const unsigned = \`\${b64url(header)}.\${b64url(claims)}\`
     const sig = await _hmacSign(unsigned, secret)
     return \`\${unsigned}.\${sig}\`
@@ -161,6 +173,7 @@ const oauth = {
         headers: { Authorization: \`Bearer \${access_token}\`, 'User-Agent': 'arc-server' },
         signal: AbortSignal.timeout(10000),
       })
+      if (!userRes.ok) return { ok: false, error: 'auth_failed' }
       const user = await userRes.json()
       return { ok: true, user, accessToken: access_token }
     },
@@ -206,6 +219,7 @@ const oauth = {
         headers: { Authorization: \`Bearer \${access_token}\` },
         signal: AbortSignal.timeout(10000),
       })
+      if (!userRes.ok) return { ok: false, error: 'auth_failed' }
       const user = await userRes.json()
       return { ok: true, user, accessToken: access_token, idToken: id_token }
     },

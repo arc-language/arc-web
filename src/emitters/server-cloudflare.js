@@ -40,6 +40,7 @@ class CloudflareEmitter {
     parts.push(this.emitPreamble())
     if (hasAuth) parts.push(emitAuthPreamble(this.options.auth ?? {}))
     parts.push(emitEmailPreamble())
+    parts.push(this.emitEmailHelper())
 
     // For each schema, emit a D1-based db helper factory (no CREATE TABLE inline — use schema.sql)
     if (schemas.length > 0) {
@@ -98,17 +99,20 @@ const _text = (body, status = 200) =>
 const _redirect = (location, status = 302) =>
   new Response(null, { status, headers: { Location: location } })
 
+const _MAX_BODY_SIZE = 1024 * 1024 // 1 MB
 async function _parseBody(req) {
+  const length = +(req.headers.get('content-length') ?? 0)
+  if (length > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
   const ct = req.headers.get('content-type') ?? ''
-  if (ct.includes('application/json')) return req.json()
-  if (ct.includes('application/x-www-form-urlencoded')) {
-    const text = await req.text()
-    return Object.fromEntries(new URLSearchParams(text))
-  }
   if (ct.includes('multipart/form-data')) {
     const fd = await req.formData()
     return Object.fromEntries(fd.entries())
   }
+  const buf = await req.arrayBuffer()
+  if (buf.byteLength > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
+  const text = new TextDecoder().decode(buf)
+  if (ct.includes('application/json')) return JSON.parse(text)
+  if (ct.includes('application/x-www-form-urlencoded')) return Object.fromEntries(new URLSearchParams(text))
   return {}
 }`.trim()
   }
@@ -209,7 +213,7 @@ async function _job_${job.name}(${params}${params ? ', ' : ''}env) {
     return `
 // Route: ${route.method} ${route.path}${requiresAuth ? ' [auth]' : ''}
 async function ${name}(req, params, env) {
-  const _traceId = req.headers.get('x-request-id') ?? crypto.randomUUID().slice(0, 8)
+  const _traceId = req.headers.get('x-request-id') ?? crypto.randomUUID()
   try {
     ${hasDb ? 'const db = _makeDb(env.DB)' : ''}
     ${pathParams ? pathParams + '\n    ' : ''}${authGuard ? authGuard + '\n    ' : ''}const json = (data, status = 200) => _json(data, status)
@@ -223,27 +227,35 @@ async function ${name}(req, params, env) {
     ${body}
   } catch (_e) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
+    if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e) }))
     return _json({ error: 'Internal server error' }, 500)
   }
 }`.trim()
   }
 
+  emitEmailHelper() {
+    return `
+// Email helper — compiled once, shared across all handlers
+function _makeEmail(env) {
+  return {
+    send: async (opts) => {
+      const apiKey = env.RESEND_API_KEY
+      if (!apiKey) { console.warn('[arc:email] Set RESEND_API_KEY binding'); return }
+      const _r = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: \`Bearer \${apiKey}\`, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(15000),
+        body: JSON.stringify({ from: opts.from ?? 'noreply@example.com', to: Array.isArray(opts.to) ? opts.to : [opts.to], subject: opts.subject, text: opts.text, html: opts.html }),
+      })
+      if (!_r.ok) { const _err = await _r.text().catch(() => _r.status); throw new Error(\`[arc:email] Resend error: \${_err}\`) }
+    }
+  }
+}`.trim()
+  }
+
   _emailHelper() {
-    return `{
-      send: async (opts) => {
-        const key = typeof env !== 'undefined' ? env.RESEND_API_KEY : undefined
-        const apiKey = key ?? process.env?.RESEND_API_KEY
-        if (!apiKey) { console.warn('[arc:email] Set RESEND_API_KEY binding'); return }
-        const _r = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { Authorization: \`Bearer \${apiKey}\`, 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(15000),
-          body: JSON.stringify({ from: opts.from ?? 'noreply@example.com', to: Array.isArray(opts.to) ? opts.to : [opts.to], subject: opts.subject, text: opts.text, html: opts.html }),
-        })
-        if (!_r.ok) { const _err = await _r.text().catch(() => _r.status); throw new Error(\`[arc:email] Resend error: \${_err}\`) }
-      }
-    }`
+    return '_makeEmail(env)'
   }
 
   // ── CF Worker export ──────────────────────────────────────────────────────────
@@ -277,9 +289,9 @@ export default {
     const url = new URL(req.url)
     if (url.pathname === '/health') {
       let _dbOk = false
-      if (env.DB) { try { await env.DB.prepare('SELECT 1').first(); _dbOk = true } catch {} }
+      if (env.DB) { try { await Promise.race([env.DB.prepare('SELECT 1').first(), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]); _dbOk = true } catch {} }
       else { _dbOk = true }
-      return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a' }), { headers: { 'Content-Type': 'application/json' } })
+      return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a' }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
     }
     return _dispatch(req, url, env)
   },${queueHandler}

@@ -344,7 +344,7 @@ async function _job_${job.name}(${params}) {
       }
       if (arm.pattern.type === 'Identifier') {
         const bind = arm.pattern.name
-        return `else { const ${bind} = ${subj}; ${body} }`
+        return i === 0 ? `{ const ${bind} = ${subj}; ${body} }` : `else { const ${bind} = ${subj}; ${body} }`
       }
       if (arm.pattern.type === 'VariantPattern') {
         const test = this.jsEmitter.emitPattern(arm.pattern, subj)
@@ -403,24 +403,27 @@ async function ${name}(req, params) {
   emitBunServe(routes, schemas) {
     const port = '+(process.env.PORT ?? 3000)'
     const hasDb = schemas && schemas.length > 0
+    const _timeout2s = `new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))`
     const dbProbe = hasDb
       ? (this.isPg
-        ? `let _dbOk=false;try{await _pool.query('SELECT 1');_dbOk=true}catch{}`
-        : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch{}`)
+        ? `let _dbOk=false;try{await Promise.race([_pool.query('SELECT 1'),${_timeout2s}]);_dbOk=true}catch{}`
+        : `let _dbOk=false;try{await Promise.race([Promise.resolve(_db.query('SELECT 1').get()),${_timeout2s}]);_dbOk=true}catch{}`)
       : ''
     const healthBody = hasDb
-      ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime() })`
-      : `return _json({ status: 'ok', uptime: process.uptime() })`
+      ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
+      : `return _json({ status: 'ok', uptime: process.uptime() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
     return `
 // Start Bun server
 const _server = Bun.serve({
   port: ${port},
   async fetch(req) {
+    req._traceId = req.headers.get('x-request-id') ?? crypto.randomUUID().slice(0, 8)
     const url = new URL(req.url)
     if (url.pathname === '/health') {
+      try {
     ${healthBody}
+      } catch (_he) { return _json({ status: 'error', msg: _he?.message }, 503, { 'Cache-Control': 'no-store, no-cache' }) }
     }
-    req._traceId = req.headers.get('x-request-id') ?? Math.random().toString(36).slice(2, 10)
     return _dispatch(req, url)
   }
 })

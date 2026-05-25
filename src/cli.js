@@ -227,9 +227,13 @@ function treeshakeBaseCss(css, html) {
   ]
   // Single HTML scan to determine which utilities are referenced
   const usedClasses = new Set()
-  const classRe = /class\s*=\s*["']([^"']*)["']/g
+  const classReDQ = /class\s*=\s*"([^"]*)"/g
+  const classReSQ = /class\s*=\s*'([^']*)'/g
   let m
-  while ((m = classRe.exec(html))) {
+  while ((m = classReDQ.exec(html))) {
+    for (const cls of m[1].split(/\s+/)) if (cls) usedClasses.add(cls)
+  }
+  while ((m = classReSQ.exec(html))) {
     for (const cls of m[1].split(/\s+/)) if (cls) usedClasses.add(cls)
   }
   // Remove rules for each unused utility (preserves original per-class removal logic)
@@ -606,7 +610,7 @@ async function buildSite(projectDir) {
 function injectAssets(html, js) {
   // Add <script> tag before </body> only if there's JS
   if (!js.trim()) return html
-  return html.replace('</body>', '<script src="app.js" defer></script>\n</body>')
+  return html.replace(/<\/body>/i, '<script src="app.js" defer></script>\n</body>')
 }
 
 function fmt(bytes) {
@@ -984,7 +988,7 @@ async function dev(projectDir) {
       // Inject reload script into HTML
       if (ext === '.html') {
         content = Buffer.from(
-          content.toString().replace('</body>', `${RELOAD_SCRIPT}\n</body>`)
+          content.toString().replace(/<\/body>/i, `${RELOAD_SCRIPT}\n</body>`)
         )
       }
 
@@ -1004,7 +1008,7 @@ async function dev(projectDir) {
       }
       try {
         let html = fs.readFileSync(path.join(distDir, 'index.html')).toString()
-        html = html.replace('</body>', `${RELOAD_SCRIPT}\n</body>`)
+        html = html.replace(/<\/body>/i, `${RELOAD_SCRIPT}\n</body>`)
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'X-Content-Type-Options': 'nosniff',
@@ -1591,8 +1595,6 @@ async function runSeed(seedFile, projectDir, opts = {}) {
   const emitter = new BunServerEmitter({ hash: 'arc', db: opts.db ?? 'sqlite' })
 
   // Build a synthetic program with only the schemas + seed statements
-  const N = require('./ast')
-  const fakeProgram = N.Program([], schemas, 0)
   const dbPreamble = emitter.emitPreamble(schemas)
   const dbHelpers = schemas.map(s => emitter.emitModelHelpers(s)).join('\n\n')
 
@@ -1601,7 +1603,7 @@ async function runSeed(seedFile, projectDir, opts = {}) {
   const jsEmitter = new JsEmitter({ hash: 'arc' })
   const seedBody = jsEmitter.emitBody(program.declarations)
 
-  const urlExport = `process.env.DATABASE_URL = process.env.DATABASE_URL ?? '${opts.url}'`
+  const urlExport = `process.env.DATABASE_URL = process.env.DATABASE_URL ?? ${JSON.stringify(opts.url ?? '')}`
 
   const seedScript = `
 'use strict'

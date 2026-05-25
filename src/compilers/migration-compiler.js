@@ -77,7 +77,7 @@ async function getExistingColumnsSqlite(dbPath) {
   for (const tbl of tables) {
     if (!_SAFE_IDENT.test(tbl)) continue
     const cols = db.prepare(`PRAGMA table_info(${tbl})`).all()
-    result.set(tbl, new Set(cols.map(c => c.name)))
+    result.set(tbl, new Set(cols.map(c => c.name).filter(n => _SAFE_IDENT.test(n))))
   }
   db.close()
   return result
@@ -115,18 +115,18 @@ async function applyMigrationSqlite(statements, dbPath) {
     }
   }
   const db = new Database(dbPath)
-  db.run('BEGIN')
   try {
+    db.exec('BEGIN')
     for (const stmt of statements) {
-      db.run(stmt)
+      db.exec(stmt)
     }
-    db.run('COMMIT')
+    db.exec('COMMIT')
   } catch (e) {
-    db.run('ROLLBACK')
-    db.close()
+    try { db.exec('ROLLBACK') } catch {}
     throw e
+  } finally {
+    db.close()
   }
-  db.close()
 }
 
 // Apply migration SQL to PostgreSQL
