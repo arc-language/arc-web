@@ -1,5 +1,15 @@
 'use strict'
 
+// Recursively check whether an AST node subtree contains an <h1> element
+function _hasH1(nodes) {
+  if (!Array.isArray(nodes)) return false
+  for (const n of nodes) {
+    if (n?.type === 'Element' && n.tag === 'h1') return true
+    if (_hasH1(n?.children ?? n?.body ?? [])) return true
+  }
+  return false
+}
+
 const _ESC_RE = /[&<>"']/g
 const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }
 
@@ -156,6 +166,10 @@ class HtmlEmitter {
     const hasUserMain = (node.body ?? []).some(
       n => n.type === 'Element' && (n.tag === 'main' || n.attrs?.role === 'main')
     )
+    // a11y: warn at compile time if user's <main> has no <h1> — screen readers use the h1 as page title
+    if (hasUserMain && !_hasH1(node.body ?? [])) {
+      console.warn(`[arc] a11y: page "${title}" has a <main> but no <h1> inside it — add an <h1> so screen reader users can identify the page topic`)
+    }
 
     // Ensure skip link target exists: inject id="main-content" on user's <main> if not already set
     const bodyNodes = hasUserMain
@@ -457,12 +471,25 @@ class HtmlEmitter {
     if (key === 'trigger') {
       const safeId = _safeInlineId(value)
       parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)_f.focus();}"`)
+      // Keyboard accessibility: non-interactive elements need tabindex + role so keyboard users can trigger them
+      const tag = node?.tag ?? ''
+      const _interactiveTags = new Set(['button', 'a', 'input', 'select', 'textarea', 'summary'])
+      if (!_interactiveTags.has(tag)) {
+        parts.push('tabindex="0"')
+        parts.push('role="button"')
+      }
       return true
     }
     // <dialog> close: close="id" → onclick that calls close()
     if (key === 'close') {
       const safeId = _safeInlineId(value)
       parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d)_d.close()"`)
+      const tag = node?.tag ?? ''
+      const _interactiveTags = new Set(['button', 'a', 'input', 'select', 'textarea', 'summary'])
+      if (!_interactiveTags.has(tag)) {
+        parts.push('tabindex="0"')
+        parts.push('role="button"')
+      }
       return true
     }
     // Native dialog attrs (legacy)

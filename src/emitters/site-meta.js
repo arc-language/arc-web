@@ -40,7 +40,8 @@ function emit(pages, { buildDate = new Date() } = {}) {
     const loc = p.meta.canonical
     const lastmod = isoDate(p.meta.modified) ?? defaultLastmod
     const priority = (typeof p.meta.priority === 'number' ? p.meta.priority : 0.5).toFixed(1)
-    const changefreq = p.meta.changefreq ?? 'weekly'
+    const _validChangefreq = new Set(['always','hourly','daily','weekly','monthly','yearly','never'])
+    const changefreq = _validChangefreq.has(p.meta.changefreq) ? p.meta.changefreq : 'weekly'
     return `  <url>
     <loc>${xmlEscape(loc)}</loc>
     <lastmod>${lastmod}</lastmod>

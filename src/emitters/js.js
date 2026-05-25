@@ -119,14 +119,13 @@ class JsEmitter {
     }
 
     // Pre-build computed dependency adjacency: computedName → [computeds that directly depend on it]
+    // Forward pass: build dep → Set<c.name it references> once, then invert.
+    // This keeps exprReferences calls to O(n²) but allows O(1) Set lookups for BFS in the setter loop.
     const computedAdj = new Map()
     for (const c of computedDecls) computedAdj.set(c.name, [])
-    for (const c of computedDecls) {
-      for (const dep of computedDecls) {
-        if (dep.name !== c.name && this.exprReferences(dep.init, c.name)) {
-          computedAdj.get(c.name).push(dep)
-        }
-      }
+    for (const dep of computedDecls) {
+      const directDeps = new Set(computedDecls.filter(c => c.name !== dep.name && this.exprReferences(dep.init, c.name)).map(c => c.name))
+      for (const cName of directDeps) computedAdj.get(cName)?.push(dep)
     }
 
     // Setter functions: one per @state variable
@@ -219,8 +218,8 @@ class JsEmitter {
   bindingDependsOn(binding, stateVar, computedDecls, re) {
     const expr = binding.expr ?? ''
     // Check if stateVar appears as a whole word in the expression
-    if (!re) re = new RegExp(`(?:^|[^a-zA-Z0-9_@])@?${stateVar}(?:[^a-zA-Z0-9_]|$)`)
-    if (re.test(expr)) return true
+    const stateRe = re ?? new RegExp(`(?:^|[^a-zA-Z0-9_@])@?${stateVar}(?:[^a-zA-Z0-9_]|$)`)
+    if (stateRe.test(expr)) return true
 
     // Check if any computed that binding uses depends on stateVar
     for (const c of computedDecls) {

@@ -10,6 +10,8 @@ const _RETURN_FUNS = new Set(['json', 'redirect', 'html', 'text', 'auth.clear'])
 // Calls that return a Response and are async - prefix with `return await`
 const _RETURN_AWAIT_FUNS = new Set(['auth.set'])
 // Async call RHS in VarDecl - prefix with `await`
+// IMPORTANT: keep in sync with emitter-preamble.js SHARED_RESPONSE_HELPERS, auth-helpers.js, and queue-helpers.js.
+// Any new async helper emitted into generated server code must also be added here.
 const _AWAIT_FUNS = new Set([
   'parseBody',
   'auth.session', 'auth.require',

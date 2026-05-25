@@ -15,9 +15,15 @@ const { EdgeRenderer } = require('./edge/renderer')
 const { ImagePipeline, collectImgRefs } = require('./img-pipeline')
 const { RealtimeEmitter } = require('./realtime/client')
 const { Checker } = require('./checker')
-const { postProcess } = require('./post')
+const { postProcess, PostProcessor } = require('./post')
 const { SourceMapBuilder } = require('./sourcemap')
 const { BunServerEmitter } = require('./emitters/server-bun')
+const { CloudflareEmitter } = require('./emitters/server-cloudflare')
+const { generateWranglerToml } = require('./compilers/wrangler-compiler')
+const { migrate } = require('./compilers/migration-compiler')
+const { emit: emitSiteMeta } = require('./emitters/site-meta')
+const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
+const N = require('./ast')
 
 // ── Import resolver ────────────────────────────────────────────────────────
 // Reads imported .arc files, extracts their widget/fn/style declarations,
@@ -257,10 +263,8 @@ function composeClientJs(reactive, stubs, realtime) {
   if (stubs) {
     // Each stub starts with `async function NAME(` - collect names.
     const names = [...stubs.matchAll(/async\s+function\s+([A-Za-z_$][\w$]*)\s*\(/g)].map(m => m[1])
-    const used = names.some(n => {
-      const re = new RegExp(`\\b${n}\\s*\\(`)
-      return re.test(reactive) || re.test(realtime || '')
-    })
+    const nameRes = names.map(n => new RegExp(`\\b${n}\\s*\\(`))
+    const used = nameRes.some(re => re.test(reactive) || re.test(realtime || ''))
     if (!used) stubsToShip = ''
     else adpNeeded = true
   }
@@ -329,7 +333,7 @@ async function build(projectDir) {
   if (!fs.existsSync(entryFile)) {
     // Look for any .arc file
     let files
-    try { files = fs.readdirSync(absDir).filter(f => f.endsWith('.arc')) }
+    try { files = (await fs.promises.readdir(absDir)).filter(f => f.endsWith('.arc')) }
     catch (e) { console.error(`arc: cannot read directory ${absDir}: ${e.message}`); process.exit(1) }
     if (files.length === 0) {
       console.error(`arc: no .arc files found in ${absDir}`)
@@ -339,7 +343,7 @@ async function build(projectDir) {
   }
 
   let source
-  try { source = fs.readFileSync(entryFile, 'utf8') }
+  try { source = await fs.promises.readFile(entryFile, 'utf8') }
   catch (e) { console.error(`arc: cannot read ${path.relative(process.cwd(), entryFile)}: ${e.message}`); process.exit(1) }
   const filename = path.relative(process.cwd(), entryFile)
 
@@ -458,7 +462,6 @@ function _extractSharedCss(rulesByPage, threshold) {
     else for (const i of pages) pageOnlyRules[i].push(rule)
   }
 
-  const { PostProcessor } = require('./post')
   const pp = new PostProcessor()
   const sharedCssMinified = pp.minifyCss(sharedRules.join('\n'))
   const sharedSha = hashString(sharedCssMinified).toString(16).slice(0, 8)
@@ -480,19 +483,19 @@ function _patchPageHtml(htmlContent, sharedFilename, pageCssText) {
 
 // H2: Inject <link rel="prefetch"> tags + view-transition meta between pages.
 // Reads/writes files in distDir. compiled is the array of { slug, meta } objects.
-function _injectPrefetchTags(distDir, compiled) {
-  const cspMetaRe = /<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/i
+async function _injectPrefetchTags(distDir, compiled) {
   const allSlugs = new Set(compiled.map(c => c.slug + '.html'))
-  for (const c of compiled) {
+  await Promise.all(compiled.map(async c => {
     const p = path.join(distDir, c.slug + '.html')
-    if (!fs.existsSync(p)) continue
-    let html = fs.readFileSync(p, 'utf8').replace(cspMetaRe, '')
+    let html
+    try { html = await fs.promises.readFile(p, 'utf8') } catch { return }
+    html = html.replace(_CSP_META_RE, '')
 
     // Find all <a href> targets pointing to another page in this site.
     const linkedHrefs = new Set()
-    const aRe = /<a\s+[^>]*href="([^"]+)"/gi
+    _A_HREF_RE.lastIndex = 0
     let m
-    while ((m = aRe.exec(html))) {
+    while ((m = _A_HREF_RE.exec(html))) {
       const href = m[1].split('#')[0].split('?')[0]
       if (allSlugs.has(href) && href !== c.slug + '.html') {
         linkedHrefs.add(href)
@@ -510,8 +513,8 @@ function _injectPrefetchTags(distDir, compiled) {
     if (inject) {
       html = html.replace('</head>', inject + '</head>')
     }
-    fs.writeFileSync(p, html)
-  }
+    await fs.promises.writeFile(p, html)
+  }))
 }
 
 // Multi-page site build: compiles every .arc in the directory, then extracts
@@ -541,9 +544,8 @@ async function buildSite(projectDir) {
   // ourselves below so the inlined-CSS strategy can be replaced with the
   // shared-file strategy.
   fs.mkdirSync(distDir, { recursive: true })
-  const compiled = []
-  for (const f of arcFiles) {
-    const source = fs.readFileSync(path.join(absDir, f), 'utf8')
+  const compiled = await Promise.all(arcFiles.map(async f => {
+    const source = await fs.promises.readFile(path.join(absDir, f), 'utf8')
     let result
     try {
       result = await compile(source, f, { projectDir: absDir, distDir })
@@ -557,14 +559,14 @@ async function buildSite(projectDir) {
         else if (typeof v !== 'object') metaResolved[k] = v
       }
     }
-    compiled.push({
+    return {
       file: f,
       slug: path.basename(f, '.arc'),
       meta: metaResolved,
       html: result.html, css: result.css, js: result.js,
       edgeFunctions: result.edgeFunctions, liveEdgeFunction: result.liveEdgeFunction,
-    })
-  }
+    }
+  }))
 
   // Compute rule occurrences across all pages.
   // Rules used by ≥2 pages go into shared.css; rules unique to one page stay
@@ -577,7 +579,6 @@ async function buildSite(projectDir) {
     fs.writeFileSync(path.join(distDir, sharedFilename), sharedCssMinified)
   }
 
-  const { PostProcessor } = require('./post')
   const pp = new PostProcessor()
 
   // Emit per-page HTML: replace the existing <link rel="stylesheet" href="styles.css">
@@ -603,21 +604,19 @@ async function buildSite(projectDir) {
   }
 
   // Auto-emit sitemap.xml + robots.txt from collected page metadata.
-  const { emit: emitSiteMeta } = require('./emitters/site-meta')
   const { sitemap, robots, baseUrl } = emitSiteMeta(compiled.map(c => ({ slug: c.slug, meta: c.meta })))
   if (sitemap) fs.writeFileSync(path.join(distDir, 'sitemap.xml'), sitemap)
   if (robots) fs.writeFileSync(path.join(distDir, 'robots.txt'), robots)
 
   // Auto-emit _headers (Cloudflare Pages / Netlify compatible). When this is
   // emitted, the per-page CSP meta tag becomes redundant - strip it from HTML.
-  const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
   const headersText = emitHeadersManifest({ sharedCssFilename: sharedFilename })
   fs.writeFileSync(path.join(distDir, '_headers'), headersText)
 
   // I2 post-pass: inject <link rel="prefetch"> for every same-site link target
   // + <meta name="view-transition" content="same-origin"> for instant SPA-feel
   // cross-page navigation. Also strip the now-redundant CSP meta tag.
-  _injectPrefetchTags(distDir, compiled)
+  await _injectPrefetchTags(distDir, compiled)
 
   // Stats summary
   const htmlBytes = compiled.reduce((s, c, i) => {
@@ -910,8 +909,28 @@ arc serve .      # start the server on http://localhost:3000
 //   - Automatic browser reload via Server-Sent Events
 //   - Injects a tiny <script> into HTML to listen for reload events
 //   - Rebuilds on .arc file changes
+//
+// Protocol: HTTP only (not HTTPS). Dev server is localhost-only; CORS and cookie
+// security headers are relaxed to avoid needing self-signed certs during development.
+// Production targets (arc build --target bun/cloudflare) emit HTTPS-safe headers.
 
 const http = require('http')
+const _LOCALHOST_RE = /^https?:\/\/localhost(:\d+)?$/
+const _MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css',
+  '.js': 'application/javascript',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+}
+const _CSP_META_RE = /<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/i
+const _A_HREF_RE = /<a\s+[^>]*href="([^"]+)"/gi
+let _spaFallbackHtml = null
+let _spaFallbackDistDir = null
 const RELOAD_SCRIPT = `<script>
 (function(){
   const es = new EventSource('/_arc/reload');
@@ -931,7 +950,7 @@ function _createDevRequestHandler(distDir, reloadClients) {
 
     if (req.url === '/_arc/reload') {
       const origin = req.headers.origin ?? ''
-      const acao = /^https?:\/\/localhost(:\d+)?$/.test(origin) ? origin : 'http://localhost'
+      const acao = _LOCALHOST_RE.test(origin) ? origin : 'http://localhost'
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -961,7 +980,7 @@ function _createDevRequestHandler(distDir, reloadClients) {
     // Defense in depth: reject any path-segment-traversal sequence in the decoded URL.
     // path.resolve + startsWith(distDir) below catches escaping, but symlink games could
     // still let `..` land inside distDir. Explicit rejection is simpler to reason about.
-    if (urlPath.split('/').some(seg => seg === '..')) {
+    if (urlPath.includes('/../') || urlPath.startsWith('../') || urlPath.endsWith('/..') || urlPath === '..') {
       res.writeHead(403)
       res.end('Forbidden')
       return
@@ -975,21 +994,10 @@ function _createDevRequestHandler(distDir, reloadClients) {
       return
     }
     const ext = path.extname(filePath)
-    const mimeTypes = {
-      '.html': 'text/html; charset=utf-8',
-      '.css': 'text/css',
-      '.js': 'application/javascript',
-      '.json': 'application/json',
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.svg': 'image/svg+xml',
-      '.ico': 'image/x-icon',
-      '.woff2': 'font/woff2',
-    }
 
     try {
       let content = fs.readFileSync(filePath)
-      const mime = mimeTypes[ext] ?? 'application/octet-stream'
+      const mime = _MIME_TYPES[ext] ?? 'application/octet-stream'
 
       // Inject reload script into HTML
       if (ext === '.html') {
@@ -1013,8 +1021,11 @@ function _createDevRequestHandler(distDir, reloadClients) {
         return
       }
       try {
-        let html = fs.readFileSync(path.join(distDir, 'index.html')).toString()
-        html = html.replace(/<\/body>/i, `${RELOAD_SCRIPT}\n</body>`)
+        if (_spaFallbackDistDir !== distDir || _spaFallbackHtml === null) {
+          _spaFallbackHtml = fs.readFileSync(path.join(distDir, 'index.html')).toString()
+          _spaFallbackDistDir = distDir
+        }
+        const html = _spaFallbackHtml.replace(/<\/body>/i, `${RELOAD_SCRIPT}\n</body>`)
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'X-Content-Type-Options': 'nosniff',
@@ -1049,10 +1060,10 @@ async function dev(projectDir) {
   // Long-running process - log unhandled errors instead of letting Node kill us
   // mid-rebuild. Build/check/deploy are one-shot and don't need these.
   process.on('unhandledRejection', e => {
-    console.error(`arc: dev: unhandled rejection: ${e?.message ?? e}`)
+    console.error(`arc: dev: unhandled rejection: ${e?.stack ?? e?.message ?? e}`)
   })
   process.on('uncaughtException', e => {
-    console.error(`arc: dev: uncaught exception: ${e?.message ?? e}`)
+    console.error(`arc: dev: uncaught exception: ${e?.stack ?? e?.message ?? e}`)
   })
 
   await build(projectDir)
@@ -1112,6 +1123,7 @@ async function dev(projectDir) {
         console.log(`arc: ${changedFile} changed, rebuilding...`)
         const t0 = Date.now()
         try {
+          _spaFallbackHtml = null  // invalidate SPA fallback cache before rebuild so in-flight requests read fresh files
           await build(projectDir)
           const dur = Date.now() - t0
           for (const client of [...reloadClients]) {
@@ -1221,7 +1233,7 @@ async function buildServer(projectDir, opts = {}, flags = {}) {
   const allDeclarations = []
   for (const file of arcFiles) {
     let src
-    try { src = fs.readFileSync(file, 'utf8') }
+    try { src = await fs.promises.readFile(file, 'utf8') }
     catch (e) { console.error(`arc: cannot read ${file}: ${e.message}`); process.exit(1) }
 
     const lexer = new Lexer(src, file)
@@ -1238,15 +1250,12 @@ async function buildServer(projectDir, opts = {}, flags = {}) {
   }
 
   // Synthetic program with all backend declarations merged
-  const N = require('./ast')
   const mergedProgram = N.Program([], allDeclarations, 0)
 
   const target = flags.target ?? 'bun'
   fs.mkdirSync(distDir, { recursive: true })
 
   if (target === 'cloudflare') {
-    const { CloudflareEmitter } = require('./emitters/server-cloudflare')
-    const { generateWranglerToml } = require('./compilers/wrangler-compiler')
     const emitter = new CloudflareEmitter({ hash: 'arc' })
     const { worker, schema } = emitter.emitProgram(mergedProgram)
 
@@ -1698,7 +1707,6 @@ main().catch(e => { console.error('[arc:seed] failed:', e.message); process.exit
 
 async function dbCommand(args) {
   const sub = args[0]
-  const { migrate } = require('./compilers/migration-compiler')
 
   if (!sub || sub === 'help') {
     console.log('arc db <subcommand>')
@@ -1716,7 +1724,9 @@ async function dbCommand(args) {
     const dry = remaining.includes('--dry')
     const dialect = dbIdx !== -1 ? remaining[dbIdx + 1] : 'sqlite'
     const urlArg = urlIdx !== -1 ? remaining[urlIdx + 1] : null
-    const projectDir = remaining.find(a => !a.startsWith('--') && a !== (dbIdx !== -1 ? remaining[dbIdx + 1] : null) && a !== (urlIdx !== -1 ? remaining[urlIdx + 1] : null)) ?? '.'
+    const _dialectVal = dbIdx !== -1 ? remaining[dbIdx + 1] : null
+    const _urlVal = urlIdx !== -1 ? remaining[urlIdx + 1] : null
+    const projectDir = remaining.find(a => !a.startsWith('--') && a !== _dialectVal && a !== _urlVal) ?? '.'
 
     const absDir = path.resolve(projectDir)
     const serverDir = fs.existsSync(path.join(absDir, 'server'))
@@ -1785,7 +1795,9 @@ async function dbCommand(args) {
     const urlIdx = remaining.indexOf('--url')
     const dialect = dbIdx !== -1 ? remaining[dbIdx + 1] : 'sqlite'
     const urlArg = urlIdx !== -1 ? remaining[urlIdx + 1] : null
-    const projectDir = remaining.find(a => !a.startsWith('--') && a !== (dbIdx !== -1 ? remaining[dbIdx + 1] : null) && a !== (urlIdx !== -1 ? remaining[urlIdx + 1] : null)) ?? '.'
+    const _dialectVal = dbIdx !== -1 ? remaining[dbIdx + 1] : null
+    const _urlVal = urlIdx !== -1 ? remaining[urlIdx + 1] : null
+    const projectDir = remaining.find(a => !a.startsWith('--') && a !== _dialectVal && a !== _urlVal) ?? '.'
 
     const absDir = path.resolve(projectDir)
     const serverDir = fs.existsSync(path.join(absDir, 'server')) ? path.join(absDir, 'server') : absDir

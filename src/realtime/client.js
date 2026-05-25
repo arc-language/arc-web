@@ -47,8 +47,10 @@ class RealtimeEmitter {
 
     // Trigger reactive setters for @state vars bound to this realtime variable.
     // The setter machinery handles all DOM updates: we just need to assign the new value.
+    // Escape once and build the regex once — varName is a validated identifier so no special chars,
+    // but escapedName is kept for correctness with any future punctuation-containing names.
     const escapedName = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const re = new RegExp(`\\b${escapedName}\\b`)
+    const re = new RegExp(`\\b${escapedName}\\b`, 'u')
     // Single pass: collect setter names and direct-DOM fallback bindings
     const setterNames = new Set()
     const directBindings = []
@@ -74,7 +76,9 @@ class RealtimeEmitter {
       `  // @realtime ${varName} = channel(${channelExpr})`,
       `  let ${varName} = null`,
       `  let _retries_${varName} = 0`,
+      `  let _reconnectTimer_${varName} = null`,
       `  ;(function _connect_${varName}() {`,
+      `    if (_reconnectTimer_${varName}) { clearTimeout(_reconnectTimer_${varName}); _reconnectTimer_${varName} = null }`,
       `    const _url = \`\${${protocol}}//\${location.host}/_arc/rt/\${${channelExpr}}\``,
       `    const _ws = new WebSocket(_url)`,
       `    _ws.binaryType = 'arraybuffer'`,
@@ -87,10 +91,10 @@ class RealtimeEmitter {
       `      } catch(_e) { console.warn('arc realtime:', _e) }`,
       `    }`,
       `    _ws.onclose = function() {`,
-      `      // Auto-reconnect with exponential backoff`,
-      `      setTimeout(_connect_${varName}, Math.min(1000 * Math.pow(2, Math.min(_retries_${varName}++, 5)), 30000))`,
+      `      if (_retries_${varName} > 10) { console.warn('arc realtime: giving up reconnect after 10 retries for ${varName}'); return }`,
+      `      _reconnectTimer_${varName} = setTimeout(_connect_${varName}, Math.min(1000 * Math.pow(2, Math.min(_retries_${varName}++, 5)), 30000))`,
       `    }`,
-      `    _ws.onerror = function(e) { console.warn('arc realtime ws error:', e) }`,
+      `    _ws.onerror = function(e) { console.warn('arc realtime ws error for ${varName}:', e?.message ?? e) }`,
       `  })()`,
       ``,
     ].join('\n')

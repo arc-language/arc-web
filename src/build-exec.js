@@ -5,6 +5,9 @@ const path = require('path')
 const https = require('https')
 const http = require('http')
 
+const _httpAgent = new http.Agent({ keepAlive: true })
+const _httpsAgent = new https.Agent({ keepAlive: true })
+
 // Evaluates @build expressions at compile time.
 // Supports: literals, arrays, objects, fetch(), file reads, array methods.
 // Safety: no eval(), no arbitrary code: constrained interpreter only.
@@ -62,6 +65,11 @@ function _isBlockedHost(h) {
   return _isBlockedIpv4(h) || _isBlockedIpv6(h)
 }
 
+// BuildExecutor runs @build blocks at compile time in a sandboxed, synchronous-only interpreter.
+// It intentionally supports only a constrained subset of JavaScript: variable assignments, string
+// interpolation, fetch (HTTP/S only, no internal addresses), and file writes to the dist directory.
+// Async operations are disallowed by design — the interpreter is not an event loop. Any await in
+// @build source is a compile error. This constraint ensures deterministic, cacheable build outputs.
 class BuildExecutor {
   constructor(projectDir = '.') {
     this.projectDir = projectDir
@@ -358,7 +366,8 @@ class BuildExecutor {
       // before the response callback when connect-phase failures happen.
       let settled = false
       const protocol = parsed.protocol === 'https:' ? https : http
-      const req = protocol.get(url, (res) => {
+      const agent = parsed.protocol === 'https:' ? _httpsAgent : _httpAgent
+      const req = protocol.get(url, { agent }, (res) => {
         // Reject redirects explicitly: following them could bypass the SSRF blocklist
         if (res.statusCode >= 300 && res.statusCode < 400) {
           res.resume()

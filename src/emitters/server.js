@@ -148,8 +148,8 @@ class ServerEmitter {
     return [
       `async function _parseBody(req) {`,
       `  const ct = req.headers.get?.('content-type') ?? req.headers['content-type'] ?? ''`,
-      `  const cl = parseInt(req.headers.get?.('content-length') ?? req.headers['content-length'] ?? '0')`,
-      `  if (Number.isFinite(cl) && cl > 1048576) throw new Error('Request body too large (max 1MB)')`,
+      `  const cl = Number(req.headers.get?.('content-length') ?? req.headers['content-length'] ?? '0')`,
+      `  if (Number.isInteger(cl) && cl > 1048576) throw new Error('Request body too large (max 1MB)')`,
       `  const buf = await req.arrayBuffer()`,
       `  if (buf.byteLength > 1048576) throw new Error('Request body too large (max 1MB)')`,
       `  if (ct.includes('application/x-adp')) {`,

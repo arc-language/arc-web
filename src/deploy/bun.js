@@ -38,10 +38,10 @@ async function handleEdgeFunction(path, req) {
   if (!Object.prototype.hasOwnProperty.call(_ARC_HANDLERS, segment)) return new Response('Edge function not found', { status: 404 })
   const fn = _ARC_HANDLERS[segment]
   if (typeof fn !== 'function') return new Response('Edge function not found', { status: 404 })
-  const buf = await req.arrayBuffer()
-  if (buf.byteLength > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
+  const _cLen = parseInt(req.headers.get('content-length') ?? '0', 10)
+  if (_cLen > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
   try {
-    const arcReq = new Request(req.url, { method: req.method, headers: req.headers, body: buf.byteLength > 0 ? buf : null })
+    const arcReq = new Request(req.url, { method: req.method, headers: req.headers, body: req.body })
     return await fn(arcReq)
   } catch (e) {
     console.error('[arc] edge function error:', e instanceof Error ? e.message : String(e))
@@ -99,6 +99,7 @@ ${edgeRoutingBlock}
         return new Response(asset, {
           headers: {
             'Content-Type': getContentType(path),
+            'Cache-Control': path === '/' ? 'no-cache' : 'public, max-age=31536000, immutable',
             'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",
             'X-Content-Type-Options': 'nosniff',
             'X-Frame-Options': 'SAMEORIGIN',

@@ -52,11 +52,11 @@ class ImagePipeline {
       unique.set(ref.src, { abs, ref })
     }
 
-    for (const [src, { abs, ref }] of unique) {
-      const buf = fs.readFileSync(abs)
+    const processImage = async ([src, { abs, ref }]) => {
+      const buf = await fs.promises.readFile(abs)
       const sha8 = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 8)
       this.hashByPath.set(src, sha8)
-      if (this.processed.has(sha8)) continue   // F5: dedup by content
+      if (this.processed.has(sha8)) return   // F5: dedup by content
 
       const img = this.sharp(buf)
       const meta = await img.metadata()
@@ -70,24 +70,22 @@ class ImagePipeline {
       const wantOriginal = this.formats.includes('original') || this.formats.includes('jpg') || this.formats.includes('png')
       for (const w of widths) {
         const base = `${stem}.${sha8}.${w}w`
+        const tasks = []
+        // Use .clone() so Sharp decodes buf only once per width, then branches to each format
+        const resized = this.sharp(buf).resize(w)
         if (wantAvif) {
           const p = path.join(this.outDir, `${base}.avif`)
-          const info = await this.sharp(buf).resize(w).avif({ quality: 60 }).toFile(p)
-          variants.avif[w] = `${base}.avif`
-          sizes.avif[w] = info.size
+          tasks.push(resized.clone().avif({ quality: 60 }).toFile(p).then(info => { variants.avif[w] = `${base}.avif`; sizes.avif[w] = info.size }))
         }
         if (wantWebp) {
           const p = path.join(this.outDir, `${base}.webp`)
-          const info = await this.sharp(buf).resize(w).webp({ quality: 75 }).toFile(p)
-          variants.webp[w] = `${base}.webp`
-          sizes.webp[w] = info.size
+          tasks.push(resized.clone().webp({ quality: 75 }).toFile(p).then(info => { variants.webp[w] = `${base}.webp`; sizes.webp[w] = info.size }))
         }
         if (wantOriginal) {
           const p = path.join(this.outDir, `${base}${path.extname(src)}`)
-          const info = await this.sharp(buf).resize(w).toFile(p)
-          variants.original[w] = `${base}${path.extname(src)}`
-          sizes.original[w] = info.size
+          tasks.push(resized.clone().toFile(p).then(info => { variants.original[w] = `${base}${path.extname(src)}`; sizes.original[w] = info.size }))
         }
+        await Promise.all(tasks)
       }
 
       // Smart format selection: if AVIF isn't meaningfully smaller than WebP at
@@ -101,7 +99,7 @@ class ImagePipeline {
           useAvif = false
           // Clean up AVIF files we just wrote — they won't be referenced
           for (const w of widths) {
-            try { fs.unlinkSync(path.join(this.outDir, variants.avif[w])) } catch {}
+            await fs.promises.unlink(path.join(this.outDir, variants.avif[w])).catch(() => {})
           }
         }
       }
@@ -119,6 +117,9 @@ class ImagePipeline {
         intrinsicHeight: meta.height,
       })
     }
+
+    const results = await Promise.allSettled([...unique].map(processImage))
+    results.filter(r => r.status === 'rejected').forEach(r => console.warn('[arc:img] skipped image:', r.reason?.message ?? r.reason))
   }
 
   // F3 helper: derive position from AST node path. Returns 'above-fold' for the

@@ -100,7 +100,7 @@ _db.run('PRAGMA synchronous = normal')
   _pgSetup() {
     return `
 const { Pool } = require('pg')
-const _pool = new Pool({ connectionString: process.env.DATABASE_URL ?? 'postgres://localhost/app' })
+const _pool = new Pool({ connectionString: process.env.DATABASE_URL ?? 'postgres://localhost/app', max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 })
 const _db = {
   run: async (sql, params = []) => { await _pool.query(sql, params) },
   query: (sql) => ({ all: async (params = []) => (await _pool.query(sql, params)).rows,
@@ -125,13 +125,14 @@ const _db = {
     const { lc, fields, colList, colDefs } = this._schemaVars(schema, 'sqlite')
     const placeholders = fields.map((_, i) => `?${i + 1}`).join(', ')
     const updates = fields.map((f, i) => `${f.name} = ?${i + 1}`).join(', ')
+    const selectCols = colList ? `id, ${colList}` : 'id'
 
     return `
 // Schema: ${schema.name}
 _db.run(\`CREATE TABLE IF NOT EXISTS ${lc} (${colDefs})\`)
 
-const _q_${lc}_findMany = _db.query('SELECT * FROM ${lc} LIMIT ?1 OFFSET ?2')
-const _q_${lc}_find = _db.query('SELECT * FROM ${lc} WHERE id = ?1')
+const _q_${lc}_findMany = _db.query('SELECT ${selectCols} FROM ${lc} LIMIT ?1 OFFSET ?2')
+const _q_${lc}_find = _db.query('SELECT ${selectCols} FROM ${lc} WHERE id = ?1')
 ${colList ? `const _q_${lc}_create = _db.query('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *')` : ''}
 ${colList ? `const _q_${lc}_update = _db.query('UPDATE ${lc} SET ${updates} WHERE id = ?${fields.length + 1} RETURNING *')` : ''}
 const _q_${lc}_delete = _db.query('DELETE FROM ${lc} WHERE id = ?1')
@@ -139,7 +140,7 @@ const _q_${lc}_count = _db.query('SELECT COUNT(*) as count FROM ${lc}')
 
 const db = Object.assign(globalThis.db ?? {}, {
   ${lc}: {
-    findMany: (opts = {}) => _q_${lc}_findMany.all(opts?.limit ?? 1000, opts?.offset ?? 0),
+    findMany: (opts = {}) => _q_${lc}_findMany.all(Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0),
     find: (id) => _q_${lc}_find.get(id) ?? null,
     ${colList ? `create: (data) => _q_${lc}_create.get(${fields.map(f => `data.${f.name}`).join(', ')}),` : ''}
     ${colList ? `update: (id, data) => _q_${lc}_update.get(${fields.map(f => `data.${f.name}`).join(', ')}, id),` : ''}
@@ -155,6 +156,7 @@ globalThis.db = db`.trim()
     // PostgreSQL uses $1, $2, ... placeholders and SERIAL for autoincrement
     const placeholders = fields.map((_, i) => `$${i + 1}`).join(', ')
     const updates = fields.map((f, i) => `${f.name} = $${i + 1}`).join(', ')
+    const selectCols = colList ? `id, ${colList}` : 'id'
 
     return `
 // Schema: ${schema.name}
@@ -162,8 +164,8 @@ globalThis.db = db`.trim()
 
 const db = Object.assign(globalThis.db ?? {}, {
   ${lc}: {
-    findMany: async (opts = {}) => _pool.query('SELECT * FROM ${lc} LIMIT $1 OFFSET $2', [opts?.limit ?? 1000, opts?.offset ?? 0]).then(r => r.rows),
-    find: async (id) => _pool.query('SELECT * FROM ${lc} WHERE id = $1', [id]).then(r => r.rows[0] ?? null),
+    findMany: async (opts = {}) => _pool.query('SELECT ${selectCols} FROM ${lc} LIMIT $1 OFFSET $2', [Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows),
+    find: async (id) => _pool.query('SELECT ${selectCols} FROM ${lc} WHERE id = $1', [id]).then(r => r.rows[0] ?? null),
     ${colList ? `create: async (data) => _pool.query('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => `data.${f.name}`).join(', ')}]).then(r => r.rows[0]),` : ''}
     ${colList ? `update: async (id, data) => _pool.query('UPDATE ${lc} SET ${updates} WHERE id = $${fields.length + 1} RETURNING *', [${fields.map(f => `data.${f.name}`).join(', ')}, id]).then(r => r.rows[0]),` : ''}
     delete: async (id) => { await _pool.query('DELETE FROM ${lc} WHERE id = $1', [id]); return true },
@@ -252,7 +254,7 @@ async function ${name}(req, params) {
       : ''
     const healthBody = hasDb
       ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
-      : `return _json({ status: 'ok', uptime: process.uptime() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
+      : `return _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a' }, 200, { 'Cache-Control': 'no-store, no-cache' })`
     return `
 // Start Bun server
 const _server = Bun.serve({

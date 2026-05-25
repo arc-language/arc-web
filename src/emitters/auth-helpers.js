@@ -14,23 +14,22 @@ function emitAuthPreamble(opts = {}) {
   return `
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
-const _AUTH_SECRET = process.env.SESSION_SECRET ?? 'change-me-in-production'
-if (_AUTH_SECRET === 'change-me-in-production') {
+const _AUTH_SECRET = process.env.SESSION_SECRET ?? (crypto.randomUUID() + crypto.randomUUID())
+if (!process.env.SESSION_SECRET) {
   if (process.env.NODE_ENV === 'production') throw new Error('[arc:auth] SESSION_SECRET must be set in production — set SESSION_SECRET env var')
-  console.warn('[arc:auth] WARNING: SESSION_SECRET is not set. Set SESSION_SECRET env var before deploying to production.')
+  console.warn('[arc:auth] WARNING: SESSION_SECRET is not set. A random key is being used — sessions will not persist across restarts. Set SESSION_SECRET env var before deploying to production.')
 }
 const _SESSION_COOKIE = '${cookieName}'
 const _SESSION_MAX_AGE = ${sessionMaxAge}
 
 // HMAC-SHA256 sign/verify (Web Crypto - built into Bun + Node 18+)
-// Key cache - Map keyed by secret, safe for concurrent calls with different secrets
-const _hmacKeyCache = new Map()
+// Single cached key — only one SESSION_SECRET is used at runtime
+let _hmacKey = null
 async function _getHmacKey(secret) {
-  if (_hmacKeyCache.has(secret)) return _hmacKeyCache.get(secret)
+  if (_hmacKey) return _hmacKey
   const enc = new TextEncoder()
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
-  _hmacKeyCache.set(secret, key)
-  return key
+  _hmacKey = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
+  return _hmacKey
 }
 
 async function _hmacSign(data, secret) {
@@ -90,17 +89,17 @@ const auth = {
   // Set session cookie on a Response (preserves all existing headers including duplicate Set-Cookie)
   set: async (res, payload) => {
     const value = await _sessionEncode(payload)
-    const cookie = \`\${_SESSION_COOKIE}=\${value}; HttpOnly; SameSite=Lax; Max-Age=\${_SESSION_MAX_AGE}; Path=/\${process.env.NODE_ENV === 'production' ? '; Secure' : ''}\`
+    const cookie = \`\${_SESSION_COOKIE}=\${value}; HttpOnly; SameSite=Strict; Max-Age=\${_SESSION_MAX_AGE}; Path=/\${process.env.NODE_ENV === 'production' ? '; Secure' : ''}\`
     const h = new Headers(res.headers)
-    h.set('Set-Cookie', cookie)
+    h.append('Set-Cookie', cookie)
     return new Response(res.body, { status: res.status, headers: h })
   },
 
   // Clear session cookie on a Response
   clear: (res) => {
-    const cookie = \`\${_SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/\${process.env.NODE_ENV === 'production' ? '; Secure' : ''}\`
+    const cookie = \`\${_SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/\${process.env.NODE_ENV === 'production' ? '; Secure' : ''}\`
     const h = new Headers(res.headers)
-    h.set('Set-Cookie', cookie)
+    h.append('Set-Cookie', cookie)
     return new Response(res.body, { status: res.status, headers: h })
   },
 
@@ -164,13 +163,14 @@ const oauth = {
         }),
         signal: AbortSignal.timeout(10000),
       })
+      if (!tokenRes.ok) { const _e = await tokenRes.text().catch(() => tokenRes.status); console.error('[arc:oauth] GitHub token error:', _e); return { ok: false, error: 'auth_failed' } }
       const { access_token, error } = await tokenRes.json()
-      if (error || !access_token) return { ok: false, error: 'auth_failed' }
+      if (error || !access_token) { console.error('[arc:oauth] GitHub: no access_token:', error); return { ok: false, error: 'auth_failed' } }
       const userRes = await fetch('https://api.github.com/user', {
         headers: { Authorization: \`Bearer \${access_token}\`, 'User-Agent': 'arc-server' },
         signal: AbortSignal.timeout(10000),
       })
-      if (!userRes.ok) return { ok: false, error: 'auth_failed' }
+      if (!userRes.ok) { console.error('[arc:oauth] GitHub user fetch failed:', userRes.status); return { ok: false, error: 'auth_failed' } }
       const user = await userRes.json()
       return { ok: true, user, accessToken: access_token }
     },
@@ -210,13 +210,14 @@ const oauth = {
         }),
         signal: AbortSignal.timeout(10000),
       })
+      if (!tokenRes.ok) { const _e = await tokenRes.text().catch(() => tokenRes.status); console.error('[arc:oauth] Google token error:', _e); return { ok: false, error: 'auth_failed' } }
       const { access_token, id_token, error } = await tokenRes.json()
-      if (error || !access_token) return { ok: false, error: 'auth_failed' }
+      if (error || !access_token) { console.error('[arc:oauth] Google: no access_token:', error); return { ok: false, error: 'auth_failed' } }
       const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: \`Bearer \${access_token}\` },
         signal: AbortSignal.timeout(10000),
       })
-      if (!userRes.ok) return { ok: false, error: 'auth_failed' }
+      if (!userRes.ok) { console.error('[arc:oauth] Google userinfo failed:', userRes.status); return { ok: false, error: 'auth_failed' } }
       const user = await userRes.json()
       return { ok: true, user, accessToken: access_token, idToken: id_token }
     },

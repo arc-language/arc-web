@@ -58,7 +58,7 @@ function generateModelMigration(schema, existingCols, dialect = 'sqlite') {
 async function getExistingColumnsSqlite(dbPath) {
   const fs = require('fs')
   // DB file doesn't exist yet - all tables are new
-  if (!fs.existsSync(dbPath)) return new Map()
+  try { await fs.promises.access(dbPath) } catch { return new Map() }
 
   let Database
   try {
@@ -87,15 +87,25 @@ async function getExistingColumnsSqlite(dbPath) {
 }
 
 // Inspect existing PostgreSQL DB via pg
-async function getExistingColumnsPg(connectionString) {
-  const { Pool } = require('pg')
-  const pool = new Pool({ connectionString })
-  const { rows } = await pool.query(`
-    SELECT table_name, column_name
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-  `)
-  await pool.end()
+async function getExistingColumnsPg(connectionString, tableNames = []) {
+  const { Client } = require('pg')
+  const client = new Client({ connectionString })
+  await client.connect()
+  const filter = tableNames.length > 0
+    ? `AND table_name = ANY($1)`
+    : ''
+  const params = tableNames.length > 0 ? [tableNames] : []
+  let rows
+  try {
+    ;({ rows } = await client.query(`
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+      ${filter}
+    `, params))
+  } finally {
+    await client.end()
+  }
 
   const result = new Map()
   for (const row of rows) {
@@ -105,7 +115,11 @@ async function getExistingColumnsPg(connectionString) {
   return result
 }
 
-// Apply migration SQL to SQLite
+// Apply migration SQL to SQLite.
+// NOTE: SQLite DDL (ALTER TABLE, CREATE TABLE) is NOT transactional in WAL mode — a ROLLBACK
+// after a DDL statement will NOT undo schema changes. This transaction provides atomicity only
+// for DML statements and guards the migration log. For DDL safety, migrations should be
+// additive-only (no DROP COLUMN, no rename) until SQLite 3.45+ strict-mode is confirmed.
 async function applyMigrationSqlite(statements, dbPath) {
   let Database
   try {
@@ -134,9 +148,9 @@ async function applyMigrationSqlite(statements, dbPath) {
 
 // Apply migration SQL to PostgreSQL
 async function applyMigrationPg(statements, connectionString) {
-  const { Pool } = require('pg')
-  const pool = new Pool({ connectionString })
-  const client = await pool.connect()
+  const { Client } = require('pg')
+  const client = new Client({ connectionString })
+  await client.connect()
   try {
     await client.query('BEGIN')
     for (const stmt of statements) {
@@ -147,8 +161,7 @@ async function applyMigrationPg(statements, connectionString) {
     await client.query('ROLLBACK')
     throw e
   } finally {
-    client.release()
-    await pool.end()
+    await client.end()
   }
 }
 
@@ -161,7 +174,7 @@ async function migrate(schemas, opts = {}) {
   // Get existing schema from live DB
   let existingTables
   if (dialect === 'postgres') {
-    existingTables = await getExistingColumnsPg(dbUrl)
+    existingTables = await getExistingColumnsPg(dbUrl, schemas.map(s => s.name.toLowerCase() + 's'))
   } else {
     existingTables = await getExistingColumnsSqlite(dbUrl)
   }

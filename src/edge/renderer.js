@@ -29,11 +29,8 @@ class EdgeRenderer {
 
     // Find state bindings that reference @live variables
     // stateBindings format: { id, expr: string, line }
-    const liveVarRegexes = [...liveVarNames].map(v => new RegExp(`\\b${v}\\b`))
-    const liveBindings = stateBindings.filter(b => {
-      const exprStr = b.expr ?? ''
-      return liveVarRegexes.some(re => re.test(exprStr))
-    })
+    const liveVarsCombinedRe = new RegExp(`\\b(${[...liveVarNames].join('|')})\\b`)
+    const liveBindings = stateBindings.filter(b => liveVarsCombinedRe.test(b.expr ?? ''))
 
     const parts = [
       `'use strict'`,
@@ -151,6 +148,7 @@ class EdgeRenderer {
       `const _SPAN_RE = new RegExp('<span id="(' + ${JSON.stringify(spanIds)} + ')" data-arc-live><\\/span>', 'g')`,
       ``,
       `function _fillHtml(data) {`,
+      `  if (!data || typeof data !== 'object') data = {}`,
       `  const { ${[...liveVarsUsed].filter(v => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(v) && v !== '__proto__' && v !== 'constructor' && v !== 'prototype').map(v => `${v} = undefined`).join(', ')} } = data`,
       `  const _m = Object.create(null)`,
       mapEntries,
@@ -203,7 +201,7 @@ class EdgeRenderer {
       `          try {`,
       `            const data = await _resolveData(request)`,
       `            if (data.__arc_render_error__) {`,
-      `              controller.enqueue(enc.encode('<body><!-- @live data error --></body></html>'))`,
+      `              controller.enqueue(enc.encode('<body><main style="font-family:system-ui;padding:2rem;text-align:center"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>'))`,
       `              controller.close(); return`,
       `            }`,
       `            // Fill spans + inline JS, then emit body remainder`,
@@ -213,7 +211,7 @@ class EdgeRenderer {
       `            controller.close()`,
       `          } catch (e) {`,
       `            console.error('[arc] edge render error:', e instanceof Error ? e.message : String(e))`,
-      `            controller.enqueue(enc.encode('<body><!-- render error --></body></html>'))`,
+      `            controller.enqueue(enc.encode('<body><main style="font-family:system-ui;padding:2rem;text-align:center"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>'))`,
       `            controller.close()`,
       `          }`,
       `        },`,
@@ -221,7 +219,7 @@ class EdgeRenderer {
       `      return new Response(stream, { headers: _RESPONSE_HEADERS })`,
       `    } catch (e) {`,
       `      console.error('[arc] edge render error:', e instanceof Error ? e.message : String(e))`,
-      `      return new Response('Internal Server Error', { status: 500 })`,
+      `      return new Response('<html><body style="font-family:system-ui;padding:2rem;text-align:center"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })`,
       `    }`,
       `  }`,
       `}`,

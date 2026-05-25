@@ -94,7 +94,13 @@ ${SHARED_RESPONSE_HELPERS}`.trim()
   emitD1Helpers(schemas) {
     const blocks = schemas.map(schema => this.emitD1ModelHelpers(schema))
     return `
-// D1 database helpers — built per-request from env.DB
+// D1 database helpers — cached per D1 binding instance to avoid per-request allocation
+const _dbCache = new WeakMap()
+function _getDb(D1) {
+  let db = _dbCache.get(D1)
+  if (!db) { db = _makeDb(D1); _dbCache.set(D1, db) }
+  return db
+}
 function _makeDb(D1) {
 ${blocks.join('\n')}
   return { ${schemas.map(s => s.name.toLowerCase() + 's').join(', ')} }
@@ -111,14 +117,15 @@ ${blocks.join('\n')}
       if (!_SAFE_IDENT.test(f.name)) throw new Error(`Arc codegen: unsafe field name: ${JSON.stringify(f.name)}`)
     }
     const colList = fields.map(f => f.name).join(', ')
+    const selectCols = colList ? `id, ${colList}` : 'id'
     const placeholders = fields.map((_, i) => `?${i + 1}`).join(', ')
     const updates = fields.map((f, i) => `${f.name} = ?${i + 1}`).join(', ')
     const fieldArgs = fields.map(f => `data.${f.name}`)
 
     return `
   const ${lc} = {
-    findMany: async (opts = {}) => (await D1.prepare('SELECT * FROM ${lc} LIMIT ?1 OFFSET ?2').bind(opts?.limit ?? 1000, opts?.offset ?? 0).all()).results,
-    find: async (id) => D1.prepare('SELECT * FROM ${lc} WHERE id = ?1').bind(id).first(),
+    findMany: async (opts = {}) => (await D1.prepare('SELECT ${selectCols} FROM ${lc} LIMIT ?1 OFFSET ?2').bind(Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0).all()).results,
+    find: async (id) => D1.prepare('SELECT ${selectCols} FROM ${lc} WHERE id = ?1').bind(id).first(),
     ${colList ? `create: async (data) => D1.prepare('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *').bind(${fieldArgs.join(', ')}).first(),` : ''}
     ${colList ? `update: async (id, data) => D1.prepare('UPDATE ${lc} SET ${updates} WHERE id = ?${fields.length + 1} RETURNING *').bind(${fieldArgs.join(', ')}, id).first(),` : ''}
     delete: async (id) => (await D1.prepare('DELETE FROM ${lc} WHERE id = ?1').bind(id).run(), true),
@@ -153,7 +160,7 @@ ${blocks.join('\n')}
     return `
 // Job: ${job.name}
 async function _job_${job.name}(${params}${params ? ', ' : ''}env) {
-  ${hasDb ? 'const db = _makeDb(env.DB)' : ''}
+  ${hasDb ? 'const db = _getDb(env.DB)' : ''}
   const Queue = { enqueue: (job, ...args) => env.QUEUE?.send({ job, args }) }
   const email = ${this._emailHelper()}
   ${body}
@@ -182,7 +189,7 @@ async function ${name}(req, params, env) {
   const _clientId = req.headers.get('x-request-id') ?? ''
   const _traceId = /^[a-zA-Z0-9_-]{1,64}$/.test(_clientId) ? _clientId : crypto.randomUUID()
   try {
-    ${hasDb ? 'const db = _makeDb(env.DB)' : ''}
+    ${hasDb ? 'const db = _getDb(env.DB)' : ''}
     ${pathParams ? pathParams + '\n    ' : ''}${authGuard ? authGuard + '\n    ' : ''}const json = (data, status = 200) => _json(data, status)
     const html = (body, status = 200) => _html(body, status)
     const text = (body, status = 200) => _text(body, status)
@@ -215,7 +222,7 @@ function _makeEmail(env) {
         signal: AbortSignal.timeout(15000),
         body: JSON.stringify({ from: opts.from ?? 'noreply@example.com', to: Array.isArray(opts.to) ? opts.to : [opts.to], subject: opts.subject, text: opts.text, html: opts.html }),
       })
-      if (!_r.ok) { const _err = await _r.text().catch(() => _r.status); throw new Error(\`[arc:email] Resend error: \${_err}\`) }
+      if (!_r.ok) { const _err = await _r.text().catch(() => _r.status); console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: \`[arc:email] Resend error: \${_err}\` })); return { ok: false, error: String(_err) } }
     }
   }
 }`.trim()
@@ -241,7 +248,7 @@ function _makeEmail(env) {
       const { job, args = [] } = msg.body
       const fn = _jobRegistry[job]
       if (fn) {
-        try { await fn(...args, env); msg.ack() } catch (e) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: e?.message ?? String(e) })); msg.retry() }
+        try { await fn(...args, env); msg.ack() } catch (e) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: e?.message ?? String(e) })); if (msg.attempts >= 3) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'dlq', msg: 'max retries exceeded' })); msg.ack() } else { msg.retry() } }
       } else {
         msg.ack()
       }
@@ -258,7 +265,7 @@ export default {
       let _dbOk = false
       if (env.DB) { try { await Promise.race([env.DB.prepare('SELECT 1').first(), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]); _dbOk = true } catch {} }
       else { _dbOk = true }
-      return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a', ts: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
+      return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a', queue: env.QUEUE ? 'configured' : 'n/a', ts: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
     }
     return _dispatch(req, url, env)
   },${queueHandler}
