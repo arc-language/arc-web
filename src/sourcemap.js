@@ -3,7 +3,6 @@
 const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
 function encodeVlq(n) {
-  // Encode signed integer as VLQ base64
   let vlq = n < 0 ? ((-n) << 1) | 1 : n << 1
   let result = ''
   do {

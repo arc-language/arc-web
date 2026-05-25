@@ -1,6 +1,6 @@
 'use strict'
 
-// ADP — Arc Data Protocol: binary encoding replacing JSON
+// ADP - Arc Data Protocol: binary encoding replacing JSON
 // Type tags: 0x00=null, 0x01=true, 0x02=false, 0x03=uint8, 0x04=int32,
 //            0x05=float64, 0x06=string, 0x07=array, 0x08=object,
 //            0x09=date(epoch ms as int64), 0x0A=enum(uint8 index)
@@ -19,7 +19,7 @@ const TAG = {
   ENUM:    0x0A,
 }
 
-// Pre-allocated single-byte Buffers for all 256 values — avoids per-tag allocation
+// Pre-allocated single-byte Buffers for all 256 values - avoids per-tag allocation
 const _B = Array.from({length: 256}, (_, i) => Buffer.from([i]))
 // Module-level scratch for varint encoding (max 5 bytes for 32-bit, 10 for 64-bit)
 const _VARINT_SCRATCH = Buffer.allocUnsafe(10)

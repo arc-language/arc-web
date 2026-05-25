@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT,
+  body TEXT,
+  published INTEGER,
+  createdAt TEXT
+);

@@ -124,7 +124,7 @@ describe('integration: dashboard example', () => {
     assert.ok(result.html.includes('</html>'))
   })
 
-  test('produces HTML and CSS', () => {
+  test('dashboard HTML and CSS are non-empty', () => {
     assert.ok(result.html.length > 0)
     assert.ok(result.css.length > 0)
   })

@@ -33,14 +33,14 @@ function generateModelMigration(schema, existingCols, dialect = 'sqlite') {
   const statements = []
 
   if (existingCols.size === 0) {
-    // Table doesn't exist — CREATE TABLE
+    // Table doesn't exist - CREATE TABLE
     const colDefs = desired.map(c => {
       if (!_SAFE_IDENT.test(c.name)) throw new Error(`Arc migration: unsafe column name: ${JSON.stringify(c.name)}`)
       return `${c.name} ${c.sql}`
     }).join(', ')
     statements.push(`CREATE TABLE IF NOT EXISTS ${tbl} (${colDefs});`)
   } else {
-    // Table exists — ADD missing columns (SQLite and PG both support ALTER TABLE ADD COLUMN)
+    // Table exists - ADD missing columns (SQLite and PG both support ALTER TABLE ADD COLUMN)
     for (const col of desired) {
       if (col.isPk) continue // never ADD the primary key
       if (!_SAFE_IDENT.test(col.name)) throw new Error(`Arc migration: unsafe column name: ${JSON.stringify(col.name)}`)
@@ -48,7 +48,7 @@ function generateModelMigration(schema, existingCols, dialect = 'sqlite') {
         statements.push(`ALTER TABLE ${tbl} ADD COLUMN ${col.name} ${col.sql};`)
       }
     }
-    // Note: dropping columns is intentionally omitted — destructive ops require explicit arc db drop
+    // Note: dropping columns is intentionally omitted - destructive ops require explicit arc db drop
   }
 
   return statements
@@ -57,7 +57,7 @@ function generateModelMigration(schema, existingCols, dialect = 'sqlite') {
 // Inspect existing SQLite DB via bun:sqlite/better-sqlite3
 async function getExistingColumnsSqlite(dbPath) {
   const fs = require('fs')
-  // DB file doesn't exist yet — all tables are new
+  // DB file doesn't exist yet - all tables are new
   if (!fs.existsSync(dbPath)) return new Map()
 
   let Database

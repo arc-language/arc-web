@@ -4,7 +4,7 @@
 // emitted as pre-compiled JavaScript for Bun.serve().
 //
 // Compile-time trie means zero regex matching and zero middleware chain
-// traversal at request time — each request is a sequence of char comparisons
+// traversal at request time - each request is a sequence of char comparisons
 // to a leaf node. This beats Hono's runtime-built trie by ~20-30% on
 // route-heavy benchmarks.
 

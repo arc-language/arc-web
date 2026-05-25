@@ -78,7 +78,7 @@ class EdgeRenderer {
   }
 
   emitLiveResolver(liveDecls) {
-    // Resolve all @live decls in parallel — they're independent by construction
+    // Resolve all @live decls in parallel - they're independent by construction
     // (each one calls a server/fetch fn; the resolver is the *only* place to
     // parallelize, since user code can't `await Promise.all` declaratively).
     const calls = liveDecls.map(d => `(${this.jsEmitter.emitExpr(d.init)})`).join(', ')

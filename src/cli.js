@@ -32,7 +32,7 @@ async function resolveImports(program, projectDir, filename, visited, rootDir) {
 
   for (const imp of imports) {
     const src = imp.source
-    if (!src || src.startsWith('arc/')) continue // stdlib — not a file
+    if (!src || src.startsWith('arc/')) continue // stdlib - not a file
 
     const candidates = [
       path.resolve(projectDir, src),
@@ -116,7 +116,7 @@ async function compile(source, filename = '<input>', options = {}) {
   const parser = new Parser(tokens, filename)
   let program = parser.parse()
 
-  // 2b. Resolve imports — read imported .arc files and merge their declarations
+  // 2b. Resolve imports - read imported .arc files and merge their declarations
   const initialVisited = new Set(filename !== '<input>' ? [path.resolve(filename)] : [])
   program = await resolveImports(program, projectDir, filename, initialVisited)
 
@@ -253,7 +253,7 @@ function composeClientJs(reactive, stubs, realtime) {
   let stubsToShip = stubs
   let adpNeeded = !!realtime
   if (stubs) {
-    // Each stub starts with `async function NAME(` — collect names.
+    // Each stub starts with `async function NAME(` - collect names.
     const names = [...stubs.matchAll(/async\s+function\s+([A-Za-z_$][\w$]*)\s*\(/g)].map(m => m[1])
     const used = names.some(n => {
       const re = new RegExp(`\\b${n}\\s*\\(`)
@@ -413,7 +413,7 @@ async function build(projectDir) {
   console.log(`  → ${path.relative(process.cwd(), distDir)}/`)
 }
 
-// Split a (minified or not) CSS string into top-level rules — selectors and
+// Split a (minified or not) CSS string into top-level rules - selectors and
 // @-rules counted as single units. Bracket-counting handles nesting correctly.
 function splitCssRules(css) {
   const rules = []
@@ -553,7 +553,7 @@ async function buildSite(projectDir) {
   if (robots) fs.writeFileSync(path.join(distDir, 'robots.txt'), robots)
 
   // Auto-emit _headers (Cloudflare Pages / Netlify compatible). When this is
-  // emitted, the per-page CSP meta tag becomes redundant — strip it from HTML.
+  // emitted, the per-page CSP meta tag becomes redundant - strip it from HTML.
   const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
   const headersText = emitHeadersManifest({ sharedCssFilename: sharedFilename })
   fs.writeFileSync(path.join(distDir, '_headers'), headersText)
@@ -634,7 +634,7 @@ async function check(files) {
       continue
     }
     try {
-      // Lex + parse + check only — no emit
+      // Lex + parse + check only - no emit
       const lexer = new Lexer(source, file)
       const tokens = lexer.tokenize()
       const parser = new Parser(tokens, file)
@@ -895,7 +895,7 @@ const RELOAD_SCRIPT = `<script>
 </script>`
 
 async function dev(projectDir) {
-  // Long-running process — log unhandled errors instead of letting Node kill us
+  // Long-running process - log unhandled errors instead of letting Node kill us
   // mid-rebuild. Build/check/deploy are one-shot and don't need these.
   process.on('unhandledRejection', e => {
     console.error(`arc: dev: unhandled rejection: ${e?.message ?? e}`)
@@ -1075,7 +1075,7 @@ async function dev(projectDir) {
           console.log(`arc: rebuilt in ${dur}ms → reload sent to ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''}`)
         } catch (e) {
           // Read the source of the changed file so formatError can show context.
-          // Best-effort — the actual error may come from an import; in that case
+          // Best-effort - the actual error may come from an import; in that case
           // we lose the snippet but still get the error message.
           let src = null
           try { src = fs.readFileSync(path.join(absDir, changedFile), 'utf8') } catch {}
@@ -1124,7 +1124,7 @@ async function deploy(projectDir, target) {
 
   const projectName = path.basename(absDir).replace(/[^a-z0-9-]/gi, '-').toLowerCase() || 'arc-app'
 
-  // 3. Generate deployment artifacts (static dispatch — no dynamic require)
+  // 3. Generate deployment artifacts (static dispatch - no dynamic require)
   const deployModules = {
     cloudflare: () => require('./deploy/cloudflare'),
     deno:       () => require('./deploy/deno'),
@@ -1331,7 +1331,7 @@ async function serve(projectDir, flags = {}) {
       })
       watched.add(dir)
     } catch {
-      // fs.watch recursive not supported on all platforms — fall back to polling
+      // fs.watch recursive not supported on all platforms - fall back to polling
       for (const f of findArcFiles(dir)) {
         if (watched.has(f)) continue
         watched.add(f)
@@ -1591,7 +1591,6 @@ async function runSeed(seedFile, projectDir, opts = {}) {
   }
 
   // Emit a standalone seed script using BunServerEmitter's db helpers
-  const { BunServerEmitter } = require('./emitters/server-bun')
   const emitter = new BunServerEmitter({ hash: 'arc', db: opts.db ?? 'sqlite' })
 
   // Build a synthetic program with only the schemas + seed statements
@@ -1599,7 +1598,6 @@ async function runSeed(seedFile, projectDir, opts = {}) {
   const dbHelpers = schemas.map(s => emitter.emitModelHelpers(s)).join('\n\n')
 
   // Emit the seed body using the JS emitter
-  const { JsEmitter } = require('./emitters/js')
   const jsEmitter = new JsEmitter({ hash: 'arc' })
   const seedBody = jsEmitter.emitBody(program.declarations)
 
@@ -1920,7 +1918,7 @@ function findArcFiles(dir) {
 }
 
 // Public API: just `compile`. Internals are namespaced under `_internal` to
-// signal they are not a stability contract — they exist only so tests can
+// signal they are not a stability contract - they exist only so tests can
 // exercise them directly.
 module.exports = {
   compile,

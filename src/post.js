@@ -62,7 +62,7 @@ class PostProcessor {
     return { html: inlined, css, cssInlined: false }
   }
 
-  // Conservative CSS minifier — strips comments, collapses whitespace, removes
+  // Conservative CSS minifier - strips comments, collapses whitespace, removes
   // spaces around { } : ; , and the trailing ; before }. Preserves string content.
   minifyCss(css) {
     // Pull out strings so we don't mangle their content

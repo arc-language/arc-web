@@ -1,6 +1,6 @@
 'use strict'
 
-// Linked scope chain — O(1) child creation vs O(N) Map copy.
+// Linked scope chain - O(1) child creation vs O(N) Map copy.
 // Writes go to the local frame only; lookups walk the chain.
 class Scope {
   constructor(parent = null) {
@@ -30,7 +30,7 @@ class Scope {
 }
 
 // Arc semantic checker.
-// Runs after parsing — catches errors the parser can't see:
+// Runs after parsing - catches errors the parser can't see:
 //   - Undefined variables in expressions and templates
 //   - Missing required attributes (img without alt)
 //   - @session used outside @server/@live
@@ -58,6 +58,7 @@ class Checker {
     this.filename = filename
     this.errors = []
     this.warnings = []
+    this._declLines = new Map()
   }
 
   error(msg, node) {
@@ -182,7 +183,6 @@ class Checker {
     // Duplicate detection: track lines we've seen each name at. The hoist pass
     // doesn't track lines, so the first time a real decl arrives here is fine;
     // a second decl with the same name + different line is a duplicate.
-    if (!this._declLines) this._declLines = new Map()
     const firstLine = this._declLines.get(name)
     if (firstLine != null && firstLine !== decl.line) {
       this.error(`Duplicate declaration: "${name}" already declared`, decl)
@@ -197,7 +197,6 @@ class Checker {
 
   checkFnDecl(decl, declared) {
     const name = decl.name
-    if (!this._declLines) this._declLines = new Map()
     const firstLine = this._declLines.get(name)
     if (firstLine != null && firstLine !== decl.line) {
       this.error(`Duplicate declaration: "${name}" already declared`, decl)
@@ -223,8 +222,7 @@ class Checker {
   checkClassDecl(decl, declared) {
     const name = decl.name
     if (name) {
-      if (!this._declLines) this._declLines = new Map()
-      const firstLine = this._declLines.get(name)
+        const firstLine = this._declLines.get(name)
       if (firstLine != null && firstLine !== decl.line) {
         this.error(`Duplicate declaration: "${name}" already declared`, decl)
       } else {
@@ -258,7 +256,7 @@ class Checker {
       const pname = p.name ?? p
       if (pname) localScope.set(pname, 'Param')
     }
-    // Widget @attr references (@name) are duck-typed — suppress AtProperty errors
+    // Widget @attr references (@name) are duck-typed - suppress AtProperty errors
     const savedInWidget = this.inWidget
     this.inWidget = true
     this.checkTemplateBody(decl.body ?? [], localScope)
@@ -455,7 +453,7 @@ class Checker {
       }
 
       case 'AtProperty': {
-        // @varName — in widget bodies, these are duck-typed attrs; only check in page/fn scope
+        // @varName - in widget bodies, these are duck-typed attrs; only check in page/fn scope
         if (!this.inWidget) {
           const name = expr.name
           if (name && !declared.has(name)) {
@@ -466,7 +464,7 @@ class Checker {
       }
 
       case 'MemberExpr':
-        // Only check the root object — properties are dynamic
+        // Only check the root object - properties are dynamic
         this.checkExpr(expr.object, declared, ctx)
         break
 
@@ -566,7 +564,7 @@ class Checker {
         this.checkExpr(expr.argument, declared, ctx)
         break
 
-      // Literals — always valid
+      // Literals - always valid
       case 'Literal':
       case 'StringLiteral':
         break
@@ -574,7 +572,7 @@ class Checker {
   }
 }
 
-// Known safe globals — not declared in Arc source but always available
+// Known safe globals - not declared in Arc source but always available
 const GLOBALS = new Set([
   // JS builtins
   'undefined', 'null', 'true', 'false', 'NaN', 'Infinity',

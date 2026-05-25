@@ -165,7 +165,7 @@ class JsEmitter {
     // bind:value two-way bindings
     const bindBindings = stateBindings.filter(b => b.kind === 'bind')
     if (bindBindings.length > 0) {
-      // Shared helper — emitted once, called per binding to cut ~250 bytes/binding
+      // Shared helper - emitted once, called per binding to cut ~250 bytes/binding
       parts.push(
         `function _arcBind(el,setter){if(!el)return;` +
         `const t=el.tagName==='SELECT'||el.type==='checkbox'||el.type==='radio'?'change':'input';` +
@@ -264,25 +264,25 @@ class JsEmitter {
   emitBindingUpdate(b) {
     _assertSafeAttr(b.id, 'binding id')
     const el = `_el_${b.id}`
-    const val = this.emitRuntimeExpr(b.expr)
+    const exprStr = this.emitRuntimeExpr(b.expr)
 
     switch (b.kind) {
       case 'if-show':
-        return `if(${val}){${el}.removeAttribute('hidden');}else{${el}.setAttribute('hidden','');}`
+        return `if(${exprStr}){${el}.removeAttribute('hidden');}else{${el}.setAttribute('hidden','');}`
       case 'if-hide':
-        return `if(${val}){${el}.setAttribute('hidden','');}else{${el}.removeAttribute('hidden');}`
+        return `if(${exprStr}){${el}.setAttribute('hidden','');}else{${el}.removeAttribute('hidden');}`
       case 'list':
         return this.emitListUpdate(b)
       case 'attr':
         _assertSafeAttr(b.attr, 'attr binding')
-        return `${el}.setAttribute('${b.attr}',${val});`
+        return `${el}.setAttribute('${b.attr}',${exprStr});`
       case 'class-toggle':
         _assertSafeAttr(b.cls, 'class-toggle binding')
-        return `${el}.classList.toggle('${b.cls}_${this.componentHash}',!!${val});`
+        return `${el}.classList.toggle('${b.cls}_${this.componentHash}',!!${exprStr});`
       case 'bind':
-        return `if(document.activeElement!==${el})${el}.value=${val};`
+        return `if(document.activeElement!==${el})${el}.value=${exprStr};`
       default:
-        return `${el}.textContent=${val};`
+        return `${el}.textContent=${exprStr};`
     }
   }
 

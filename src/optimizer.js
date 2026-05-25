@@ -65,7 +65,7 @@ class Optimizer {
   optimizeFor(node) {
     const collection = this.resolveExpr(node.collection)
     if (!Array.isArray(collection)) {
-      // Can't unroll — leave as reactive for
+      // Can't unroll - leave as reactive for
       return [{ ...node, body: this.optimizeChildren(node.body) }]
     }
 
@@ -106,9 +106,9 @@ class Optimizer {
       }
 
       case 'InterpolationNode': {
-        const val = this.resolveExprWithBindings(node.expr, bindings)
-        if (val !== undefined) {
-          return [N.TextNode(String(val), node.line)]
+        const resolved = this.resolveExprWithBindings(node.expr, bindings)
+        if (resolved !== undefined) {
+          return [N.TextNode(String(resolved), node.line)]
         }
         return [node]
       }

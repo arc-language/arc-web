@@ -1,5 +1,5 @@
 'use strict'
-// ADP decoder — also ships as browser bundle < 1KB gzipped
+// ADP decoder - also ships as browser bundle < 1KB gzipped
 // Same file works in Node.js and browser (via bundler or <script type=module>)
 
 const TAG = {
@@ -73,14 +73,14 @@ class Decoder {
       case TAG.OBJECT: {
         const count = this.readVarInt()
         if (count > 10000) throw new Error(`ADP decode: object key count too large: ${count}`)
-        const obj = {}
+        const decoded = {}
         for (let i = 0; i < count; i++) {
           const key = this.readString()
           const val = this.readValue(depth + 1)
           if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
-          obj[key] = val
+          decoded[key] = val
         }
-        return obj
+        return decoded
       }
 
       case TAG.DATE: {

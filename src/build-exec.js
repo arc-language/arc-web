@@ -71,15 +71,14 @@ class BuildExecutor {
       }
 
       case 'ObjectLiteral': {
-        const obj = {}
+        const record = {}
         for (const prop of (expr.properties ?? [])) {
           if (prop.key === '__proto__' || prop.key === 'constructor' || prop.key === 'prototype') {
             throw new Error(`@build: forbidden key '${prop.key}' in object literal`)
           }
-          const val = await this.evalExpr(prop.value, locals)
-          obj[prop.key] = val
+          record[prop.key] = await this.evalExpr(prop.value, locals)
         }
-        return obj
+        return record
       }
 
       case 'MemberExpr': {
@@ -328,7 +327,7 @@ class BuildExecutor {
       throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
     }
     // Block IPv6 private/loopback/link-local/ULA/IPv4-mapped ranges
-    // '::' is the IPv6 unspecified address — Linux routes it to loopback,
+    // '::' is the IPv6 unspecified address - Linux routes it to loopback,
     // so it's a viable SSRF target equivalent to '::1' / '0.0.0.0'.
     if (hostname === '::1' || hostname === '::' ||
         hostname.startsWith('fc') || hostname.startsWith('fd') ||

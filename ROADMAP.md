@@ -6,38 +6,46 @@ This roadmap is updated when meaningful work lands. For everything that's alread
 
 ---
 
-## 0.2 — polish + adoption (next minor)
+## 0.2 — full-stack backend ✅ shipped 2026-05-24
 
-- **Fix stdlib checker errors.** `arc check` against `stdlib/{form,icons,router}.arc` emits 21 false positives. Either teach the checker about widget-parameter scoping, or annotate stdlib widgets explicitly.
-- **Layout-aware srcset widths (real implementation).** The image pipeline F2 currently falls back to the generic ladder because the AST walker doesn't yet derive container widths from `design` blocks. Plumb the design-block width-resolver into `collectImgRefs`.
-- **`arc fmt` formatter.** Canonical formatting for `.arc` files. Reuses the lexer + parser, emits normalized whitespace + indentation. ~300 lines.
-- **CSS value minification.** `oklch(60% 0.15 250)` → hex; `0.5em` → `.5em`; collapse-able hex (`#aabbcc` → `#abc`). Adds ~30-80 B savings per stylesheet.
-- **Shorter scoped class names.** Currently `arc-card_1g18` (10 chars). Switch to sequential `c0`, `c1`, ... allocation when collision-free. ~50 B raw saved per page.
-- **`arc dev` improvements.** HMR for design blocks (no full page reload on CSS-only changes); error overlay in the browser; better fail-fast on syntax errors.
+Arc is now a full-stack language. Same `.arc` source compiles to frontend (HTML/CSS/JS) and backend (Bun server or Cloudflare Workers edge bundle).
 
-## 0.3 — DX investments
+- ✅ **`arc/http`** — `@route` annotation, compile-time radix-trie dispatch, `@auth` guard, `json()` / `redirect()` / `html()` helpers
+- ✅ **`arc/db`** — `model` block, compile-time SQL, `arc db migrate`, `arc db seed`, SQLite + PostgreSQL
+- ✅ **`arc/auth`** — HMAC-SHA256 signed sessions, JWT HS256, GitHub + Google OAuth
+- ✅ **`arc/queue`** — `job` block, in-process async queue with retry, `email.send()`
+- ✅ **Cloudflare Workers target** — D1 bindings, CF Queues, auto-generated `wrangler.toml`
+- ✅ **`arc serve`** hot reload — `fs.watch` + 150 ms debounce, child-process restart
+- ✅ **Multi-statement match arms** — indented block bodies after `->`
+- ✅ **`arc check <dir>`** — type-check entire directory trees
+- ✅ **`arc explain`** upgrade — shows DB reads/writes and job invocations per route
 
-- **VS Code extension.** Syntax highlighting + brace matching + snippets. Ships as `editor-extensions/vscode/` in this repo; published to the Marketplace. Scaffold landed in 0.1.
-- **Treesitter grammar.** Standalone `tree-sitter-arc` repo. Enables GitHub linguist registration + Neovim + Helix support. Scaffold landed in 0.1.
-- **LSP server.** Standalone `arc-lsp` repo. Diagnostics from the existing checker; go-to-definition for widget invocations; auto-import suggestions.
-- **`arc playground`.** Browser-based "try Arc" tool — paste source, see HTML/CSS/JS output side-by-side. Implementable as a Cloudflare Worker or by compiling the compiler to WASM.
-- **GitHub linguist registration.** Open the PR to [github-linguist/linguist](https://github.com/github-linguist/linguist) to make `.arc` syntax-highlight on GitHub.
+## 0.3 — backend hardening + DX (next)
 
-## 0.4 — production features
+- **`arc/magic-link`** — passwordless email login flow.
+- **`arc/cron`** — scheduled jobs (`@cron "0 9 * * *" SendDailyDigest`). Compiles to `node-cron` (Bun) and CF Cron Triggers.
+- **`arc/storage`** — `storage.put(key, file)` / `storage.get(key)`. Local filesystem (Bun) + R2 (CF).
+- **`arc/kv`** — key-value store. Redis (Bun) + CF KV.
+- **Compile-time OpenAPI** — `arc explain --format openapi` emits `openapi.json` from route AST. No runtime reflection.
+- **VS Code extension.** Syntax highlighting + brace matching + snippets. Ships as `editor-extensions/vscode/` in this repo.
+- **Treesitter grammar.** Standalone `tree-sitter-arc` repo. GitHub linguist registration + Neovim + Helix support.
+- **LSP server.** Standalone `arc-lsp` repo. Diagnostics from the checker; go-to-definition for widget invocations.
 
-- **Auto Service Worker.** Compiler knows route graph + asset hashes. Emit a SW that caches all routes on install + prefetches likely-next on idle. No competitor framework auto-generates SWs.
-- **Critical-CSS by viewport, not by layer.** Today's inliner ships the whole `@layer base` + `@layer component`. Analyze which selectors match nodes above the first `<section>` and inline only those. ~30% inlined-CSS reduction on deep pages.
-- **103 Early Hints in edge renderer.** `@live` edge worker emits a 103 response with preload hints for shared CSS before computing data. Real win on production networks.
-- **Brotli pre-compression to `.html.br`.** Static-build option: emit pre-compressed `.html.br` / `.css.br` / `.js.br` alongside originals so CDNs can serve without runtime compression cost.
-- **Image content-aware compression.** Detect photo vs illustration vs screenshot per image; pick optimal codec settings per category.
+## 0.4 — frontend polish
+
+- **`arc fmt` formatter.** Canonical formatting for `.arc` files. Reuses lexer + parser, emits normalized whitespace. ~300 lines.
+- **HMR for design blocks.** No full reload on CSS-only changes in `arc dev`.
+- **Auto Service Worker.** Emit a SW that caches all routes on install + prefetches likely-next on idle.
+- **103 Early Hints in edge renderer.** `@live` edge worker emits a 103 response with preload hints before computing data.
+- **CSS value minification.** `oklch(60% 0.15 250)` → hex; `0.5em` → `.5em`. ~30-80 B savings per stylesheet.
+- **`arc playground`.** Browser-based "try Arc" tool — paste source, see HTML/CSS/JS output side-by-side.
 
 ## 0.5 — stdlib expansion
 
-- **`arc/auth`** — session helpers, OAuth, magic-link flows.
 - **`arc/markdown`** — MDX-style mixed markdown + Arc widgets at build time.
-- **`arc/db`** — minimal typed query builder for `@server` fns. Maps to D1 / Postgres / SQLite.
 - **`arc/i18n`** — compile-time message extraction + per-locale builds.
 - **`arc/analytics`** — privacy-first event collection (no third-party JS).
+- **Type-flow front↔back** — `model Post` automatically types `db.posts.findMany()` return and frontend `@live` bindings. No manual `interface` duplication.
 
 ## 1.0 — stable
 

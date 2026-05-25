@@ -1,0 +1,23 @@
+name = "api"
+main = "dist/worker.js"
+compatibility_date = "2024-09-23"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "api-db"
+database_id = "00000000-0000-0000-0000-000000000000"  # run: wrangler d1 create api-db
+
+[[queues.producers]]
+binding = "QUEUE"
+queue = "api-queue"
+
+[[queues.consumers]]
+queue = "api-queue"
+max_batch_size = 10
+max_batch_timeout = 30
+
+[vars]
+# SESSION_SECRET = "set-in-wrangler-secrets"
+# RESEND_API_KEY = "set-in-wrangler-secrets"
+
+# To set secrets: wrangler secret put SESSION_SECRET

@@ -2,6 +2,77 @@
 
 All notable changes to Arc are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-05-24
+
+Arc becomes a **full-stack language**. The same `.arc` source now compiles to both a Bun HTTP server (`arc build --target bun`) and a Cloudflare Workers edge bundle (`arc build --target cloudflare`). No config files, no boilerplate — routes, models, auth, queues, and email are all first-class language features.
+
+### Added — HTTP routing (`arc/http`)
+
+- **`@route` annotation** — `@route get "/posts/:id" -> Response` compiles to a compile-time radix-trie decision tree. Zero regex at request time; dispatches via static character comparisons.
+- **`@auth` stacked annotation** — `@route @auth get "/me"` auto-injects session guard before the handler body. Returns `{ error: 'Unauthorized' }` / 401 if no valid session.
+- **`redirect()`, `json()`, `html()`** — built-in response helpers available in every route body.
+- **`request`, `params`, `session`** — injected into route scope automatically; no imports needed.
+- **Multi-statement match arms** — match arms now support indented multi-statement blocks after `->`:
+  ```arc
+  match result
+    Some(r) ->
+      const response = redirect("/posts")
+      auth.set(response, { userId: r.user.id })
+  ```
+
+### Added — Database (`arc/db`)
+
+- **`model` block** — `@id`, `@index`, `@relation` field annotations; `autoincrement()`, `now()` defaults.
+- **Compile-time SQL** — `db.posts.findMany()` compiles to a static `SELECT *` string constant. No ORM overhead at runtime.
+- **`arc db migrate`** — diffs current schema against live DB, emits and applies `ALTER TABLE` / `CREATE TABLE` SQL. Supports SQLite (Bun) and PostgreSQL.
+- **`arc db seed`** — parses and runs `server/seed.arc` to populate development data.
+- **PostgreSQL support** — `arc build --target bun --db postgres` emits async `pg`-driver queries with `$1/$2` placeholders, `SERIAL PRIMARY KEY`, `BOOLEAN`, `TIMESTAMPTZ`.
+
+### Added — Auth (`arc/auth`)
+
+- **Signed cookie sessions** — HMAC-SHA256 via Web Crypto API, zero dependencies. `auth.session(req)`, `auth.set(res, payload)`, `auth.clear(res)`.
+- **JWT** — HS256 sign/verify: `jwt.sign(payload, secret, expiresIn)`, `jwt.verify(token, secret)`.
+- **OAuth2** — GitHub and Google providers: `oauth.github.url(scopes)`, `oauth.github.callback(req)`, same for Google.
+
+### Added — Background jobs (`arc/queue`)
+
+- **`job` block** — `job SendEmail(userId: Int)` defines an async background job. Calling `SendEmail(1)` in a route body enqueues it automatically.
+- **In-process queue** — exponential backoff retry (max 3 attempts, 200 ms base). No external queue service needed for Bun target.
+- **Email** — `email.send({ to, subject, template, data })` routes through Resend API with nodemailer SMTP fallback.
+
+### Added — Cloudflare Workers target
+
+- **`arc build --target cloudflare`** — emits `dist/worker.js` (ES module), `dist/schema.sql`, and `wrangler.toml`.
+- **D1 bindings** — all `db.*` calls use `env.DB.prepare().bind().all()` / `.first()` D1 API. No `bun:sqlite` in the bundle.
+- **CF Queues** — `job` blocks compile to a `queue(batch, env)` handler; job dispatch uses `env.QUEUE.send()`.
+- **`wrangler.toml` generation** — `[[d1_databases]]`, `[[queues.producers]]`, `[[queues.consumers]]` auto-generated from AST.
+
+### Added — CLI
+
+- **`arc serve [dir]`** — starts Bun development server with **hot reload** (`fs.watch` + 150 ms debounce, child-process restart on any `.arc` change).
+- **`arc build --target bun|cloudflare`** — production build for either runtime.
+- **`arc db migrate`** / **`arc db seed`** — schema migrations and seed runner.
+- **`arc generate model <name>`** / **`arc generate handler <path>`** / **`arc generate job <name>`** — scaffolding.
+- **`arc check <dir>`** — type-check all `.arc` files in a directory tree (previously file-only).
+- **`arc explain <file|dir>`** — now shows per-route DB reads/writes and job invocations extracted from AST:
+  ```
+  GET /posts
+    reads: db.posts.findMany()
+    → SELECT * FROM posts
+  POST /posts
+    writes: db.posts.create(body)
+    queues: SendEmail(post.id)
+  ```
+- **`arc new --template api`** — scaffolds a full-stack API project with `server/routes/`, `server/schemas/`, `server/jobs/`, `server/seed.arc`.
+
+### Fixed
+
+- **`auth.github` → `oauth.github`** in `examples/api/server/routes/auth.arc` — GitHub OAuth lives on the `oauth` object, not `auth`.
+- **`schema` keyword collision** — renamed to `model` to avoid collision with form-validation `schema` usage.
+- **`eat(T.INDENT)` consuming NEWLINE+DEDENT** — fixed in `parseModelField`; raw position increment used instead of `eat()`.
+
+---
+
 ## [Unreleased]
 
 ### Added — LLM Skills Library

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const path = require('path')
 
-// Use /var/tmp instead of TMPDIR — /tmp has overlay fs issues in this environment
+// Use /var/tmp instead of TMPDIR - /tmp has overlay fs issues in this environment
 const TMPDIR = '/var/tmp'
 
 const { BuildExecutor } = require('../src/build-exec')
@@ -694,8 +694,8 @@ describe('BuildExecutor.evalCall — fetch and readFile', () => {
 
 // ── doFetch — SSRF protection ─────────────────────────────────────────────────
 
-// doFetch throws synchronously for invalid URLs — use assert.throws (not rejects)
-describe('BuildExecutor.doFetch — SSRF protection', () => {
+// doFetch throws synchronously for invalid URLs - use assert.throws (not rejects)
+describe('BuildExecutor.doFetch - SSRF protection', () => {
   test('rejects file: protocol', () => {
     const e = exec()
     assert.throws(() => e.doFetch('file:///etc/passwd'), /only http\/https allowed/)

@@ -1,7 +1,7 @@
 'use strict'
 
 // Auth helpers emitted into generated server.js.
-// Uses only Web Crypto API (built into Bun and modern Node) — zero external deps.
+// Uses only Web Crypto API (built into Bun and modern Node) - zero external deps.
 //
 // Session: signed cookie (HMAC-SHA256). No server-side storage needed.
 // JWT: HS256 via Web Crypto.
@@ -22,8 +22,8 @@ if (_AUTH_SECRET === 'change-me-in-production') {
 const _SESSION_COOKIE = '${cookieName}'
 const _SESSION_MAX_AGE = ${sessionMaxAge}
 
-// HMAC-SHA256 sign/verify (Web Crypto — built into Bun + Node 18+)
-// Key cache — Map keyed by secret, safe for concurrent calls with different secrets
+// HMAC-SHA256 sign/verify (Web Crypto - built into Bun + Node 18+)
+// Key cache - Map keyed by secret, safe for concurrent calls with different secrets
 const _hmacKeyCache = new Map()
 async function _getHmacKey(secret) {
   if (_hmacKeyCache.has(secret)) return _hmacKeyCache.get(secret)
@@ -141,7 +141,7 @@ const jwt = {
 // OAuth helpers (GitHub)
 const oauth = {
   github: {
-    // Returns { url, state } — store state in session and verify in callback
+    // Returns { url, state } - store state in session and verify in callback
     url: (scopes = ['user:email']) => {
       const clientId = process.env.GITHUB_CLIENT_ID ?? ''
       const state = crypto.randomUUID()
@@ -177,7 +177,7 @@ const oauth = {
   },
 
   google: {
-    // Returns { url, state } — store state in session and verify in callback
+    // Returns { url, state } - store state in session and verify in callback
     url: (scopes = ['email', 'profile']) => {
       const clientId = process.env.GOOGLE_CLIENT_ID ?? ''
       const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? ''

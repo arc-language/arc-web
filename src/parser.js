@@ -1,6 +1,6 @@
 'use strict'
 
-const { T, STRUCTURE_ELEMENTS, KEYWORDS } = require('./tokens')
+const { T, STRUCTURE_ELEMENTS } = require('./tokens')
 const N = require('./ast')
 
 // Hoisted regexes used in parseStyleValue: avoids per-token allocation
@@ -15,6 +15,7 @@ const _TEMPLATE_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live',
 
 // Hoisted operator Sets for hot expression-parsing loops: avoids per-call array allocation
 const _ASSIGN_OPS = new Set([T.EQ, T.PLUS_EQ, T.MINUS_EQ, T.STAR_EQ, T.SLASH_EQ])
+const _DECLARATION_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker', '@param', '@route'])
 const _EQUALITY_OPS = new Set([T.EQEQ, T.BANGEQ, T.IS])
 const _CMP_OPS = new Set([T.LT, T.GT, T.LTEQ, T.GTEQ])
 const _ADDSUB_OPS = new Set([T.PLUS, T.MINUS])
@@ -113,7 +114,7 @@ class Parser {
   }
 
   eatIf(type) {
-    // Don't skip whitespace if the target IS whitespace — would silently consume
+    // Don't skip whitespace if the target IS whitespace - would silently consume
     // an arbitrary number of DEDENT/INDENT/NEWLINE tokens and break indentation
     // tracking.
     if (type !== T.DEDENT && type !== T.INDENT && type !== T.NEWLINE) {
@@ -250,12 +251,8 @@ class Parser {
       annotations.push(this.tokens[this.pos++].value)
     }
 
-    // Find the primary annotation — the one that determines declaration type
-    const DECLARATION_ANNOTATIONS = new Set([
-      '@state', '@computed', '@build', '@live', '@realtime',
-      '@server', '@worker', '@param', '@route'
-    ])
-    const primaryIdx = annotations.findIndex(a => DECLARATION_ANNOTATIONS.has(a))
+    // Find the primary annotation - the one that determines declaration type
+    const primaryIdx = annotations.findIndex(a => _DECLARATION_ANNOTATIONS.has(a))
     const primary = primaryIdx !== -1 ? annotations[primaryIdx] : annotations[0]
     const extras = primaryIdx !== -1
       ? annotations.filter((_, i) => i !== primaryIdx)
@@ -350,7 +347,7 @@ class Parser {
     if (this.tokens[this.pos]?.type === T.ASYNC) { isAsync = true; this.pos++ }
     const name = this.eat(T.IDENT).value
     const params = this.parseParams()
-    const returnType = this.eatIf(T.THIN_ARROW) ? this.parseTypeAnnotationNoObject() : null
+    const returnType = this.eatIf(T.THIN_ARROW) ? this.parseTypeAnnotation() : null
 
     let body
     this.consumeNewlines()
@@ -378,14 +375,6 @@ class Parser {
   }
 
   // Parse type annotation stopping before { (to avoid consuming object types as blocks)
-  parseTypeAnnotationNoObject() {
-    if (this.peekType() === T.LBRACE) {
-      // Object type: { key: Type, ... }: parse inline
-      return this.parseTypeAnnotation()
-    }
-    return this.parseTypeAnnotation()
-  }
-
   parseParamDecl(line) {
     const name = this.eat(T.IDENT).value
     const typeAnnotation = this.eatIf(T.COLON) ? this.parseTypeAnnotation() : null
@@ -473,7 +462,7 @@ class Parser {
     if (t.type === T.FOR) return this.parseTemplateFor()
     if (t.type === T.MATCH) return this.parseTemplateMatch()
 
-    // Local const/let inside a widget or page body — useful for derived values
+    // Local const/let inside a widget or page body - useful for derived values
     // referenced by interpolations. Returns a VarDecl-style node that the
     // checker can add to its scope.
     if (t.type === T.CONST || t.type === T.LET) return this.parseVarDecl()
@@ -619,7 +608,7 @@ class Parser {
             this.pos++
             if (this.tokens[this.pos]?.type === T.LBRACE) {
               this.pos++
-              attrs[attrName] = this.parseExprUntilBrace()
+              attrs[attrName] = this.parseExpr()
               this.eatIf(T.RBRACE)
             } else {
               attrs[attrName] = this.parseExpr()
@@ -717,16 +706,10 @@ class Parser {
   parseTemplateInterpolation() {
     const tok = this.tokens[this.pos]
     this.pos++ // consume {
-    const expr = this.parseExprUntilBrace()
+    const expr = this.parseExpr()
     this.eatIf(T.RBRACE)
     this.consumeNewlines()
     return N.InterpolationNode(expr, tok.line)
-  }
-
-  parseExprUntilBrace() {
-    // Parse an expression stopping at an unmatched }
-    // We save position and try to parse, backing off if needed
-    return this.parseExpr()
   }
 
   parseTemplateIf() {
@@ -947,7 +930,7 @@ class Parser {
       if (!pt) break
 
       // Bail out if we've slipped past the style rule and into a top-level
-      // declaration. Same hazard as in parseDesign — fall-through pos++ below
+      // declaration. Same hazard as in parseDesign - fall-through pos++ below
       // would otherwise eat the rest of the file.
       if (
         pt.type === T.CONST || pt.type === T.LET || pt.type === T.FN ||
@@ -1403,7 +1386,7 @@ class Parser {
         if (this.tokens[this.pos]?.type === T.DEDENT || this.tokens[this.pos]?.type === T.EOF) break
         const pattern = this.parseMatchPattern()
         if (!this.eatIf(T.ARROW)) this.eat(T.THIN_ARROW)
-        // Multi-statement arm: `Pat ->\n  stmt1\n  stmt2` — NEWLINE after arrow signals a block
+        // Multi-statement arm: `Pat ->\n  stmt1\n  stmt2` - NEWLINE after arrow signals a block
         const body = this.tokens[this.pos]?.type === T.NEWLINE
           ? this.parseIndentedBlock()
           : this.parseExpr()
@@ -1474,7 +1457,7 @@ class Parser {
       this.pos++
       return { type: 'VariantPattern', variant: 'None', name: null, line: t.line }
     }
-    // Constructor patterns: Tag(val) — uppercase IDENT followed by LPAREN
+    // Constructor patterns: Tag(val) - uppercase IDENT followed by LPAREN
     if (t.type === T.IDENT && /^[A-Z]/.test(t.value) && this.tokens[this.pos + 1]?.type === T.LPAREN) {
       const tag = t.value; this.pos++
       this.eat(T.LPAREN)
@@ -1776,7 +1759,7 @@ class Parser {
     // Object literal
     if (t.type === T.LBRACE) {
       this.pos++
-      // Allow multi-line object literals — skip newlines and the optional INDENT/DEDENT
+      // Allow multi-line object literals - skip newlines and the optional INDENT/DEDENT
       // pair the lexer emits when the body starts on the next line.
       this.consumeNewlines()
       while (this.tokens[this.pos]?.type === T.INDENT || this.tokens[this.pos]?.type === T.DEDENT) this.pos++
@@ -1938,7 +1921,7 @@ class Parser {
   parseIndentedBlock() {
     const line = this.tokens[this.pos]?.line ?? 0
     this.consumeNewlines()
-    // Must check INDENT directly — eat() calls skipWhitespace() which would consume it
+    // Must check INDENT directly - eat() calls skipWhitespace() which would consume it
     if (this.tokens[this.pos]?.type !== T.INDENT) {
       this.error(
         `Expected indented block, got ${this.tokens[this.pos]?.type} (${JSON.stringify(this.tokens[this.pos]?.value)})`,
@@ -1965,7 +1948,7 @@ class Parser {
     const tok = this.eat(T.MODEL)
     const name = this.eat(T.IDENT).value
     this.consumeNewlines()
-    // Must check INDENT directly — eat() calls skipWhitespace() which would consume it
+    // Must check INDENT directly - eat() calls skipWhitespace() which would consume it
     if (this.tokens[this.pos]?.type !== T.INDENT) {
       this.error(`Expected indented block after model ${name}`, this.tokens[this.pos])
     }
@@ -1987,7 +1970,7 @@ class Parser {
     while (this.tokens[this.pos]?.type === T.AT_IDENT) {
       decorators.push(this.tokens[this.pos++].value)
     }
-    // Standalone decorator line (e.g. @index index(email, unique: true)) — no following let/const
+    // Standalone decorator line (e.g. @index index(email, unique: true)) - no following let/const
     if (decorators.length > 0 && this.tokens[this.pos]?.type !== T.LET && this.tokens[this.pos]?.type !== T.CONST) {
       const exprLine = this.tokens[this.pos]?.line ?? 0
       const expr = this.parseExpr()
@@ -2017,7 +2000,7 @@ class Parser {
   // METHOD is any token (get, post, put, del, patch, etc.)
 
   parseRouteDecl(line) {
-    // HTTP method: accept any token — GET keyword, IDENT, del, post, etc.
+    // HTTP method: accept any token - GET keyword, IDENT, del, post, etc.
     this.skipWhitespace()
     const methodTok = this.tokens[this.pos]
     this.pos++
