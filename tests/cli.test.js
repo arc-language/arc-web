@@ -105,7 +105,7 @@ describe('cli: composeClientJs', () => {
   })
 
   test('strips ADP runtime + stubs when stubs are never called from client', () => {
-    // @server fn declared but only used by @live (resolved at edge render time) —
+    // @server fn declared but only used by @live (resolved at edge render time) -
     // the client bundle should NOT ship ADP or the stub.
     const stubs = 'async function getStats() { return await fetch("/_arc/fn/getStats") }'
     const reactive = 'document.querySelector("button").addEventListener("click", () => {})'
@@ -482,9 +482,8 @@ page "T"
       const r = spawnSync('node', [cliPath, 'build', dir], { stdio: 'pipe' })
       const stderr = r.stderr.toString()
       const stdout = r.stdout.toString()
-      // Should warn but still complete (note: stderr might contain the warning, or it might compile)
-      assert.ok(stderr.length > 0 || stdout.length > 0,
-        `Expected some output: stderr=${stderr}, stdout=${stdout}`)
+      assert.ok(stderr.includes('warn') || stderr.includes('@build') || stdout.includes('warn'),
+        `Expected a warning about the @build error: stderr=${stderr}, stdout=${stdout}`)
     } finally { rmDir(dir) }
   })
 
@@ -662,6 +661,9 @@ describe('cli: fatal error handling (subprocess)', () => {
       stdio: 'pipe'
     })
     assert.ok(result.status !== 0)
+    const errOut = result.stderr.toString()
+    assert.ok(errOut.includes('cannot read') || errOut.includes('ENOENT') || errOut.length > 0,
+      'should print an error message')
   })
 
   test('unknown subcommand prints help', () => {
@@ -826,7 +828,7 @@ describe('cli: dev server (subprocess + HTTP)', () => {
   test('dev server serves /styles.css when CSS exceeds inline threshold', async () => {
     // Small CSS is now inlined into <style> (no separate file written).
     // To exercise the external file path, generate enough CSS to exceed the 14 KB
-    // critical-inlining threshold — pad with many style rules.
+    // critical-inlining threshold - pad with many style rules.
     const dir = mkTmpDir('devcss')
     const port = 13000 + Math.floor(Math.random() * 1000)
     let proc
@@ -865,20 +867,54 @@ describe('cli: dev server (subprocess + HTTP)', () => {
     }
   })
 
-  test('dev server returns 403 for path traversal attempt', async () => {
-    const dir = mkTmpDir('devtrav')
+  test('dev server blocks raw .. segments with 403', async () => {
+    // When the URL is sent with literal ".." segments that survive to req.url,
+    // the server must reject with 403. We craft a request whose URL contains ".."
+    // without relying on the HTTP client's normalization.
+    const dir = mkTmpDir('devtrav403')
+    const port = 13000 + Math.floor(Math.random() * 1000)
+    let proc
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
+      proc = await startDevServer(dir, port)
+      // Use a manually-crafted raw HTTP request so ".." is not normalized away
+      const r = await new Promise((resolve, reject) => {
+        const net = require('net')
+        const sock = net.createConnection(port, '127.0.0.1', () => {
+          sock.write('GET /a/../../../etc/passwd HTTP/1.0\r\nHost: localhost\r\n\r\n')
+        })
+        let data = ''
+        sock.on('data', c => { data += c.toString() })
+        sock.on('end', () => {
+          const status = parseInt(data.split(' ')[1], 10)
+          resolve({ status, body: data })
+        })
+        sock.on('error', reject)
+        setTimeout(() => { sock.destroy(); resolve({ status: 0, body: '' }) }, 3000)
+      })
+      assert.ok(r.status === 403 || r.status === 404,
+        `Expected raw .. traversal to be blocked, got ${r.status}`)
+    } finally {
+      if (proc) proc.kill('SIGTERM')
+      rmDir(dir)
+    }
+  })
+
+  test('dev server path traversal via normalized URL serves SPA without leaking files', async () => {
+    // Node's HTTP client normalizes /../../../etc/passwd → /etc/passwd before
+    // sending, so the server sees a clean path. It should serve the SPA fallback
+    // (200 with index.html) rather than leaking any sensitive file contents.
+    const dir = mkTmpDir('devtravnorm')
     const port = 13000 + Math.floor(Math.random() * 1000)
     let proc
     try {
       fs.writeFileSync(path.join(dir, 'index.arc'), 'page "T"\n  text "x"')
       proc = await startDevServer(dir, port)
       const r = await httpGet(port, '/../../../etc/passwd')
-      // After URL normalization, this either gets blocked (403) or becomes /etc/passwd (404)
-      assert.ok(r.status === 403 || r.status === 404 || r.status === 200, `Expected blocked, got ${r.status}`)
-      if (r.status === 200) {
-        // If it served something, it should be the SPA fallback (index.html), not /etc/passwd
-        assert.ok(!r.body.includes('root:'), 'Should not leak /etc/passwd contents')
-      }
+      // Node normalizes the URL to /etc/passwd before the handler; the server
+      // returns the SPA fallback (200) since no such file exists in dist.
+      assert.equal(r.status, 200, `Expected SPA fallback 200, got ${r.status}`)
+      assert.ok(!r.body.includes('root:'), 'Should not leak /etc/passwd contents')
     } finally {
       if (proc) proc.kill('SIGTERM')
       rmDir(dir)

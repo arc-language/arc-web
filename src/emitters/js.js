@@ -52,7 +52,6 @@ class JsEmitter {
       else if (decl.type === 'FnDecl') fnDecls.push(decl)
     }
 
-    // If nothing reactive, emit nothing
     if (stateDecls.length === 0 && eventBindings.length === 0) {
       this._reCache?.clear()
       this._emitCache = undefined
@@ -165,7 +164,7 @@ class JsEmitter {
     // bind:value two-way bindings
     const bindBindings = stateBindings.filter(b => b.kind === 'bind')
     if (bindBindings.length > 0) {
-      // Shared helper - emitted once, called per binding to cut ~250 bytes/binding
+      // Cuts ~250 bytes per binding by emitting this helper once
       parts.push(
         `function _arcBind(el,setter){if(!el)return;` +
         `const t=el.tagName==='SELECT'||el.type==='checkbox'||el.type==='radio'?'change':'input';` +

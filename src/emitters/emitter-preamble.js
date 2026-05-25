@@ -1,0 +1,43 @@
+'use strict'
+
+// Shared preamble content emitted by all server targets.
+// Includes response helpers and body parser — identical across Bun and Cloudflare.
+
+const SHARED_RESPONSE_HELPERS = `
+// Response helpers
+const _json = (data, status = 200, headers = {}) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...headers }
+  })
+
+const _html = (body, status = 200) =>
+  new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+
+const _text = (body, status = 200) =>
+  new Response(body, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+
+const _redirect = (location, status = 302) =>
+  new Response(null, { status, headers: { Location: location } })
+
+// Body parser: JSON or application/x-www-form-urlencoded
+const _MAX_BODY_SIZE = 1024 * 1024 // 1 MB
+async function _parseBody(req) {
+  const length = +(req.headers.get('content-length') ?? 0)
+  if (length > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
+  const ct = req.headers.get('content-type') ?? ''
+  if (ct.includes('multipart/form-data')) {
+    const fd = await req.formData()
+    return Object.fromEntries(fd.entries())
+  }
+  // Read actual bytes to enforce limit for chunked requests (no Content-Length)
+  const buf = await req.arrayBuffer()
+  if (buf.byteLength > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
+  const text = new TextDecoder().decode(buf)
+  if (ct.includes('application/json')) return JSON.parse(text)
+  if (ct.includes('application/x-www-form-urlencoded')) return Object.fromEntries(new URLSearchParams(text))
+  return {}
+}
+`.trimStart()
+
+module.exports = { SHARED_RESPONSE_HELPERS }

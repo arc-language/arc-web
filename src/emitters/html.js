@@ -432,27 +432,7 @@ class HtmlEmitter {
         ? (this.isStaticExpr(rawValue) ? this.evalStaticExpr(rawValue) : rawValue)
         : rawValue
 
-      // <dialog> trigger: trigger="id" → onclick that calls showModal() then focuses first focusable child
-      if (key === 'trigger') {
-        const safeId = _safeInlineId(value)
-        parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)_f.focus();}"`)
-        continue
-      }
-      // <dialog> close: close="id" → onclick that calls close()
-      if (key === 'close') {
-        const safeId = _safeInlineId(value)
-        parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d)_d.close()"`)
-        continue
-      }
-      // Native dialog attrs (legacy)
-      if (key === 'dialog:open') {
-        parts.push(`data-arc-dialog-open="${this.escape(String(value))}"`)
-        continue
-      }
-      if (key === 'dialog:close' || key === 'dialog:cancel') {
-        parts.push(`data-arc-dialog-close`)
-        continue
-      }
+      if (this._emitSpecialAttr(key, value, parts, node)) continue
 
       if (value === true) {
         parts.push(this.escape(key))
@@ -469,6 +449,32 @@ class HtmlEmitter {
     this._applyAutoAttrs(node, attrs, parts)
 
     return parts.length > 0 ? ' ' + parts.join(' ') : ''
+  }
+
+  // Handles special-case attribute keys. Pushes to parts and returns true if handled, false otherwise.
+  _emitSpecialAttr(key, value, parts, node) {
+    // <dialog> trigger: trigger="id" → onclick that calls showModal() then focuses first focusable child
+    if (key === 'trigger') {
+      const safeId = _safeInlineId(value)
+      parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)_f.focus();}"`)
+      return true
+    }
+    // <dialog> close: close="id" → onclick that calls close()
+    if (key === 'close') {
+      const safeId = _safeInlineId(value)
+      parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d)_d.close()"`)
+      return true
+    }
+    // Native dialog attrs (legacy)
+    if (key === 'dialog:open') {
+      parts.push(`data-arc-dialog-open="${this.escape(String(value))}"`)
+      return true
+    }
+    if (key === 'dialog:close' || key === 'dialog:cancel') {
+      parts.push(`data-arc-dialog-close`)
+      return true
+    }
+    return false
   }
 
   // Returns the safe string value for URI attributes, or null if the value is dangerous.
@@ -493,7 +499,7 @@ class HtmlEmitter {
     }
 
     // <button> defaults to type="submit" inside a <form> per HTML spec.
-    // Arc buttons typically use on:click handlers — submit-by-default is a
+    // Arc buttons typically use on:click handlers - submit-by-default is a
     // surprise. Inject type="button" unless the user explicitly opted in.
     if (node.tag === 'button' && attrs.type === undefined) {
       parts.push('type="button"')
@@ -544,8 +550,7 @@ class HtmlEmitter {
   }
 
   emitInterpolation(node) {
-    // For static expressions, evaluate them
-    // For reactive ones, emit a placeholder span with an ID
+    // For reactive expressions, emit a placeholder span with an ID
     const exprStr = this.exprToString(node.expr)
 
     if (this.isStaticExpr(node.expr)) {
@@ -746,7 +751,7 @@ class HtmlEmitter {
         const actualId = firstHeading.id ?? firstHeading.attrs?.id ?? headingId
         labelAttr = ` aria-labelledby="${this.escape(String(actualId))}"`
       } else {
-        // No heading found — keep id-based aria-label as last resort
+        // No heading found - keep id-based aria-label as last resort
         labelAttr = ` aria-label="${this.escape(String(id))}"`
       }
     }
@@ -771,7 +776,7 @@ class HtmlEmitter {
 
   emitAccordion(node) {
     const hasSummary = node.children?.some(c => c.tag === 'summary')
-    // Fallback summary text — accordion's own `summary=` attr overrides the default
+    // Fallback summary text - accordion's own `summary=` attr overrides the default
     // English string so non-English pages can localize it.
     const rawSummary = node.attrs?.summary
     const summaryText = rawSummary

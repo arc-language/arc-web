@@ -1,0 +1,128 @@
+'use strict'
+
+// Shared route body emission helpers used by Bun and Cloudflare server emitters.
+//
+// In route/job bodies: response calls (json/redirect/html/text) need `return`,
+// async helpers (parseBody, auth.*, oauth.*, jwt.*) need `await`.
+
+// Calls that always return a Response and should be prefixed with `return`
+const _RETURN_FUNS = new Set(['json', 'redirect', 'html', 'text', 'auth.clear'])
+// Calls that return a Response and are async - prefix with `return await`
+const _RETURN_AWAIT_FUNS = new Set(['auth.set'])
+// Async call RHS in VarDecl - prefix with `await`
+const _AWAIT_FUNS = new Set([
+  'parseBody',
+  'auth.session', 'auth.require',
+  'oauth.github.callback', 'oauth.google.callback',
+  'jwt.sign', 'jwt.verify',
+  'email.send',
+])
+
+function _calleePath(callee) {
+  if (!callee) return ''
+  if (callee.type === 'Identifier') return callee.name
+  if (callee.type === 'MemberExpr') {
+    const obj = _calleePath(callee.object)
+    const prop = callee.property?.name ?? callee.property?.value ?? ''
+    return obj ? `${obj}.${prop}` : prop
+  }
+  return ''
+}
+
+function emitRouteBody(stmts, jsEmitter) {
+  if (!stmts) return ''
+  if (!Array.isArray(stmts)) stmts = [stmts]
+  return stmts.map(s => emitRouteStmt(s, jsEmitter)).filter(Boolean).join('\n')
+}
+
+function emitRouteStmt(stmt, jsEmitter) {
+  if (!stmt) return ''
+
+  if (stmt.type === 'ExprStatement') {
+    const expr = stmt.expr ?? stmt.expression
+    if (expr?.type === 'CallExpr') {
+      const name = _calleePath(expr.callee)
+      if (_RETURN_FUNS.has(name))
+        return `return ${jsEmitter.emitExpr(expr)};`
+      if (_RETURN_AWAIT_FUNS.has(name))
+        return `return await ${jsEmitter.emitExpr(expr)};`
+      if (_AWAIT_FUNS.has(name))
+        return `await ${jsEmitter.emitExpr(expr)};`
+    }
+    return `${jsEmitter.emitExpr(expr ?? stmt)};`
+  }
+
+  if (stmt.type === 'VarDecl') {
+    const kind = stmt.kind === 'let' ? 'let' : 'const'
+    if (stmt.init?.type === 'CallExpr') {
+      const name = _calleePath(stmt.init.callee)
+      if (_AWAIT_FUNS.has(name))
+        return `${kind} ${stmt.name} = await ${jsEmitter.emitExpr(stmt.init)};`
+    }
+    return `${kind} ${stmt.name} = ${jsEmitter.emitExpr(stmt.init)};`
+  }
+
+  if (stmt.type === 'MatchStatement') {
+    return emitRouteMatch(stmt, jsEmitter)
+  }
+
+  if (stmt.type === 'BlockStatement') {
+    return `{${emitRouteBody(stmt.body, jsEmitter)}}`
+  }
+
+  // ReturnStatement, IfStatement, ForStatement, etc. fall through to general emitter
+  return jsEmitter.emitStmt(stmt)
+}
+
+function emitRouteArmBody(body, jsEmitter) {
+  if (!body) return ''
+  if (body.type === 'BlockStatement') return emitRouteBody(body.body, jsEmitter)
+  if (Array.isArray(body)) return emitRouteBody(body, jsEmitter)
+  // Single expression arm: treat as a statement
+  if (body.type === 'CallExpr') {
+    const name = _calleePath(body.callee)
+    if (_RETURN_FUNS.has(name))
+      return `return ${jsEmitter.emitExpr(body)};`
+    if (_RETURN_AWAIT_FUNS.has(name))
+      return `return await ${jsEmitter.emitExpr(body)};`
+  }
+  return `${jsEmitter.emitExpr(body)};`
+}
+
+function emitRouteMatch(stmt, jsEmitter) {
+  const id = (jsEmitter._matchCounter = (jsEmitter._matchCounter ?? 0) + 1)
+  const subj = `_ms${id}`
+  const cond = jsEmitter.emitExpr(stmt.subject)
+
+  const arms = (stmt.arms ?? []).map((arm, i) => {
+    const body = emitRouteArmBody(arm.body, jsEmitter)
+    const pfx = i === 0 ? 'if' : 'else if'
+
+    if (!arm.pattern || arm.pattern.type === 'Wildcard') {
+      return i === 0 ? `{ ${body} }` : `else { ${body} }`
+    }
+    if (arm.pattern.type === 'Identifier') {
+      const bind = arm.pattern.name
+      return i === 0 ? `{ const ${bind} = ${subj}; ${body} }` : `else { const ${bind} = ${subj}; ${body} }`
+    }
+    if (arm.pattern.type === 'VariantPattern') {
+      const test = jsEmitter.emitPattern(arm.pattern, subj)
+      const bind = arm.pattern.name ? `const ${arm.pattern.name} = ${subj}; ` : ''
+      return `${pfx}(${test}) { ${bind}${body} }`
+    }
+    const test = jsEmitter.emitPattern(arm.pattern, subj)
+    return `${pfx}(${test}) { ${body} }`
+  })
+
+  return `const ${subj} = ${cond};\n${arms.join('\n')}`
+}
+
+module.exports = {
+  _RETURN_FUNS,
+  _RETURN_AWAIT_FUNS,
+  _AWAIT_FUNS,
+  emitRouteBody,
+  emitRouteStmt,
+  emitRouteArmBody,
+  emitRouteMatch,
+}

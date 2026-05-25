@@ -150,8 +150,7 @@ test('node: includes /_arc/health endpoint', () => {
 test('node: edge routing block appears when edgeFunctions provided', () => {
   const files = node.generate({ html: '<html/>', edgeFunctions: edgeFns, handlerNames: ['_handler_greet'] })
   const server = files.find(f => f.path === 'server.js')
-  assert.ok(server.content.includes('_makeArcRequest') || server.content.includes('_ARC_HANDLERS'),
-    'node: should have edge routing logic')
+  assert.ok(server.content.includes('_ARC_HANDLERS'), 'node: should have edge routing logic')
 })
 
 test('bun: edgeFunctions block appears with handler names', () => {
@@ -164,8 +163,7 @@ test('bun: edgeFunctions block appears with handler names', () => {
 test('bun: edge routing block uses request object for handlers', () => {
   const files = bun.generate({ html: '<html/>', edgeFunctions: edgeFns, handlerNames: ['_handler_greet'] })
   const server = files.find(f => f.path === 'server.js')
-  assert.ok(server.content.includes('_ARC_HANDLERS') || server.content.includes('_handler_greet'),
-    'bun: should route to handler')
+  assert.ok(server.content.includes('_ARC_HANDLERS'), 'bun: should route to handler')
 })
 
 test('deno: edgeFunctions block appears in server.ts', () => {

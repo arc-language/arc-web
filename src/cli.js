@@ -104,6 +104,21 @@ async function resolveImports(program, projectDir, filename, visited, rootDir) {
 
 // ── Compiler ───────────────────────────────────────────────────────────────
 
+// H5: Traverse the program AST to find the first @image/imageFormats declaration
+// and build the image formats list. Returns the formats array or undefined.
+function _resolveImageFormats(program) {
+  for (const d of program.declarations ?? []) {
+    if (d.type === 'PageDecl' && d.meta?.imageFormats) {
+      const v = d.meta.imageFormats
+      // Static array literal expected
+      if (v?.type === 'ArrayLiteral' || Array.isArray(v?.elements)) {
+        return (v.elements ?? v).map(e => e?.value ?? e).filter(Boolean)
+      }
+    }
+  }
+  return undefined
+}
+
 async function compile(source, filename = '<input>', options = {}) {
   const hash = options.hash ?? hashString(filename).toString(36).slice(0, 4)
   const projectDir = options.projectDir ?? path.dirname(path.resolve(filename))
@@ -148,17 +163,7 @@ async function compile(source, filename = '<input>', options = {}) {
   if (imgRefs.length > 0 && options.distDir) {
     // Per-page meta.imageFormats opt-out: default ['avif','webp','original'].
     // Find the first PageDecl with imageFormats meta (multi-page builds set this).
-    let formats
-    for (const d of program.declarations ?? []) {
-      if (d.type === 'PageDecl' && d.meta?.imageFormats) {
-        const v = d.meta.imageFormats
-        // Static array literal expected
-        if (v?.type === 'ArrayLiteral' || Array.isArray(v?.elements)) {
-          formats = (v.elements ?? v).map(e => e?.value ?? e).filter(Boolean)
-        }
-        break
-      }
-    }
+    const formats = _resolveImageFormats(program)
     imgPipeline = new ImagePipeline({
       srcDir: projectDir,
       outDir: options.distDir,
@@ -435,6 +440,80 @@ function splitCssRules(css) {
   return rules
 }
 
+// H2: Extract shared CSS rules that appear on >= threshold pages.
+// Returns { sharedRules, filename } where filename may be null if no shared CSS.
+function _extractSharedCss(rulesByPage, threshold) {
+  const ruleOccurrences = new Map()  // rule string → Set of page indices
+  rulesByPage.forEach((rules, pageIdx) => {
+    for (const r of rules) {
+      if (!ruleOccurrences.has(r)) ruleOccurrences.set(r, new Set())
+      ruleOccurrences.get(r).add(pageIdx)
+    }
+  })
+
+  const sharedRules = []
+  const pageOnlyRules = rulesByPage.map(() => [])
+  for (const [rule, pages] of ruleOccurrences) {
+    if (pages.size >= threshold) sharedRules.push(rule)
+    else for (const i of pages) pageOnlyRules[i].push(rule)
+  }
+
+  const { PostProcessor } = require('./post')
+  const pp = new PostProcessor()
+  const sharedCssMinified = pp.minifyCss(sharedRules.join('\n'))
+  const sharedSha = hashString(sharedCssMinified).toString(16).slice(0, 8)
+  const filename = sharedCssMinified ? `shared.${sharedSha}.css` : null
+
+  return { sharedRules, pageOnlyRules, filename, sharedCssMinified }
+}
+
+// H2: Patch a single page's HTML string to reference sharedFilename via <link>
+// and inline pageCssText as a <style> block. Returns the patched HTML.
+function _patchPageHtml(htmlContent, sharedFilename, pageCssText) {
+  const linkTag = sharedFilename ? `<link rel="stylesheet" href="${sharedFilename}">` : ''
+  const pageStyle = pageCssText.trim() ? `<style>${pageCssText.replace(/<\/style>/gi, '<\\/style>')}</style>` : ''
+  return htmlContent.replace(
+    '<link rel="stylesheet" href="styles.css">',
+    linkTag + pageStyle
+  )
+}
+
+// H2: Inject <link rel="prefetch"> tags + view-transition meta between pages.
+// Reads/writes files in distDir. compiled is the array of { slug, meta } objects.
+function _injectPrefetchTags(distDir, compiled) {
+  const cspMetaRe = /<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/i
+  const allSlugs = new Set(compiled.map(c => c.slug + '.html'))
+  for (const c of compiled) {
+    const p = path.join(distDir, c.slug + '.html')
+    if (!fs.existsSync(p)) continue
+    let html = fs.readFileSync(p, 'utf8').replace(cspMetaRe, '')
+
+    // Find all <a href> targets pointing to another page in this site.
+    const linkedHrefs = new Set()
+    const aRe = /<a\s+[^>]*href="([^"]+)"/gi
+    let m
+    while ((m = aRe.exec(html))) {
+      const href = m[1].split('#')[0].split('?')[0]
+      if (allSlugs.has(href) && href !== c.slug + '.html') {
+        linkedHrefs.add(href)
+      }
+    }
+
+    // Build injection payload
+    const prefetchTags = [...linkedHrefs]
+      .map(h => `<link rel="prefetch" href="${h.replace(/"/g, '&quot;')}">`)
+      .join('')
+    const viewTransition = c.meta?.viewTransitions === false
+      ? ''
+      : '<meta name="view-transition" content="same-origin">'
+    const inject = viewTransition + prefetchTags
+    if (inject) {
+      html = html.replace('</head>', inject + '</head>')
+    }
+    fs.writeFileSync(p, html)
+  }
+}
+
 // Multi-page site build: compiles every .arc in the directory, then extracts
 // CSS rules used by ALL pages into a single content-hashed shared.<sha>.css.
 // Each page's HTML references the shared file via <link> + inlines any
@@ -488,33 +567,18 @@ async function buildSite(projectDir) {
   }
 
   // Compute rule occurrences across all pages.
-  const rulesByPage = compiled.map(c => splitCssRules(c.css))
-  const ruleOccurrences = new Map()  // rule string → Set of page indices
-  rulesByPage.forEach((rules, pageIdx) => {
-    for (const r of rules) {
-      if (!ruleOccurrences.has(r)) ruleOccurrences.set(r, new Set())
-      ruleOccurrences.get(r).add(pageIdx)
-    }
-  })
-
   // Rules used by ≥2 pages go into shared.css; rules unique to one page stay
   // inline. (Used by ALL N pages would be most cacheable, but ≥2 captures more
   // bytes; the shared file is content-hashed so cacheability isn't affected.)
-  const sharedRules = []
-  const pageOnlyRules = compiled.map(() => [])
-  for (const [rule, pages] of ruleOccurrences) {
-    if (pages.size >= 2) sharedRules.push(rule)
-    else for (const i of pages) pageOnlyRules[i].push(rule)
+  const rulesByPage = compiled.map(c => splitCssRules(c.css))
+  const { pageOnlyRules, filename: sharedFilename, sharedCssMinified } = _extractSharedCss(rulesByPage, 2)
+
+  if (sharedFilename) {
+    fs.writeFileSync(path.join(distDir, sharedFilename), sharedCssMinified)
   }
 
   const { PostProcessor } = require('./post')
   const pp = new PostProcessor()
-  const sharedCssMinified = pp.minifyCss(sharedRules.join('\n'))
-  const sharedSha = hashString(sharedCssMinified).toString(16).slice(0, 8)
-  const sharedFilename = sharedCssMinified ? `shared.${sharedSha}.css` : null
-  if (sharedFilename) {
-    fs.writeFileSync(path.join(distDir, sharedFilename), sharedCssMinified)
-  }
 
   // Emit per-page HTML: replace the existing <link rel="stylesheet" href="styles.css">
   // (or any inlined <style>) with a link to the shared file plus inline page-specific rules.
@@ -526,12 +590,7 @@ async function buildSite(projectDir) {
 
     // Start from the raw emitted HTML (still has <link rel="stylesheet" href="styles.css">)
     // and patch it. We bypass postProcess.inlineCriticalCss to avoid full inlining.
-    const linkTag = sharedFilename ? `<link rel="stylesheet" href="${sharedFilename}">` : ''
-    const pageStyle = pageCss.trim() ? `<style>${pageCss.replace(/<\/style>/gi, '<\\/style>')}</style>` : ''
-    let html = withAssets.replace(
-      '<link rel="stylesheet" href="styles.css">',
-      linkTag + pageStyle
-    )
+    let html = _patchPageHtml(withAssets, sharedFilename, pageCss)
     // Apply HTML minification + resource hints from post-processor
     html = pp.addResourceHints(html)
     html = pp.minifyHtml(html)
@@ -558,37 +617,7 @@ async function buildSite(projectDir) {
   // I2 post-pass: inject <link rel="prefetch"> for every same-site link target
   // + <meta name="view-transition" content="same-origin"> for instant SPA-feel
   // cross-page navigation. Also strip the now-redundant CSP meta tag.
-  const cspMetaRe = /<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/i
-  const allSlugs = new Set(compiled.map(c => c.slug + '.html'))
-  for (const c of compiled) {
-    const p = path.join(distDir, c.slug + '.html')
-    if (!fs.existsSync(p)) continue
-    let html = fs.readFileSync(p, 'utf8').replace(cspMetaRe, '')
-
-    // Find all <a href> targets pointing to another page in this site.
-    const linkedHrefs = new Set()
-    const aRe = /<a\s+[^>]*href="([^"]+)"/gi
-    let m
-    while ((m = aRe.exec(html))) {
-      const href = m[1].split('#')[0].split('?')[0]
-      if (allSlugs.has(href) && href !== c.slug + '.html') {
-        linkedHrefs.add(href)
-      }
-    }
-
-    // Build injection payload
-    const prefetchTags = [...linkedHrefs]
-      .map(h => `<link rel="prefetch" href="${h.replace(/"/g, '&quot;')}">`)
-      .join('')
-    const viewTransition = c.meta?.viewTransitions === false
-      ? ''
-      : '<meta name="view-transition" content="same-origin">'
-    const inject = viewTransition + prefetchTags
-    if (inject) {
-      html = html.replace('</head>', inject + '</head>')
-    }
-    fs.writeFileSync(p, html)
-  }
+  _injectPrefetchTags(distDir, compiled)
 
   // Stats summary
   const htmlBytes = compiled.reduce((s, c, i) => {
@@ -891,29 +920,9 @@ const RELOAD_SCRIPT = `<script>
 })()
 </script>`
 
-async function dev(projectDir) {
-  // Long-running process - log unhandled errors instead of letting Node kill us
-  // mid-rebuild. Build/check/deploy are one-shot and don't need these.
-  process.on('unhandledRejection', e => {
-    console.error(`arc: dev: unhandled rejection: ${e?.message ?? e}`)
-  })
-  process.on('uncaughtException', e => {
-    console.error(`arc: dev: uncaught exception: ${e?.message ?? e}`)
-  })
-
-  await build(projectDir)
-
-  const absDir = path.resolve(projectDir)
-  const distDir = path.join(absDir, 'dist')
-  const rawPort = parseInt(process.env.PORT ?? '3000')
-  const port = (Number.isInteger(rawPort) && rawPort > 0 && rawPort < 65536) ? rawPort : 3000
-  if (rawPort !== port) console.warn(`arc: invalid PORT value, using 3000`)
-
-  // SSE clients waiting for reload signal
-  const reloadClients = new Set()
-
-  // HTTP server: serves dist/ and handles /_arc/reload SSE
-  const server = http.createServer((req, res) => {
+// H1 / H3: HTTP request handler for the dev server (module-scope helper)
+function _createDevRequestHandler(distDir, reloadClients) {
+  return function _handleDevRequest(req, res) {
     if (req.url === '/_arc/health') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       res.end(JSON.stringify({ status: 'ok', mode: 'dev', uptime: process.uptime(), pid: process.pid, memory: process.memoryUsage().rss }))
@@ -1019,7 +1028,46 @@ async function dev(projectDir) {
         res.end('Not found')
       }
     }
+  }
+}
+
+// H1: Watcher setup for the dev server (module-scope helper)
+// Watches absDir recursively for .arc changes and calls onChange(filePath).
+function _startWatcher(absDir, onChange) {
+  try {
+    const watcher = fs.watch(absDir, { recursive: true }, (event, changedFile) => {
+      if (changedFile) onChange(changedFile)
+    })
+    watcher.on('error', e => console.error(`arc: watcher error: ${e.message}`))
+  } catch (e) {
+    console.error(`arc: could not start file watcher: ${e.message}`)
+    console.error('arc: automatic rebuilds disabled — run \'arc build\' manually after changes')
+  }
+}
+
+async function dev(projectDir) {
+  // Long-running process - log unhandled errors instead of letting Node kill us
+  // mid-rebuild. Build/check/deploy are one-shot and don't need these.
+  process.on('unhandledRejection', e => {
+    console.error(`arc: dev: unhandled rejection: ${e?.message ?? e}`)
   })
+  process.on('uncaughtException', e => {
+    console.error(`arc: dev: uncaught exception: ${e?.message ?? e}`)
+  })
+
+  await build(projectDir)
+
+  const absDir = path.resolve(projectDir)
+  const distDir = path.join(absDir, 'dist')
+  const rawPort = parseInt(process.env.PORT ?? '3000')
+  const port = (Number.isInteger(rawPort) && rawPort > 0 && rawPort < 65536) ? rawPort : 3000
+  if (rawPort !== port) console.warn(`arc: invalid PORT value, using 3000`)
+
+  // SSE clients waiting for reload signal
+  const reloadClients = new Set()
+
+  // HTTP server: serves dist/ and handles /_arc/reload SSE
+  const server = http.createServer(_createDevRequestHandler(distDir, reloadClients))
 
   server.on('error', e => {
     if (e.code === 'EADDRINUSE') {
@@ -1036,7 +1084,7 @@ async function dev(projectDir) {
   const shutdown = () => {
     // End SSE clients first so they don't hold the socket open and block close().
     for (const client of [...reloadClients]) {
-      try { client.end() } catch {}
+      try { client.end() } catch { /* intentionally ignored - client may already be closed */ }
     }
     reloadClients.clear()
     server.close(() => process.exit(0))
@@ -1051,7 +1099,7 @@ async function dev(projectDir) {
   let rebuildTimer = null
   let building = false
   let rebuildRequested = false
-  const watchHandler = (event, changedFile) => {
+  _startWatcher(absDir, (changedFile) => {
     if (!changedFile || !changedFile.endsWith('.arc')) return
     if (changedFile.includes('dist' + path.sep) || changedFile.includes('dist/')) return
 
@@ -1082,14 +1130,7 @@ async function dev(projectDir) {
         }
       } while (rebuildRequested)
     }, 50)
-  }
-  try {
-    const watcher = fs.watch(absDir, { recursive: true }, watchHandler)
-    watcher.on('error', e => console.error(`arc: watcher error: ${e.message}`))
-  } catch (e) {
-    console.error(`arc: could not start file watcher: ${e.message}`)
-    console.error('arc: automatic rebuilds disabled — run \'arc build\' manually after changes')
-  }
+  })
 }
 
 // ── Deploy command ────────────────────────────────────────────────────────
@@ -1259,7 +1300,36 @@ async function buildServer(projectDir, opts = {}, flags = {}) {
   return outFile
 }
 
-// arc serve [dir] — build server.js then run it, with hot reload on .arc changes
+// H4: Encapsulates the fs.watch + fs.watchFile polling fallback strategy.
+// Starts watching absDir and calls onChange(filePath) when any file changes.
+function _createFileWatcher(absDir, onChange) {
+  const watched = new Set()
+
+  function watchDir(dir) {
+    if (!fs.existsSync(dir)) return
+    try {
+      fs.watch(dir, { recursive: true }, (event, filename) => {
+        if (!filename?.endsWith('.arc')) return
+        onChange(filename)
+      })
+      watched.add(dir)
+    } catch {
+      // fs.watch recursive not supported on all platforms - fall back to polling
+      for (const f of findArcFiles(dir)) {
+        if (watched.has(f)) continue
+        watched.add(f)
+        fs.watchFile(f, { interval: 500 }, () => {
+          onChange(path.relative(absDir, f))
+        })
+      }
+    }
+  }
+
+  watchDir(absDir)
+  return watched
+}
+
+// arc serve [dir] - build server.js then run it, with hot reload on .arc changes
 async function serve(projectDir, flags = {}) {
   const outFile = await buildServer(projectDir, {}, flags)
 
@@ -1313,44 +1383,78 @@ async function serve(projectDir, flags = {}) {
 
   // Hot reload: watch server/**/*.arc for changes
   let debounceTimer = null
-  const watched = new Set()
-
-  function watchDir(dir) {
-    if (!fs.existsSync(dir)) return
-    try {
-      fs.watch(dir, { recursive: true }, (event, filename) => {
-        if (!filename?.endsWith('.arc')) return
-        clearTimeout(debounceTimer)
-        debounceTimer = setTimeout(() => {
-          console.log(`${DIM}arc: ${filename} changed — rebuilding...${RESET}`)
-          rebuild().catch(e => console.error(`arc: rebuild error: ${e.message}`))
-        }, 150)
-      })
-      watched.add(dir)
-    } catch {
-      // fs.watch recursive not supported on all platforms - fall back to polling
-      for (const f of findArcFiles(dir)) {
-        if (watched.has(f)) continue
-        watched.add(f)
-        fs.watchFile(f, { interval: 500 }, () => {
-          clearTimeout(debounceTimer)
-          debounceTimer = setTimeout(() => {
-            console.log(`${DIM}arc: ${path.relative(absDir, f)} changed — rebuilding...${RESET}`)
-            rebuild().catch(e => console.error(`arc: rebuild error: ${e.message}`))
-          }, 150)
-        })
-      }
-    }
-  }
-
-  watchDir(serverDir)
+  _createFileWatcher(serverDir, (filename) => {
+    clearTimeout(debounceTimer)
+    debounceTimer = setTimeout(() => {
+      console.log(`${DIM}arc: ${filename} changed — rebuilding...${RESET}`)
+      rebuild().catch(e => console.error(`arc: rebuild error: ${e.message}`))
+    }, 150)
+  })
   console.log(`${DIM}arc: watching ${path.relative(process.cwd(), serverDir)}/**/*.arc${RESET}`)
 
   process.on('SIGINT', () => { if (child) child.kill('SIGINT'); process.exit(0) })
   process.on('SIGTERM', () => { if (child) child.kill('SIGTERM'); process.exit(0) })
 }
 
-// arc explain [file|dir] — show compile-time analysis of routes, models, and jobs
+// H7: Extract db access info from a single AST node chain.
+// Returns { table, method } if the node is a db.model.method access, or null.
+function _extractDbAccess(node) {
+  const call = node.type === 'CallExpr' ? node : null
+  const callee = call?.callee ?? node
+  if (callee.type === 'MemberExpr' &&
+      callee.object?.type === 'MemberExpr' &&
+      callee.object?.object?.name === 'db') {
+    return {
+      table: callee.object.property?.name ?? callee.object.property,
+      method: callee.property?.name ?? callee.property,
+    }
+  }
+  return null
+}
+
+// H7: Walk AST nodes to extract db.model.method and job calls from a body.
+// Returns { reads, writes } arrays.
+function collectDbCalls(nodes) {
+  const reads = new Set(), writes = new Set()
+  function walk(node) {
+    if (!node || typeof node !== 'object') return
+    if (node.type === 'MemberExpr' || node.type === 'CallExpr') {
+      // Detect db.posts.findMany() / db.posts.create() / db.posts.find()
+      const access = _extractDbAccess(node)
+      if (access) {
+        const { table, method } = access
+        if (/find|findMany|count/.test(method)) reads.add(`${table}.${method}`)
+        if (/create|update|delete/.test(method)) writes.add(`${table}.${method}`)
+      }
+    }
+    for (const v of Object.values(node)) {
+      if (Array.isArray(v)) v.forEach(walk)
+      else if (v && typeof v === 'object' && v.type) walk(v)
+    }
+  }
+  for (const n of nodes) walk(n)
+  return { reads: [...reads], writes: [...writes] }
+}
+
+// H7: Walk AST nodes to collect job call names present in jobNames set.
+// Returns array of called job names.
+function collectJobCalls(nodes, jobNames) {
+  const called = new Set()
+  function walk(node) {
+    if (!node || typeof node !== 'object') return
+    if (node.type === 'CallExpr' && node.callee?.type === 'Identifier' && jobNames.has(node.callee.name)) {
+      called.add(node.callee.name)
+    }
+    for (const v of Object.values(node)) {
+      if (Array.isArray(v)) v.forEach(walk)
+      else if (v && typeof v === 'object' && v.type) walk(v)
+    }
+  }
+  for (const n of nodes) walk(n)
+  return [...called]
+}
+
+// arc explain [file|dir] - show compile-time analysis of routes, models, and jobs
 async function explain(fileOrDir) {
   const absPath = path.resolve(fileOrDir)
   const isDir = fs.existsSync(absPath) && fs.statSync(absPath).isDirectory()
@@ -1366,7 +1470,7 @@ async function explain(fileOrDir) {
         const src = fs.readFileSync(file, 'utf8')
         const prog = new Parser(new Lexer(src, file).tokenize(), file).parse()
         allDecls.push(...prog.declarations)
-      } catch {}
+      } catch (e) { console.warn(`arc explain: skipping ${file}: ${e.message}`) }
     }
   } else {
     let src
@@ -1386,49 +1490,6 @@ async function explain(fileOrDir) {
   const jobs = allDecls.filter(d => d.type === 'JobDecl')
 
   const allJobNames = new Set(jobs.map(j => j.name))
-
-  // Walk AST nodes to extract db.model.method and job calls from a body
-  function collectDbCalls(nodes) {
-    const reads = new Set(), writes = new Set()
-    function walk(node) {
-      if (!node || typeof node !== 'object') return
-      if (node.type === 'MemberExpr' || node.type === 'CallExpr') {
-        // Detect db.posts.findMany() / db.posts.create() / db.posts.find()
-        const call = node.type === 'CallExpr' ? node : null
-        const callee = call?.callee ?? node
-        if (callee.type === 'MemberExpr' &&
-            callee.object?.type === 'MemberExpr' &&
-            callee.object?.object?.name === 'db') {
-          const table = callee.object.property?.name ?? callee.object.property
-          const method = callee.property?.name ?? callee.property
-          if (/find|findMany|count/.test(method)) reads.add(`${table}.${method}`)
-          if (/create|update|delete/.test(method)) writes.add(`${table}.${method}`)
-        }
-      }
-      for (const v of Object.values(node)) {
-        if (Array.isArray(v)) v.forEach(walk)
-        else if (v && typeof v === 'object' && v.type) walk(v)
-      }
-    }
-    for (const n of nodes) walk(n)
-    return { reads: [...reads], writes: [...writes] }
-  }
-
-  function collectJobCalls(nodes, jobNames) {
-    const called = new Set()
-    function walk(node) {
-      if (!node || typeof node !== 'object') return
-      if (node.type === 'CallExpr' && node.callee?.type === 'Identifier' && jobNames.has(node.callee.name)) {
-        called.add(node.callee.name)
-      }
-      for (const v of Object.values(node)) {
-        if (Array.isArray(v)) v.forEach(walk)
-        else if (v && typeof v === 'object' && v.type) walk(v)
-      }
-    }
-    for (const n of nodes) walk(n)
-    return [...called]
-  }
 
   console.log(`\n${CYAN}arc explain${RESET} ${label}\n`)
 
@@ -1486,7 +1547,7 @@ async function explain(fileOrDir) {
   }
 }
 
-// arc generate <type> <name> — scaffold files
+// arc generate <type> <name> - scaffold files
 function generate(type, name) {
   if (!type || !name) {
     console.error('arc generate <model|handler> <name>')
@@ -1584,7 +1645,7 @@ async function runSeed(seedFile, projectDir, opts = {}) {
       const fileSrc = fs.readFileSync(file, 'utf8')
       const prog = new Parser(new Lexer(fileSrc, file).tokenize(), file).parse()
       schemas.push(...prog.declarations.filter(d => d.type === 'ModelDecl'))
-    } catch {}
+    } catch (e) { console.warn(`arc db seed: could not parse ${file}: ${e.message}`) }
   }
 
   // Emit a standalone seed script using BunServerEmitter's db helpers
@@ -1936,5 +1997,16 @@ module.exports = {
     deploy,
     formatError,
     showSourceContext,
+    // Extracted helpers
+    _createDevRequestHandler,
+    _startWatcher,
+    _extractSharedCss,
+    _patchPageHtml,
+    _injectPrefetchTags,
+    _createFileWatcher,
+    _resolveImageFormats,
+    _extractDbAccess,
+    collectDbCalls,
+    collectJobCalls,
   },
 }

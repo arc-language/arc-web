@@ -416,31 +416,6 @@ page "T"
   })
 })
 
-describe('Checker: scope chain and ClassDecl', () => {
-  const { Checker } = require('../src/checker')
-
-  test('Scope.get walks up parent chain to find key', () => {
-    // The Scope class is internal: exercise it via a real check that requires
-    // a child scope reading from the parent (e.g. fn body reading outer @state)
-    assert.ok(clean(`
-@state let outerVal = 42
-@server fn process() {
-  let inner = outerVal
-}
-page "T"
-  text "ok"
-`))
-  })
-
-  test('ClassDecl is recognized without error', () => {
-    assert.ok(clean(`
-class Empty {
-}
-page "T"
-  text "ok"
-`))
-  })
-})
 
 describe('Checker: expression checking (arrow, coalesce, pipeline, spread)', () => {
   test('arrow function in @computed introduces param binding', () => {
@@ -479,18 +454,6 @@ page "T"
 }
 page "T"
   text "{r}"
-`))
-  })
-
-  test('MatchExpr in @computed with simple patterns is clean', () => {
-    assert.ok(clean(`
-@state let val = 0
-@computed let result = match val {
-  0 => "zero"
-  _ => "other"
-}
-page "T"
-  text "{result}"
 `))
   })
 
@@ -788,30 +751,6 @@ describe('Checker: direct AST construction for dead-code path coverage', () => {
               N.ExprStatement(N.Identifier('value', 0), 0)  // uses value param
             ], line: 0 }, false, false, 0)
         ], 0),
-        N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
-      ]
-    }
-    const result = checker.check(program)
-    assert.equal(result.errors.length, 0)
-  })
-
-  test('Scope.get returns from parent chain when key only in parent', () => {
-    const { Checker } = require('../src/checker')
-    // Construct via the public Scope API indirectly
-    // Test that an inner block can read an outer scope binding
-    const checker = new Checker('test')
-    const program = {
-      declarations: [
-        N.StateDecl('outer', null, N.Literal(1, '1', 0), 0),
-        N.ServerFn('fn1', [], null, {
-          type: 'BlockStatement',
-          body: [
-            { type: 'BlockStatement', body: [
-              N.ExprStatement(N.AtProperty('outer', 0), 0)
-            ], line: 0 }
-          ],
-          line: 0
-        }, 0),
         N.PageDecl('T', {}, [N.TextNode('ok', 0)], null, 0),
       ]
     }

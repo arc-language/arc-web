@@ -33,10 +33,39 @@ const _TOP_LEVEL_CALLERS = {
   },
 }
 
+function _isBlockedIpv4(h) {
+  // Block IPv4 private/loopback/unspecified ranges
+  return h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' ||
+    h === '100.100.100.200' || // Alibaba Cloud instance metadata
+    h === 'metadata.google.internal' || h === 'metadata.goog' || // GCP instance metadata
+    h.startsWith('169.254.') || h.startsWith('10.') ||
+    h.startsWith('192.168.') || /^172\.(1[6-9]|2\d|3[01])\./.test(h)
+}
+
+function _isBlockedIpv6(h) {
+  // Block IPv6 private/loopback/link-local/ULA/IPv4-mapped ranges
+  // '::' is the IPv6 unspecified address - Linux routes it to loopback,
+  // so it's a viable SSRF target equivalent to '::1' / '0.0.0.0'.
+  return h === '::1' || h === '::' ||
+    h.startsWith('fc') || h.startsWith('fd') ||
+    h.startsWith('fe80') ||
+    h.startsWith('::ffff:10.') || h.startsWith('::ffff:127.') ||
+    h.startsWith('::ffff:192.168.') ||
+    /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(h) ||
+    // IPv4-translated form (::ffff:0:x.x.x.x)
+    h.startsWith('::ffff:0:10.') || h.startsWith('::ffff:0:127.') ||
+    h.startsWith('::ffff:0:192.168.') ||
+    /^::ffff:0:172\.(1[6-9]|2\d|3[01])\./.test(h)
+}
+
+function _isBlockedHost(h) {
+  return _isBlockedIpv4(h) || _isBlockedIpv6(h)
+}
+
 class BuildExecutor {
   constructor(projectDir = '.') {
     this.projectDir = projectDir
-    this.context = {}    // name → resolved value
+    this.context = {}
     this.errors = []
   }
 
@@ -313,33 +342,6 @@ class BuildExecutor {
 
   // ── I/O helpers ─────────────────────────────────────────────────────────────
 
-  _isBlockedHost(hostname) {
-    // Block IPv4 private/loopback/unspecified ranges
-    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
-        hostname === '100.100.100.200' || // Alibaba Cloud instance metadata
-        hostname === 'metadata.google.internal' || hostname === 'metadata.goog' || // GCP instance metadata
-        hostname.startsWith('169.254.') || hostname.startsWith('10.') ||
-        hostname.startsWith('192.168.') || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
-      return true
-    }
-    // Block IPv6 private/loopback/link-local/ULA/IPv4-mapped ranges
-    // '::' is the IPv6 unspecified address - Linux routes it to loopback,
-    // so it's a viable SSRF target equivalent to '::1' / '0.0.0.0'.
-    if (hostname === '::1' || hostname === '::' ||
-        hostname.startsWith('fc') || hostname.startsWith('fd') ||
-        hostname.startsWith('fe80') ||
-        hostname.startsWith('::ffff:10.') || hostname.startsWith('::ffff:127.') ||
-        hostname.startsWith('::ffff:192.168.') ||
-        /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
-        // IPv4-translated form (::ffff:0:x.x.x.x)
-        hostname.startsWith('::ffff:0:10.') || hostname.startsWith('::ffff:0:127.') ||
-        hostname.startsWith('::ffff:0:192.168.') ||
-        /^::ffff:0:172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
-      return true
-    }
-    return false
-  }
-
   doFetch(url) {
     // Validate URL to prevent SSRF
     let parsed
@@ -349,7 +351,7 @@ class BuildExecutor {
     }
     // URL.hostname for IPv6 includes brackets (e.g. "[::1]"): strip them for consistent checks
     const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
-    if (this._isBlockedHost(hostname)) throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
+    if (_isBlockedHost(hostname)) throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
 
     return new Promise((resolve, reject) => {
       // settled must be hoisted to executor scope: error/timeout handlers fire

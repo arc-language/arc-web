@@ -1,7 +1,5 @@
 'use strict'
 
-const { getContentType } = require('./utils')
-
 const _SAFE_HANDLER_NAME_CF = /^_handler_[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
 function generate({ html = '', css = '', js = '', edgeFunctions = '', projectName = 'arc-app', handlerNames = null }) {
