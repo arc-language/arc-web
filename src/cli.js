@@ -17,6 +17,7 @@ const { RealtimeEmitter } = require('./realtime/client')
 const { Checker } = require('./checker')
 const { postProcess } = require('./post')
 const { SourceMapBuilder } = require('./sourcemap')
+const { BunServerEmitter } = require('./emitters/server-bun')
 
 // ── Import resolver ────────────────────────────────────────────────────────
 // Reads imported .arc files, extracts their widget/fn/style declarations,
@@ -224,10 +225,16 @@ function treeshakeBaseCss(css, html) {
     'arc-row', 'arc-col', 'arc-center', 'arc-spacer', 'arc-wrap',
     'arc-sr-only', 'arc-skip-link',
   ]
+  // Single HTML scan to determine which utilities are referenced
+  const usedClasses = new Set()
+  const classRe = /class\s*=\s*"([^"]*)"/g
+  let m
+  while ((m = classRe.exec(html))) {
+    for (const cls of m[1].split(/\s+/)) if (cls) usedClasses.add(cls)
+  }
+  // Remove rules for each unused utility (preserves original per-class removal logic)
   for (const cls of utilities) {
-    const used = new RegExp(`class\\s*=\\s*"[^"]*\\b${cls}\\b`).test(html)
-    if (used) continue
-    // Remove "  .arc-foo { ... }" lines (including any pseudo selectors like .arc-skip-link:focus)
+    if (usedClasses.has(cls)) continue
     const re = new RegExp(`^\\s*\\.${cls}(:[a-z-]+)?\\s*\\{[^}]*\\}\\s*\\n?`, 'gm')
     css = css.replace(re, '')
   }
@@ -772,6 +779,75 @@ function newProject(name, template = 'default') {
 `,
       '.gitignore': 'dist/\nnode_modules/\n',
     },
+
+    api: {
+      'server/schemas/post.arc': `model Post
+  @id let id = autoincrement()
+  let title: String
+  let body: String
+  let published: Bool = false
+  let createdAt: DateTime = now()
+`,
+      'server/routes/posts.arc': `@route get "/posts" -> Response
+  json(db.posts.findMany())
+
+@route get "/posts/:id" -> Response
+  const post = db.posts.find(params.id)
+  match post
+    None    -> json({ error: "not found" }, 404)
+    Some(p) -> json(p)
+
+@route post "/posts" -> Response
+  const body = parseBody(request)
+  const post = db.posts.create(body)
+  NotifySubscribers(post.id)
+  json(post, 201)
+
+@route del "/posts/:id" -> Response
+  db.posts.delete(params.id)
+  json({ ok: true })
+
+@route get "/health" -> Response
+  json({ status: "ok" })
+`,
+      'server/jobs/notify.arc': `job NotifySubscribers(postId: Int)
+  console.log("notifying subscribers for post", postId)
+  email.send({ to: "subscribers@example.com", subject: "New post", text: "A new post was published" })
+`,
+      'package.json': JSON.stringify({
+        name: safeName,
+        version: '0.0.1',
+        private: true,
+        scripts: {
+          dev: 'arc serve .',
+          build: 'arc build-server .',
+          migrate: 'arc db migrate .',
+          start: 'bun dist/server.js',
+        },
+      }, null, 2) + '\n',
+      'README.md': `# ${name}
+
+A backend API built with [Arc](https://arc-lang.dev).
+
+## Getting started
+
+\`\`\`bash
+arc db migrate   # create the database tables
+arc serve .      # start the server on http://localhost:3000
+\`\`\`
+
+## API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /posts | List all posts |
+| GET | /posts/:id | Get a post by id |
+| POST | /posts | Create a post |
+| DELETE | /posts/:id | Delete a post |
+| GET | /health | Health check |
+`,
+      '.gitignore': 'dist/\nnode_modules/\napp.db\n',
+    },
   }
 
   const files = TEMPLATES[template] ?? TEMPLATES.default
@@ -781,7 +857,9 @@ function newProject(name, template = 'default') {
   }
 
   for (const [file, content] of Object.entries(files)) {
-    fs.writeFileSync(path.join(dir, file), content)
+    const outPath = path.join(dir, file)
+    fs.mkdirSync(path.dirname(outPath), { recursive: true })
+    fs.writeFileSync(outPath, content)
   }
 
   const templateLabel = template !== 'default' ? ` (${template})` : ''
@@ -1079,6 +1157,628 @@ async function deploy(projectDir, target) {
   }
 }
 
+// ── Backend build (arc serve / arc build --target bun) ────────────────────
+
+// Parse a list of .arc files, merge all RouteDecl / SchemaDecl / JobDecl nodes
+// into one synthetic program, then emit a Bun server.js.
+async function buildServer(projectDir, opts = {}, flags = {}) {
+  const absDir = path.resolve(projectDir)
+  const distDir = path.join(absDir, 'dist')
+
+  // Collect .arc files from server/ subdirectory or root
+  const serverDir = fs.existsSync(path.join(absDir, 'server'))
+    ? path.join(absDir, 'server')
+    : absDir
+
+  const arcFiles = findArcFiles(serverDir)
+  if (arcFiles.length === 0) {
+    console.error(`arc: no .arc files found in ${path.relative(process.cwd(), serverDir)}`)
+    process.exit(1)
+  }
+
+  const allDeclarations = []
+  for (const file of arcFiles) {
+    let src
+    try { src = fs.readFileSync(file, 'utf8') }
+    catch (e) { console.error(`arc: cannot read ${file}: ${e.message}`); process.exit(1) }
+
+    const lexer = new Lexer(src, file)
+    let tokens
+    try { tokens = lexer.tokenize() }
+    catch (e) { formatError(e, src, file); process.exit(1) }
+
+    const parser = new Parser(tokens, file)
+    let program
+    try { program = parser.parse() }
+    catch (e) { formatError(e, src, file); process.exit(1) }
+
+    allDeclarations.push(...program.declarations)
+  }
+
+  // Synthetic program with all backend declarations merged
+  const N = require('./ast')
+  const mergedProgram = N.Program([], allDeclarations, 0)
+
+  const target = flags.target ?? 'bun'
+  fs.mkdirSync(distDir, { recursive: true })
+
+  if (target === 'cloudflare') {
+    const { CloudflareEmitter } = require('./emitters/server-cloudflare')
+    const { generateWranglerToml } = require('./compilers/wrangler-compiler')
+    const emitter = new CloudflareEmitter({ hash: 'arc' })
+    const { worker, schema } = emitter.emitProgram(mergedProgram)
+
+    if (!worker.trim()) {
+      console.error('arc: no route or schema declarations found in server/*.arc')
+      process.exit(1)
+    }
+
+    const workerFile = path.join(distDir, 'worker.js')
+    fs.writeFileSync(workerFile, worker)
+    console.log(`arc: worker built → ${path.relative(process.cwd(), workerFile)} (${fmt(Buffer.byteLength(worker))})`)
+
+    if (schema) {
+      const schemaFile = path.join(distDir, 'schema.sql')
+      fs.writeFileSync(schemaFile, schema)
+      console.log(`arc: schema  written → ${path.relative(process.cwd(), schemaFile)}`)
+    }
+
+    const projectName = path.basename(absDir).replace(/[^a-z0-9-]/gi, '-').toLowerCase() || 'arc-app'
+    const wranglerPath = path.join(absDir, 'wrangler.toml')
+    if (!fs.existsSync(wranglerPath)) {
+      const toml = generateWranglerToml(mergedProgram, { name: projectName })
+      fs.writeFileSync(wranglerPath, toml)
+      console.log(`arc: wrangler.toml written → ${path.relative(process.cwd(), wranglerPath)}`)
+    }
+
+    console.log(`\narc: next steps:`)
+    console.log(`  wrangler d1 create ${projectName}-db`)
+    console.log(`  # update database_id in wrangler.toml`)
+    console.log(`  wrangler d1 execute ${projectName}-db --file=dist/schema.sql`)
+    console.log(`  wrangler deploy`)
+    return workerFile
+  }
+
+  // Default: Bun target
+  const dbAdapter = flags.db ?? 'sqlite'
+  const emitter = new BunServerEmitter({ hash: 'arc', db: dbAdapter })
+  const serverJs = emitter.emitProgram(mergedProgram)
+
+  if (!serverJs.trim()) {
+    console.error('arc: no route or schema declarations found in server/*.arc')
+    process.exit(1)
+  }
+
+  const outFile = path.join(distDir, 'server.js')
+  fs.writeFileSync(outFile, serverJs)
+
+  const size = Buffer.byteLength(serverJs)
+  console.log(`arc: server built → ${path.relative(process.cwd(), outFile)} (${fmt(size)})`)
+
+  return outFile
+}
+
+// arc serve [dir] — build server.js then run it, with hot reload on .arc changes
+async function serve(projectDir, flags = {}) {
+  const outFile = await buildServer(projectDir, {}, flags)
+
+  const { spawnSync, spawn } = require('child_process')
+  const bunCheck = spawnSync('bun', ['--version'], { stdio: 'pipe' })
+  const runtime = bunCheck.status === 0 ? 'bun' : 'node'
+
+  if (runtime === 'node') {
+    console.warn('arc: bun not found — falling back to node. Install bun for best performance.')
+    console.warn('     https://bun.sh')
+  }
+
+  const absDir = path.resolve(projectDir)
+  const serverDir = fs.existsSync(path.join(absDir, 'server'))
+    ? path.join(absDir, 'server')
+    : absDir
+
+  let child = null
+  let rebuilding = false
+  let pendingReload = false
+
+  function startChild() {
+    if (child) {
+      child.removeAllListeners()
+      child.kill('SIGTERM')
+    }
+    child = spawn(runtime, [outFile], { stdio: 'inherit', env: process.env })
+    child.on('error', e => console.error(`arc: could not start server: ${e.message}`))
+    child.on('exit', (code, signal) => {
+      if (signal !== 'SIGTERM') process.exit(code ?? 0)
+    })
+  }
+
+  async function rebuild() {
+    if (rebuilding) { pendingReload = true; return }
+    rebuilding = true
+    try {
+      await buildServer(projectDir, {}, flags)
+      console.log(`${CYAN}arc: reloaded${RESET}`)
+      startChild()
+    } catch (e) {
+      console.error(`arc: rebuild failed: ${e.message}`)
+    } finally {
+      rebuilding = false
+      if (pendingReload) { pendingReload = false; await rebuild() }
+    }
+  }
+
+  console.log(`arc: starting server with ${runtime}...`)
+  startChild()
+
+  // Hot reload: watch server/**/*.arc for changes
+  let debounceTimer = null
+  const watched = new Set()
+
+  function watchDir(dir) {
+    if (!fs.existsSync(dir)) return
+    try {
+      fs.watch(dir, { recursive: true }, (event, filename) => {
+        if (!filename?.endsWith('.arc')) return
+        clearTimeout(debounceTimer)
+        debounceTimer = setTimeout(() => {
+          console.log(`${DIM}arc: ${filename} changed — rebuilding...${RESET}`)
+          rebuild().catch(e => console.error(`arc: rebuild error: ${e.message}`))
+        }, 150)
+      })
+      watched.add(dir)
+    } catch {
+      // fs.watch recursive not supported on all platforms — fall back to polling
+      for (const f of findArcFiles(dir)) {
+        if (watched.has(f)) continue
+        watched.add(f)
+        fs.watchFile(f, { interval: 500 }, () => {
+          clearTimeout(debounceTimer)
+          debounceTimer = setTimeout(() => {
+            console.log(`${DIM}arc: ${path.relative(absDir, f)} changed — rebuilding...${RESET}`)
+            rebuild()
+          }, 150)
+        })
+      }
+    }
+  }
+
+  watchDir(serverDir)
+  console.log(`${DIM}arc: watching ${path.relative(process.cwd(), serverDir)}/**/*.arc${RESET}`)
+
+  process.on('SIGINT', () => { if (child) child.kill('SIGINT'); process.exit(0) })
+  process.on('SIGTERM', () => { if (child) child.kill('SIGTERM'); process.exit(0) })
+}
+
+// arc explain [file|dir] — show compile-time analysis of routes, models, and jobs
+async function explain(fileOrDir) {
+  const absPath = path.resolve(fileOrDir)
+  const isDir = fs.existsSync(absPath) && fs.statSync(absPath).isDirectory()
+
+  const allDecls = []
+  const label = path.relative(process.cwd(), absPath)
+
+  if (isDir) {
+    const serverDir = fs.existsSync(path.join(absPath, 'server'))
+      ? path.join(absPath, 'server') : absPath
+    for (const file of findArcFiles(serverDir)) {
+      try {
+        const src = fs.readFileSync(file, 'utf8')
+        const prog = new Parser(new Lexer(src, file).tokenize(), file).parse()
+        allDecls.push(...prog.declarations)
+      } catch {}
+    }
+  } else {
+    let src
+    try { src = fs.readFileSync(absPath, 'utf8') }
+    catch (e) { console.error(`arc: cannot read ${fileOrDir}: ${e.message}`); process.exit(1) }
+    const lexer = new Lexer(src, absPath)
+    const tokens = lexer.tokenize()
+    const parser = new Parser(tokens, absPath)
+    let program
+    try { program = parser.parse() }
+    catch (e) { formatError(e, src, absPath); process.exit(1) }
+    allDecls.push(...program.declarations)
+  }
+
+  const routes = allDecls.filter(d => d.type === 'RouteDecl')
+  const schemas = allDecls.filter(d => d.type === 'ModelDecl')
+  const jobs = allDecls.filter(d => d.type === 'JobDecl')
+
+  const allJobNames = new Set(jobs.map(j => j.name))
+
+  // Walk AST nodes to extract db.model.method and job calls from a body
+  function collectDbCalls(nodes) {
+    const reads = new Set(), writes = new Set()
+    function walk(node) {
+      if (!node || typeof node !== 'object') return
+      if (node.type === 'MemberExpr' || node.type === 'CallExpr') {
+        // Detect db.posts.findMany() / db.posts.create() / db.posts.find()
+        const call = node.type === 'CallExpr' ? node : null
+        const callee = call?.callee ?? node
+        if (callee.type === 'MemberExpr' &&
+            callee.object?.type === 'MemberExpr' &&
+            callee.object?.object?.name === 'db') {
+          const table = callee.object.property?.name ?? callee.object.property
+          const method = callee.property?.name ?? callee.property
+          if (/find|findMany|count/.test(method)) reads.add(`${table}.${method}`)
+          if (/create|update|delete/.test(method)) writes.add(`${table}.${method}`)
+        }
+      }
+      for (const v of Object.values(node)) {
+        if (Array.isArray(v)) v.forEach(walk)
+        else if (v && typeof v === 'object' && v.type) walk(v)
+      }
+    }
+    for (const n of nodes) walk(n)
+    return { reads: [...reads], writes: [...writes] }
+  }
+
+  function collectJobCalls(nodes, jobNames) {
+    const called = new Set()
+    function walk(node) {
+      if (!node || typeof node !== 'object') return
+      if (node.type === 'CallExpr' && node.callee?.type === 'Identifier' && jobNames.has(node.callee.name)) {
+        called.add(node.callee.name)
+      }
+      for (const v of Object.values(node)) {
+        if (Array.isArray(v)) v.forEach(walk)
+        else if (v && typeof v === 'object' && v.type) walk(v)
+      }
+    }
+    for (const n of nodes) walk(n)
+    return [...called]
+  }
+
+  console.log(`\n${CYAN}arc explain${RESET} ${label}\n`)
+
+  if (schemas.length > 0) {
+    console.log(`${DIM}── Models ───────────────────────────────────────────${RESET}`)
+    for (const s of schemas) {
+      const fields = (s.fields ?? []).filter(f => f.name)
+      console.log(`\n${GREEN}model ${s.name}${RESET}  (${fields.length} fields)`)
+      for (const f of fields) {
+        const typeLabel = f.typeAnnotation?.name ?? 'Any'
+        const decorators = f.decorators?.length ? `${DIM}${f.decorators.join(' ')} ${RESET}` : ''
+        const hasDefault = f.init ? `${DIM} = …${RESET}` : ''
+        console.log(`  ${decorators}${f.name}: ${typeLabel}${hasDefault}`)
+      }
+    }
+    console.log('')
+  }
+
+  if (routes.length > 0) {
+    console.log(`${DIM}── Routes ───────────────────────────────────────────${RESET}`)
+    for (const r of routes) {
+      const bodyNodes = r.body?.body ?? []
+      const { reads, writes } = collectDbCalls(bodyNodes)
+      const calledJobs = collectJobCalls(bodyNodes, allJobNames)
+      const authTag = r.annotations?.includes('@auth') ? ` ${DIM}[auth]${RESET}` : ''
+      const paramList = r.params?.length ? ` { ${r.params.map(p => `${p}: String`).join(', ')} }` : ''
+
+      console.log(`\n${GREEN}${r.method}${RESET} ${r.path}${paramList}${authTag}`)
+      if (reads.length)     console.log(`  ${DIM}reads:${RESET}  ${reads.join(', ')}`)
+      if (writes.length)    console.log(`  ${DIM}writes:${RESET} ${writes.join(', ')}`)
+      if (calledJobs.length) console.log(`  ${DIM}queues:${RESET} ${calledJobs.join(', ')}`)
+      if (!reads.length && !writes.length && !calledJobs.length) {
+        console.log(`  ${DIM}no DB or job calls${RESET}`)
+      }
+    }
+    console.log('')
+  }
+
+  if (jobs.length > 0) {
+    console.log(`${DIM}── Jobs ─────────────────────────────────────────────${RESET}`)
+    for (const j of jobs) {
+      const paramStr = (j.params ?? []).map(p => `${p.name}: ${p.typeAnnotation?.name ?? 'Any'}`).join(', ')
+      const bodyNodes = j.body?.body ?? []
+      const { reads, writes } = collectDbCalls(bodyNodes)
+      console.log(`\n${GREEN}job ${j.name}${RESET}(${paramStr})`)
+      if (reads.length)  console.log(`  ${DIM}reads:${RESET}  ${reads.join(', ')}`)
+      if (writes.length) console.log(`  ${DIM}writes:${RESET} ${writes.join(', ')}`)
+    }
+    console.log('')
+  }
+
+  if (routes.length === 0 && schemas.length === 0 && jobs.length === 0) {
+    console.log(`${YELLOW}No backend declarations (model, route, job) found in this file.${RESET}`)
+    console.log('Use model, @route, or job keywords.')
+  }
+}
+
+// arc generate <type> <name> — scaffold files
+function generate(type, name) {
+  if (!type || !name) {
+    console.error('arc generate <model|handler> <name>')
+    process.exit(1)
+  }
+
+  const absDir = path.resolve('.')
+  const serverDir = path.join(absDir, 'server')
+
+  if (type === 'model') {
+    const schemasDir = path.join(serverDir, 'schemas')
+    fs.mkdirSync(schemasDir, { recursive: true })
+    const outFile = path.join(schemasDir, `${name.toLowerCase()}.arc`)
+    if (fs.existsSync(outFile)) {
+      console.error(`arc: ${path.relative(process.cwd(), outFile)} already exists`)
+      process.exit(1)
+    }
+    const scaffold = `model ${name}
+  @id let id = autoincrement()
+  let createdAt: DateTime = now()
+  # TODO: add fields here
+  # let title: String
+  # let body: String
+`
+    fs.writeFileSync(outFile, scaffold)
+    console.log(`${GREEN}created${RESET} ${path.relative(process.cwd(), outFile)}`)
+
+  } else if (type === 'handler') {
+    const routesDir = path.join(serverDir, 'routes')
+    fs.mkdirSync(routesDir, { recursive: true })
+    const outFile = path.join(routesDir, `${name.toLowerCase()}.arc`)
+    if (fs.existsSync(outFile)) {
+      console.error(`arc: ${path.relative(process.cwd(), outFile)} already exists`)
+      process.exit(1)
+    }
+    const scaffold = `@route get "/${name.toLowerCase()}" -> Response
+  json(db.${name.toLowerCase()}s.findMany())
+
+@route get "/${name.toLowerCase()}/:id" -> Response
+  const item = db.${name.toLowerCase()}s.find(params.id)
+  match item
+    None -> json({ error: "not found" }, 404)
+    Some(x) -> json(x)
+
+@route post "/${name.toLowerCase()}" -> Response
+  const body = parseBody(request)
+  const item = db.${name.toLowerCase()}s.create(body)
+  json(item, 201)
+
+@route del "/${name.toLowerCase()}/:id" -> Response
+  db.${name.toLowerCase()}s.delete(params.id)
+  json({ ok: true })
+`
+    fs.writeFileSync(outFile, scaffold)
+    console.log(`${GREEN}created${RESET} ${path.relative(process.cwd(), outFile)}`)
+
+  } else if (type === 'job') {
+    const jobsDir = path.join(serverDir, 'jobs')
+    fs.mkdirSync(jobsDir, { recursive: true })
+    const outFile = path.join(jobsDir, `${name.toLowerCase()}.arc`)
+    if (fs.existsSync(outFile)) {
+      console.error(`arc: ${path.relative(process.cwd(), outFile)} already exists`)
+      process.exit(1)
+    }
+    const scaffold = `job ${name}(id: Int)
+  # TODO: implement job body
+  console.log("running ${name}", id)
+  # email.send({ to: "user@example.com", subject: "Hello", text: "Your job ran" })
+`
+    fs.writeFileSync(outFile, scaffold)
+    console.log(`${GREEN}created${RESET} ${path.relative(process.cwd(), outFile)}`)
+
+  } else {
+    console.error(`arc generate: unknown type "${type}". Valid: model, handler, job`)
+    process.exit(1)
+  }
+}
+
+// ── arc db seed runner ──────────────────────────────────────────────────────
+
+async function runSeed(seedFile, projectDir, opts = {}) {
+  let src
+  try { src = fs.readFileSync(seedFile, 'utf8') }
+  catch (e) { console.error(`arc db seed: cannot read ${seedFile}: ${e.message}`); process.exit(1) }
+  const tokens = new Lexer(src, seedFile).tokenize()
+  const program = new Parser(tokens, seedFile).parse()
+
+  // Collect all .arc schema files to build db helpers
+  const absDir = path.resolve(projectDir)
+  const serverDir = fs.existsSync(path.join(absDir, 'server')) ? path.join(absDir, 'server') : absDir
+  const arcFiles = findArcFiles(serverDir).filter(f => f !== seedFile)
+  const schemas = []
+  for (const file of arcFiles) {
+    try {
+      const fileSrc = fs.readFileSync(file, 'utf8')
+      const prog = new Parser(new Lexer(fileSrc, file).tokenize(), file).parse()
+      schemas.push(...prog.declarations.filter(d => d.type === 'ModelDecl'))
+    } catch {}
+  }
+
+  // Emit a standalone seed script using BunServerEmitter's db helpers
+  const { BunServerEmitter } = require('./emitters/server-bun')
+  const emitter = new BunServerEmitter({ hash: 'arc', db: opts.db ?? 'sqlite' })
+
+  // Build a synthetic program with only the schemas + seed statements
+  const N = require('./ast')
+  const fakeProgram = N.Program([], schemas, 0)
+  const dbPreamble = emitter.emitPreamble(schemas)
+  const dbHelpers = schemas.map(s => emitter.emitModelHelpers(s)).join('\n\n')
+
+  // Emit the seed body using the JS emitter
+  const { JsEmitter } = require('./emitters/js')
+  const jsEmitter = new JsEmitter({ hash: 'arc' })
+  const seedBody = jsEmitter.emitBody(program.declarations)
+
+  const urlExport = opts.db === 'postgres'
+    ? `process.env.DATABASE_URL = process.env.DATABASE_URL ?? '${opts.url}'`
+    : `process.env.DATABASE_URL = process.env.DATABASE_URL ?? '${opts.url}'`
+
+  const seedScript = `
+'use strict'
+${urlExport}
+${dbPreamble}
+${dbHelpers}
+async function main() {
+  ${seedBody}
+  console.log('[arc:seed] done')
+}
+main().catch(e => { console.error('[arc:seed] failed:', e.message); process.exit(1) })
+`.trim()
+
+  // Write to a temp file and run it
+  const tmpFile = path.join(absDir, 'dist', '_seed.js')
+  fs.mkdirSync(path.join(absDir, 'dist'), { recursive: true })
+  fs.writeFileSync(tmpFile, seedScript)
+
+  const { spawnSync } = require('child_process')
+  const bunCheck = spawnSync('bun', ['--version'], { stdio: 'pipe' })
+  const runtime = bunCheck.status === 0 ? 'bun' : 'node'
+
+  console.log(`arc db seed: running ${path.relative(process.cwd(), seedFile)} with ${runtime}...`)
+  const result = spawnSync(runtime, [tmpFile], { stdio: 'inherit', env: process.env })
+
+  // Clean up temp file
+  try { fs.unlinkSync(tmpFile) } catch {}
+
+  if (result.status !== 0) {
+    console.error('arc db seed: seed script exited with error')
+    process.exit(result.status ?? 1)
+  }
+}
+
+// ── arc db ─────────────────────────────────────────────────────────────────
+
+async function dbCommand(args) {
+  const sub = args[0]
+  const { migrate } = require('./compilers/migration-compiler')
+
+  if (!sub || sub === 'help') {
+    console.log('arc db <subcommand>')
+    console.log('  migrate [dir] [--db sqlite|postgres] [--url <url>] [--dry]')
+    console.log('                — diff models against live DB, apply missing columns/tables')
+    console.log('  seed    [dir] — run server/seed.arc (coming soon)')
+    console.log('  studio        — open DB browser (coming soon)')
+    return
+  }
+
+  if (sub === 'migrate') {
+    const remaining = args.slice(1)
+    const dbIdx = remaining.indexOf('--db')
+    const urlIdx = remaining.indexOf('--url')
+    const dry = remaining.includes('--dry')
+    const dialect = dbIdx !== -1 ? remaining[dbIdx + 1] : 'sqlite'
+    const urlArg = urlIdx !== -1 ? remaining[urlIdx + 1] : null
+    const projectDir = remaining.find(a => !a.startsWith('--') && a !== (dbIdx !== -1 ? remaining[dbIdx + 1] : null) && a !== (urlIdx !== -1 ? remaining[urlIdx + 1] : null)) ?? '.'
+
+    const absDir = path.resolve(projectDir)
+    const serverDir = fs.existsSync(path.join(absDir, 'server'))
+      ? path.join(absDir, 'server')
+      : absDir
+    const arcFiles = findArcFiles(serverDir)
+
+    if (arcFiles.length === 0) {
+      console.error(`arc db migrate: no .arc files found in ${path.relative(process.cwd(), serverDir)}`)
+      process.exit(1)
+    }
+
+    // Parse all .arc files and collect ModelDecl nodes
+    const schemas = []
+    for (const file of arcFiles) {
+      const src = fs.readFileSync(file, 'utf8')
+      const tokens = new Lexer(src, file).tokenize()
+      const program = new Parser(tokens, file).parse()
+      schemas.push(...program.declarations.filter(d => d.type === 'ModelDecl'))
+    }
+
+    if (schemas.length === 0) {
+      console.log('arc db migrate: no model declarations found — nothing to migrate')
+      return
+    }
+
+    const defaultUrl = dialect === 'postgres'
+      ? (process.env.DATABASE_URL ?? 'postgres://localhost/app')
+      : (process.env.DATABASE_URL ?? path.join(absDir, 'app.db'))
+    const url = urlArg ?? defaultUrl
+
+    console.log(`arc db migrate: checking ${schemas.length} model(s) against ${dialect === 'postgres' ? url : path.relative(process.cwd(), url)}${dry ? ' (dry run)' : ''}`)
+
+    let result
+    try {
+      result = await migrate(schemas, { db: dialect, url, dry })
+    } catch (e) {
+      console.error(`arc db migrate: ${e.message}`)
+      process.exit(1)
+    }
+
+    if (result.upToDate) {
+      console.log(`${GREEN}✓${RESET}  Database is up to date — no migrations needed`)
+      return
+    }
+
+    for (const entry of result.report) {
+      const action = entry.isNew ? `${GREEN}create${RESET}` : `${CYAN}alter${RESET}`
+      console.log(`  ${action}  ${entry.table}`)
+      for (const stmt of entry.statements) {
+        console.log(`    ${DIM}${stmt}${RESET}`)
+      }
+    }
+
+    if (dry) {
+      console.log(`\n${YELLOW}dry run — no changes applied. Remove --dry to apply.${RESET}`)
+    } else {
+      console.log(`\n${GREEN}✓${RESET}  ${result.report.length} migration(s) applied`)
+    }
+    return
+  }
+
+  if (sub === 'seed') {
+    const remaining = args.slice(1)
+    const dbIdx = remaining.indexOf('--db')
+    const urlIdx = remaining.indexOf('--url')
+    const dialect = dbIdx !== -1 ? remaining[dbIdx + 1] : 'sqlite'
+    const urlArg = urlIdx !== -1 ? remaining[urlIdx + 1] : null
+    const projectDir = remaining.find(a => !a.startsWith('--') && a !== (dbIdx !== -1 ? remaining[dbIdx + 1] : null) && a !== (urlIdx !== -1 ? remaining[urlIdx + 1] : null)) ?? '.'
+
+    const absDir = path.resolve(projectDir)
+    const serverDir = fs.existsSync(path.join(absDir, 'server')) ? path.join(absDir, 'server') : absDir
+    const seedFile = path.join(serverDir, 'seed.arc')
+
+    if (!fs.existsSync(seedFile)) {
+      console.error(`arc db seed: no seed file found at ${path.relative(process.cwd(), seedFile)}`)
+      console.error(`  Create ${path.relative(process.cwd(), seedFile)} with db.model.create({...}) calls`)
+      process.exit(1)
+    }
+
+    const defaultUrl = dialect === 'postgres'
+      ? (process.env.DATABASE_URL ?? 'postgres://localhost/app')
+      : (process.env.DATABASE_URL ?? path.join(absDir, 'app.db'))
+    const dbUrl = urlArg ?? defaultUrl
+
+    await runSeed(seedFile, absDir, { db: dialect, url: dbUrl })
+    return
+  }
+
+  if (sub === 'studio') {
+    console.log('arc db studio: coming in 0.3')
+    return
+  }
+
+  console.error(`arc db: unknown subcommand "${sub}". Try: migrate, seed, studio`)
+  process.exit(1)
+}
+
+// ── Flag helpers ───────────────────────────────────────────────────────────
+
+function parseServerFlags(args) {
+  const flags = {}
+  const flagNames = ['--db', '--target']
+  for (const flag of flagNames) {
+    const idx = args.indexOf(flag)
+    if (idx !== -1 && args[idx + 1]) flags[flag.slice(2)] = args[idx + 1]
+  }
+  return flags
+}
+
+function isServerFlagValue(args, a) {
+  for (const flag of ['--db', '--target']) {
+    const idx = args.indexOf(flag)
+    if (idx !== -1 && args[idx + 1] === a) return true
+  }
+  return false
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 const [,, cmd, ...args] = process.argv
@@ -1093,14 +1793,21 @@ async function main() {
       await buildSite(args[0] ?? '.')
       break
 
-    case 'check':
+    case 'check': {
+      let filesToCheck
       if (args.length === 0) {
-        const found = findArcFiles('.')
-        await check(found)
+        filesToCheck = findArcFiles('.')
       } else {
-        await check(args)
+        // Expand any directory arguments to their .arc files
+        filesToCheck = args.flatMap(a => {
+          const abs = path.resolve(a)
+          if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) return findArcFiles(abs)
+          return [a]
+        })
       }
+      await check(filesToCheck)
       break
+    }
 
     case 'new': {
       if (!args[0]) {
@@ -1109,7 +1816,7 @@ async function main() {
       }
       const tmplIdx = args.indexOf('--template')
       if (tmplIdx !== -1 && !args[tmplIdx + 1]) {
-        console.error('arc: --template requires a value (default|counter|blog)')
+        console.error('arc: --template requires a value (default|counter|blog|api)')
         process.exit(1)
       }
       const template = tmplIdx !== -1 ? args[tmplIdx + 1] : 'default'
@@ -1133,6 +1840,34 @@ async function main() {
       break
     }
 
+    case 'serve': {
+      const serveFlags = parseServerFlags(args)
+      const serveDir = args.find(a => !a.startsWith('--') && !isServerFlagValue(args, a)) ?? '.'
+      await serve(serveDir, serveFlags)
+      break
+    }
+
+    case 'build-server': {
+      const bsFlags = parseServerFlags(args)
+      const bsDir = args.find(a => !a.startsWith('--') && !isServerFlagValue(args, a)) ?? '.'
+      await buildServer(bsDir, {}, bsFlags)
+      break
+    }
+
+    case 'explain':
+      if (!args[0]) { console.error('arc explain <file>'); process.exit(1) }
+      await explain(args[0])
+      break
+
+    case 'generate':
+    case 'g':
+      generate(args[0], args[1])
+      break
+
+    case 'db':
+      await dbCommand(args)
+      break
+
     case '--version':
     case '-v':
       console.log(require('../package.json').version)
@@ -1142,13 +1877,18 @@ async function main() {
       console.log('arc — a new language for the web')
       console.log('')
       console.log('Usage:')
-      console.log('  arc build [dir]     Compile to HTML/CSS/JS')
-      console.log('  arc build-site [dir] Build all .arc files in dir with shared CSS + sitemap + _headers')
-      console.log('  arc dev [dir]       Build and watch for changes')
-      console.log('  arc check [files]   Type-check without emitting')
-      console.log('  arc new <name>      Create a new Arc project (--template default|counter|blog)')
-      console.log('  arc deploy [dir]    Deploy to hosting (--target cloudflare|deno|bun|node)')
-      console.log('  arc --version       Print version')
+      console.log('  arc build [dir]          Compile frontend to HTML/CSS/JS')
+      console.log('  arc build-site [dir]     Build all pages with shared CSS + sitemap + _headers')
+      console.log('  arc serve [dir]          Build + start backend server (Bun)')
+      console.log('  arc build-server [dir]   Build server.js without starting it')
+      console.log('  arc dev [dir]            Build frontend and watch for changes')
+      console.log('  arc check [files]        Type-check without emitting')
+      console.log('  arc explain <file>       Show compile-time analysis of routes/schemas/jobs')
+      console.log('  arc generate <type> <name>  Scaffold: model, handler')
+      console.log('  arc new <name>           Create a new Arc project (--template default|counter|blog|api)')
+      console.log('  arc deploy [dir]         Deploy to hosting (--target cloudflare|deno|bun|node)')
+      console.log('  arc db <cmd>             Database: migrate, seed, studio')
+      console.log('  arc --version            Print version')
   }
 }
 
@@ -1157,7 +1897,7 @@ if (require.main === module) {
     console.error(`arc: fatal: ${e.message}`)
     if (process.env.ARC_DEBUG) {
       console.error(e.stack)
-    } else {
+    } else if (!(e instanceof SyntaxError)) {
       console.error('arc: set ARC_DEBUG=1 for a full stack trace')
     }
     process.exit(1)
@@ -1194,6 +1934,10 @@ module.exports = {
     newProject,
     check,
     build,
+    buildServer,
+    serve,
+    explain,
+    generate,
     deploy,
     formatError,
     showSourceContext,

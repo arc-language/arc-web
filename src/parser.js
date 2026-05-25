@@ -1,6 +1,6 @@
 'use strict'
 
-const { T, STRUCTURE_ELEMENTS } = require('./tokens')
+const { T, STRUCTURE_ELEMENTS, KEYWORDS } = require('./tokens')
 const N = require('./ast')
 
 // Hoisted regexes used in parseStyleValue: avoids per-token allocation
@@ -190,6 +190,10 @@ class Parser {
     if (t.type === T.FN) return this.parseFnDecl()
     if (t.type === T.CLASS) return this.parseClassDecl()
 
+    // Backend declarations
+    if (t.type === T.MODEL) return this.parseModelDecl()
+    if (t.type === T.JOB) return this.parseJobDecl()
+
     // Expression statement
     return this.parseExprStatement()
   }
@@ -238,23 +242,42 @@ class Parser {
   // ── Reactive annotations ───────────────────────────────────────────────────
 
   parseAnnotatedDecl() {
-    const tok = this.tokens[this.pos]
-    const annotation = tok.value  // e.g. '@state', '@build', '@computed'
+    // Collect all consecutive @annotations before the primary one that determines node type.
+    // Example: @route @auth get "/path" → primary='@route', extras=['@auth']
+    const firstTok = this.tokens[this.pos]
+    const annotations = []
+    while (this.tokens[this.pos]?.type === T.AT_IDENT) {
+      annotations.push(this.tokens[this.pos++].value)
+    }
 
-    this.pos++ // consume @annotation
+    // Find the primary annotation — the one that determines declaration type
+    const DECLARATION_ANNOTATIONS = new Set([
+      '@state', '@computed', '@build', '@live', '@realtime',
+      '@server', '@worker', '@param', '@route'
+    ])
+    const primaryIdx = annotations.findIndex(a => DECLARATION_ANNOTATIONS.has(a))
+    const primary = primaryIdx !== -1 ? annotations[primaryIdx] : annotations[0]
+    const extras = primaryIdx !== -1
+      ? annotations.filter((_, i) => i !== primaryIdx)
+      : annotations.slice(1)
+    const line = firstTok.line
 
-    switch (annotation) {
-      case '@state':    return this.parseStateDecl(tok.line)
-      case '@computed': return this.parseComputedDecl(tok.line)
-      case '@build':    return this.parseBuildDecl(tok.line)
-      case '@live':     return this.parseLiveDecl(tok.line)
-      case '@realtime': return this.parseRealtimeDecl(tok.line)
-      case '@server':   return this.parseServerFn(tok.line)
-      case '@worker':   return this.parseWorkerFn(tok.line)
-      case '@param':    return this.parseParamDecl(tok.line)
+    switch (primary) {
+      case '@state':    return this.parseStateDecl(line)
+      case '@computed': return this.parseComputedDecl(line)
+      case '@build':    return this.parseBuildDecl(line)
+      case '@live':     return this.parseLiveDecl(line)
+      case '@realtime': return this.parseRealtimeDecl(line)
+      case '@server':   return this.parseServerFn(line)
+      case '@worker':   return this.parseWorkerFn(line)
+      case '@param':    return this.parseParamDecl(line)
+      case '@route': {
+        const node = this.parseRouteDecl(line)
+        if (extras.length > 0) node.annotations = extras
+        return node
+      }
       default:
-        // Could be a class getter/static marker: pass through
-        this.error(`Unknown annotation: ${annotation}`, tok)
+        this.error(`Unknown annotation: ${primary}`, firstTok)
     }
   }
 
@@ -1371,18 +1394,37 @@ class Parser {
 
   parseMatchArms() {
     const arms = []
-    this.eat(T.LBRACE)
-    while (this.peekType() !== T.RBRACE && this.peekType() !== T.EOF) {
-      this.skipWhitespace()
-      if (this.tokens[this.pos]?.type === T.RBRACE) break
-      const pattern = this.parseMatchPattern()
-      this.eat(T.ARROW)
-      const body = this.parseExpr()
-      this.eatIf(T.COMMA)
-      this.consumeNewlines()
-      arms.push(N.MatchArm(pattern, body, pattern?.line))
+    this.consumeNewlines()
+    // Support both brace-style `match x { Pat -> expr }` and indent-style match arms
+    if (this.tokens[this.pos]?.type === T.INDENT) {
+      this.pos++ // consume INDENT
+      while (this.tokens[this.pos]?.type !== T.DEDENT && this.tokens[this.pos]?.type !== T.EOF) {
+        this.consumeNewlines()
+        if (this.tokens[this.pos]?.type === T.DEDENT || this.tokens[this.pos]?.type === T.EOF) break
+        const pattern = this.parseMatchPattern()
+        if (!this.eatIf(T.ARROW)) this.eat(T.THIN_ARROW)
+        // Multi-statement arm: `Pat ->\n  stmt1\n  stmt2` — NEWLINE after arrow signals a block
+        const body = this.tokens[this.pos]?.type === T.NEWLINE
+          ? this.parseIndentedBlock()
+          : this.parseExpr()
+        this.consumeNewlines()
+        arms.push(N.MatchArm(pattern, body, pattern?.line))
+      }
+      if (this.tokens[this.pos]?.type === T.DEDENT) this.pos++
+    } else {
+      this.eat(T.LBRACE)
+      while (this.peekType() !== T.RBRACE && this.peekType() !== T.EOF) {
+        this.skipWhitespace()
+        if (this.tokens[this.pos]?.type === T.RBRACE) break
+        const pattern = this.parseMatchPattern()
+        if (!this.eatIf(T.ARROW)) this.eat(T.THIN_ARROW)
+        const body = this.parseExpr()
+        this.eatIf(T.COMMA)
+        this.consumeNewlines()
+        arms.push(N.MatchArm(pattern, body, pattern?.line))
+      }
+      this.eat(T.RBRACE)
     }
-    this.eat(T.RBRACE)
     return arms
   }
 
@@ -1419,6 +1461,26 @@ class Parser {
       const name = this.eat(T.IDENT).value
       this.eat(T.RPAREN)
       return { type: 'ResultPattern', kind, name, line: t.line }
+    }
+    // Some(val) / None variant patterns (Option type)
+    if (t.type === T.IDENT && t.value === 'Some' && this.tokens[this.pos + 1]?.type === T.LPAREN) {
+      this.pos++
+      this.eat(T.LPAREN)
+      const name = this.eat(T.IDENT).value
+      this.eat(T.RPAREN)
+      return { type: 'VariantPattern', variant: 'Some', name, line: t.line }
+    }
+    if (t.type === T.IDENT && t.value === 'None') {
+      this.pos++
+      return { type: 'VariantPattern', variant: 'None', name: null, line: t.line }
+    }
+    // Constructor patterns: Tag(val) — uppercase IDENT followed by LPAREN
+    if (t.type === T.IDENT && /^[A-Z]/.test(t.value) && this.tokens[this.pos + 1]?.type === T.LPAREN) {
+      const tag = t.value; this.pos++
+      this.eat(T.LPAREN)
+      const name = this.eat(T.IDENT).value
+      this.eat(T.RPAREN)
+      return { type: 'VariantPattern', variant: tag, name, line: t.line }
     }
     // Plain identifier binding (e.g., `n` in `n => n * 2`)
     // Must be checked before parseExpr so that `n =>` is not parsed as an arrow function
@@ -1868,6 +1930,116 @@ class Parser {
     }
 
     return N.TypeAnnotation(name, args, nullable, t.line)
+  }
+
+  // ── Backend helpers ────────────────────────────────────────────────────────
+
+  // Parse an indented block (NEWLINE INDENT stmts DEDENT) as a BlockStatement
+  parseIndentedBlock() {
+    const line = this.tokens[this.pos]?.line ?? 0
+    this.consumeNewlines()
+    // Must check INDENT directly — eat() calls skipWhitespace() which would consume it
+    if (this.tokens[this.pos]?.type !== T.INDENT) {
+      this.error(
+        `Expected indented block, got ${this.tokens[this.pos]?.type} (${JSON.stringify(this.tokens[this.pos]?.value)})`,
+        this.tokens[this.pos]
+      )
+    }
+    this.pos++ // consume INDENT
+    const stmts = []
+    while (true) {
+      this.consumeNewlines()
+      if (this.tokens[this.pos]?.type === T.DEDENT || this.tokens[this.pos]?.type === T.EOF) {
+        if (this.tokens[this.pos]?.type === T.DEDENT) this.pos++
+        break
+      }
+      const stmt = this.parseStatement()
+      if (stmt) stmts.push(stmt)
+    }
+    return N.BlockStatement(stmts, line)
+  }
+
+  // ── Backend: model ─────────────────────────────────────────────────────────
+
+  parseModelDecl() {
+    const tok = this.eat(T.MODEL)
+    const name = this.eat(T.IDENT).value
+    this.consumeNewlines()
+    // Must check INDENT directly — eat() calls skipWhitespace() which would consume it
+    if (this.tokens[this.pos]?.type !== T.INDENT) {
+      this.error(`Expected indented block after model ${name}`, this.tokens[this.pos])
+    }
+    this.pos++ // consume INDENT
+    const fields = []
+    while (this.tokens[this.pos]?.type !== T.DEDENT && this.tokens[this.pos]?.type !== T.EOF) {
+      this.consumeNewlines()
+      if (this.tokens[this.pos]?.type === T.DEDENT || this.tokens[this.pos]?.type === T.EOF) break
+      fields.push(this.parseModelField())
+      this.consumeNewlines()
+    }
+    this.eatIf(T.DEDENT)
+    return N.ModelDecl(name, fields, tok.line)
+  }
+
+  parseModelField() {
+    const decorators = []
+    // Collect all leading @decorators on this field
+    while (this.tokens[this.pos]?.type === T.AT_IDENT) {
+      decorators.push(this.tokens[this.pos++].value)
+    }
+    // Standalone decorator line (e.g. @index index(email, unique: true)) — no following let/const
+    if (decorators.length > 0 && this.tokens[this.pos]?.type !== T.LET && this.tokens[this.pos]?.type !== T.CONST) {
+      const exprLine = this.tokens[this.pos]?.line ?? 0
+      const expr = this.parseExpr()
+      return N.ModelField(decorators, null, null, expr, exprLine)
+    }
+    const kwTok = this.tokens[this.pos]?.type === T.CONST ? this.eat(T.CONST) : this.eat(T.LET)
+    const name = this.eat(T.IDENT).value
+    const typeAnnotation = this.eatIf(T.COLON) ? this.parseTypeAnnotation() : null
+    // Use direct check (not eatIf) to avoid skipWhitespace() consuming NEWLINE+DEDENT
+    const hasInit = this.tokens[this.pos]?.type === T.EQ
+    const init = hasInit ? (this.pos++, this.parseExpr()) : null
+    return N.ModelField(decorators, name, typeAnnotation, init, kwTok.line)
+  }
+
+  // ── Backend: job ───────────────────────────────────────────────────────────
+
+  parseJobDecl() {
+    const tok = this.eat(T.JOB)
+    const name = this.eat(T.IDENT).value
+    const params = this.parseParams()
+    const body = this.parseIndentedBlock()
+    return N.JobDecl(name, params, body, tok.line)
+  }
+
+  // ── Backend: route ─────────────────────────────────────────────────────────
+  // Syntax: @route METHOD "path" -> ReturnType\n  body
+  // METHOD is any token (get, post, put, del, patch, etc.)
+
+  parseRouteDecl(line) {
+    // HTTP method: accept any token — GET keyword, IDENT, del, post, etc.
+    this.skipWhitespace()
+    const methodTok = this.tokens[this.pos]
+    this.pos++
+    const _rawMethod = (methodTok.value ?? methodTok.type).toUpperCase()
+    // Normalize common shorthands to standard HTTP method names
+    const _METHOD_MAP = { DEL: 'DELETE', PATCH: 'PATCH' }
+    const method = _METHOD_MAP[_rawMethod] ?? _rawMethod
+
+    const pathTok = this.eat(T.STRING)
+    const routePath = pathTok.value
+
+    // Param names extracted from path (e.g. /posts/:id -> ['id'])
+    const params = (routePath.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) ?? []).map(p => p.slice(1))
+
+    // Optional return type annotation: -> Response
+    let returnType = null
+    if (this.eatIf(T.THIN_ARROW)) {
+      returnType = this.parseTypeAnnotation()
+    }
+
+    const body = this.parseIndentedBlock()
+    return N.RouteDecl(method, routePath, params, returnType, body, line ?? methodTok.line)
   }
 }
 

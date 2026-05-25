@@ -1,0 +1,113 @@
+'use strict'
+
+// Queue and email helpers emitted into generated server.js.
+// Zero external dependencies — works in Bun and Node 18+.
+//
+// Queue: in-process async queue with retry (exponential backoff, max 3 retries).
+// Email: Resend API (HTTP) primary, nodemailer SMTP fallback.
+
+function emitQueuePreamble() {
+  return `
+// ── Queue ─────────────────────────────────────────────────────────────────────
+
+const _JOB_TIMEOUT_MS = 30000
+function _jobTimeout(ms) {
+  return new Promise((_, reject) => setTimeout(() => reject(new Error('job timed out after ' + ms + 'ms')), ms))
+}
+
+const _queue = {
+  _items: [],
+  _dead: [],
+  _running: false,
+  enqueue(fn, args, retries = 0) {
+    this._items.push({ fn, args, retries })
+    if (!this._running) this._process()
+  },
+  async _process() {
+    this._running = true
+    while (this._items.length > 0) {
+      const { fn, args, retries } = this._items.shift()
+      try {
+        await Promise.race([fn(...args), _jobTimeout(_JOB_TIMEOUT_MS)])
+      } catch (_e) {
+        console.error('[arc:queue] job error:', _e?.message ?? _e)
+        if (retries < 3) {
+          const delay = Math.pow(2, retries) * 200
+          setTimeout(() => this.enqueue(fn, args, retries + 1), delay)
+        } else {
+          console.error('[arc:queue] job permanently failed after 3 retries — moved to dead letter queue')
+          this._dead.push({ fn, args, error: _e?.message ?? String(_e), failedAt: new Date().toISOString() })
+        }
+      }
+    }
+    this._running = false
+  }
+}
+
+const Queue = {
+  enqueue: (fn, ...args) => _queue.enqueue(fn, args),
+  size: () => _queue._items.length,
+  dead: () => [..._queue._dead],
+  drain: () => new Promise(resolve => {
+    const check = () => _queue._items.length === 0 && !_queue._running ? resolve() : setTimeout(check, 10)
+    check()
+  }),
+}`.trim()
+}
+
+function emitEmailPreamble() {
+  return `
+// ── Email ─────────────────────────────────────────────────────────────────────
+
+const email = {
+  send: async ({ to, subject, text, html, from, replyTo }) => {
+    const resendKey = process.env.RESEND_API_KEY
+    if (resendKey) {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: \`Bearer \${resendKey}\`, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(15000),
+        body: JSON.stringify({
+          from: from ?? process.env.EMAIL_FROM ?? 'noreply@example.com',
+          to: Array.isArray(to) ? to : [to],
+          subject,
+          text,
+          html,
+          reply_to: replyTo,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.text().catch(() => res.status)
+        throw new Error(\`[arc:email] Resend error: \${err}\`)
+      }
+      return res.json()
+    }
+    // SMTP fallback via nodemailer
+    try {
+      const nodemailer = require('nodemailer')
+      const transport = nodemailer.createTransport({
+        host: process.env.SMTP_HOST ?? 'localhost',
+        port: +(process.env.SMTP_PORT ?? 587),
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: process.env.SMTP_USER
+          ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          : undefined,
+      })
+      return await transport.sendMail({
+        from: from ?? process.env.EMAIL_FROM ?? 'noreply@example.com',
+        to, subject, text, html,
+        replyTo,
+      })
+    } catch {
+      console.warn('[arc:email] No provider configured — set RESEND_API_KEY or SMTP_HOST.')
+    }
+  },
+}`.trim()
+}
+
+// Emit the public enqueue wrapper for a job: `const JobName = (...args) => Queue.enqueue(_job_JobName, ...args)`
+function emitJobEnqueueWrapper(jobName) {
+  return `const ${jobName} = (...args) => Queue.enqueue(_job_${jobName}, ...args)`
+}
+
+module.exports = { emitQueuePreamble, emitEmailPreamble, emitJobEnqueueWrapper }

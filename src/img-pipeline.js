@@ -72,21 +72,21 @@ class ImagePipeline {
         const base = `${stem}.${sha8}.${w}w`
         if (wantAvif) {
           const p = path.join(this.outDir, `${base}.avif`)
-          await this.sharp(buf).resize(w).avif({ quality: 60 }).toFile(p)
+          const info = await this.sharp(buf).resize(w).avif({ quality: 60 }).toFile(p)
           variants.avif[w] = `${base}.avif`
-          sizes.avif[w] = fs.statSync(p).size
+          sizes.avif[w] = info.size
         }
         if (wantWebp) {
           const p = path.join(this.outDir, `${base}.webp`)
-          await this.sharp(buf).resize(w).webp({ quality: 75 }).toFile(p)
+          const info = await this.sharp(buf).resize(w).webp({ quality: 75 }).toFile(p)
           variants.webp[w] = `${base}.webp`
-          sizes.webp[w] = fs.statSync(p).size
+          sizes.webp[w] = info.size
         }
         if (wantOriginal) {
           const p = path.join(this.outDir, `${base}${path.extname(src)}`)
-          await this.sharp(buf).resize(w).toFile(p)
+          const info = await this.sharp(buf).resize(w).toFile(p)
           variants.original[w] = `${base}${path.extname(src)}`
-          sizes.original[w] = fs.statSync(p).size
+          sizes.original[w] = info.size
         }
       }
 

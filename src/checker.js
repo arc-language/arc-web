@@ -115,6 +115,65 @@ class Checker {
         break
       case 'ImportDecl':
         break // handled by resolveImports in cli.js
+      case 'ModelDecl':
+        this.checkModelDecl(decl, declared)
+        break
+      case 'JobDecl':
+        this.checkJobDecl(decl, declared)
+        break
+      case 'RouteDecl':
+        this.checkRouteDecl(decl, declared)
+        break
+    }
+  }
+
+  checkModelDecl(decl, declared) {
+    // Register model type so routes can reference it in return types
+    if (declared && !declared.hasLocal(decl.name)) {
+      declared.set(decl.name, 'model')
+    }
+  }
+
+  checkJobDecl(decl, declared) {
+    if (declared && !declared.hasLocal(decl.name)) {
+      declared.set(decl.name, 'job')
+    }
+    if (decl.body) {
+      const scope = new Scope(declared)
+      for (const p of decl.params ?? []) {
+        if (p.name) scope.set(p.name, p.typeAnnotation?.name ?? 'Any')
+      }
+      scope.set('Queue', 'Queue')
+      scope.set('email', 'Email')
+      this.checkBody(decl.body, scope, {})
+    }
+  }
+
+  checkRouteDecl(decl, declared) {
+    // Route body has implicit response helpers + request/params in scope
+    if (decl.body) {
+      const scope = new Scope(declared)
+      // Implicit helpers injected by BunServerEmitter into every route handler
+      scope.set('request', 'Request')
+      scope.set('params', 'Params')
+      scope.set('json', 'Fn')
+      scope.set('html', 'Fn')
+      scope.set('text', 'Fn')
+      scope.set('redirect', 'Fn')
+      scope.set('parseBody', 'Fn')
+      scope.set('db', 'DB')
+      scope.set('auth', 'Auth')
+      scope.set('jwt', 'JWT')
+      scope.set('oauth', 'OAuth')
+      scope.set('Queue', 'Queue')
+      scope.set('email', 'Email')
+      // @auth routes also have session in scope
+      if (decl.annotations?.includes('@auth')) scope.set('session', 'Session')
+      // Path param variables
+      for (const p of decl.params ?? []) {
+        scope.set(p, 'String')
+      }
+      this.checkBody(decl.body, scope, {})
     }
   }
 

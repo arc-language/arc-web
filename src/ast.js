@@ -261,6 +261,33 @@ const UnionType = (members, line) => ({ type: 'UnionType', members, line })
 const ArrayType = (elementType, line) => ({ type: 'ArrayType', elementType, line })
 const ObjectType = (fields, line) => ({ type: 'ObjectType', fields, line })
 
+// ── Backend Declarations ──────────────────────────────────────────────────────
+
+const ModelDecl = (name, fields, line) => ({
+  type: 'ModelDecl', name, fields, line,
+  arcTag: 'model'
+  // fields: ModelField[]
+})
+
+const ModelField = (decorators, name, typeAnnotation, init, line) => ({
+  type: 'ModelField', decorators, name, typeAnnotation, init, line
+  // decorators: string[] e.g. ['@id', '@relation']
+})
+
+const RouteDecl = (method, path, params, returnType, body, line, annotations = []) => ({
+  type: 'RouteDecl', method, path, params, returnType, body, line, annotations,
+  arcTag: 'route'
+  // method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
+  // path: string e.g. '/posts/:id'
+  // body: BlockStatement
+  // annotations: extra decorators e.g. ['@auth']
+})
+
+const JobDecl = (name, params, body, line) => ({
+  type: 'JobDecl', name, params, body, line,
+  arcTag: 'job'
+})
+
 // ── Function parameters ───────────────────────────────────────────────────────
 
 const Param = (name, typeAnnotation, defaultValue, rest, line) => ({
@@ -275,6 +302,7 @@ module.exports = {
   Program,
   ImportDecl, ExportDecl,
   StateDecl, ComputedDecl, BuildDecl, LiveDecl, RealtimeDecl, ServerFn, WorkerFn,
+  ModelDecl, ModelField, RouteDecl, JobDecl,
   WidgetDecl, PageDecl,
   Element, TextNode, InterpolationNode,
   IfNode, UnlessNode, ForNode, MatchTemplateNode, RawNode,

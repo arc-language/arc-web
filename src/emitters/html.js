@@ -390,7 +390,7 @@ class HtmlEmitter {
 
     // Append a visually-hidden "opens in new tab" notice for screen readers
     // on auto-injected target="_blank" links (matches the auto-injection above).
-    if (htmlTag === 'a' && attrStr.includes('target="_blank"') && !attrs?.['aria-label']) {
+    if (htmlTag === 'a' && attrStr.includes('target="_blank"') && !attrs?.['aria-label'] && !attrs?.['aria-labelledby']) {
       inner += `<span class="arc-sr-only"> (opens in new tab)</span>`
     }
 
@@ -605,14 +605,7 @@ class HtmlEmitter {
       line: node.line
     })
 
-    // aria-live is opt-in via `live="polite"` / `live="assertive"` on the for node.
-    // Default off — most lists shouldn't be announced on every mutation.
-    const liveAttr = node.attrs?.live
-    const liveVal = liveAttr && typeof liveAttr === 'object' && liveAttr.type
-      ? this.evalStaticExpr(liveAttr) : liveAttr
-    const liveStr = (liveVal === 'polite' || liveVal === 'assertive')
-      ? ` aria-live="${liveVal}"` : ''
-    return `<div id="${listId}"${liveStr}></div>`
+    return `<div id="${listId}"></div>`
   }
 
   emitForBody(bodyNodes, item, index, itemName = 'item', indexName = 'i') {

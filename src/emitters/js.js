@@ -567,6 +567,14 @@ class JsEmitter {
     if (pattern.type === 'IsExpr') {
       return this.emitIsCheck(pattern.typeOrValue, subj)
     }
+    if (pattern.type === 'VariantPattern') {
+      const v = pattern.variant
+      if (v === 'None') return `(${subj}===null||${subj}===undefined)`
+      if (v === 'Some') return `(${subj}!==null&&${subj}!==undefined)`
+      if (v === 'Ok')   return `(${subj}?.ok===true)`
+      if (v === 'Err')  return `(${subj}?.ok===false)`
+      return 'true'
+    }
     // Identifier binding: handled in emitMatchExpr/emitMatchStmt directly
     return 'true'
   }
@@ -714,7 +722,11 @@ class JsEmitter {
     const subj = `_ms${id}`
     const cond = this.emitExpr(stmt.subject)
     const arms = (stmt.arms ?? []).map(arm => {
-      const body = this.emitBody(arm.body?.body ?? arm.body)
+      // arm.body can be BlockStatement, array of stmts, or a single expression
+      const body = arm.body?.type === 'BlockStatement' ? this.emitBody(arm.body.body)
+                 : Array.isArray(arm.body)              ? this.emitBody(arm.body)
+                 : arm.body                             ? `${this.emitExpr(arm.body)};`
+                 : ''
       if (!arm.pattern || arm.pattern.type === 'Wildcard') {
         return `{${body}}`
       }
@@ -723,6 +735,13 @@ class JsEmitter {
         const bindName = arm.pattern.name
         _assertSafeIdent(bindName, 'match binding')
         return `{const ${bindName}=${subj};${body}}`
+      }
+      // VariantPattern (Some/None/Ok/Err): may also introduce a binding name
+      if (arm.pattern.type === 'VariantPattern' && arm.pattern.name) {
+        const test = this.emitPattern(arm.pattern, subj)
+        const bindName = arm.pattern.name
+        _assertSafeIdent(bindName, 'match binding')
+        return `if(${test}){const ${bindName}=${subj};${body}}`
       }
       const test = this.emitPattern(arm.pattern, subj)
       return `if(${test}){${body}}`

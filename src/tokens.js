@@ -54,6 +54,10 @@ const T = {
   OK: 'OK',
   ERR: 'ERR',
 
+  // Backend keywords
+  MODEL: 'MODEL',       // model Post { ... }
+  JOB: 'JOB',           // job SendEmail(userId: Int)
+
   // Symbols
   LPAREN: 'LPAREN',       // (
   RPAREN: 'RPAREN',       // )
@@ -152,6 +156,9 @@ const KEYWORDS = new Map([
   ['raw', T.RAW],
   ['Ok', T.OK],
   ['Err', T.ERR],
+  // Backend keywords
+  ['model', T.MODEL],
+  ['job', T.JOB],
 ])
 
 // HTML element names that Arc recognizes as structure nodes
