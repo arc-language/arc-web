@@ -57,6 +57,7 @@ class BunServerEmitter {
       for (const schema of schemas) {
         parts.push(this.emitModelHelpers(schema))
       }
+      if (schemas.length > 0) parts.push('const db = globalThis.db')
     }
 
     for (const job of jobs) {
@@ -163,7 +164,7 @@ const _q_${lc}_delete = _db.query('DELETE FROM ${lc} WHERE id = ?1')
 const _q_${lc}_count = _db.query('SELECT COUNT(*) as count FROM ${lc}')
 const _${lc}_fields = ${fieldNames}
 
-const db = Object.assign(globalThis.db ?? {}, {
+Object.assign(globalThis.db ?? (globalThis.db = {}), {
   ${lc}: {
     findMany: (opts = {}) => _q_${lc}_findMany.all(Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0),
     find: (id) => _q_${lc}_find.get(id) ?? null,
@@ -172,8 +173,7 @@ const db = Object.assign(globalThis.db ?? {}, {
     delete: (id) => (_q_${lc}_delete.run(id), true),
     count: () => _q_${lc}_count.get()?.count ?? 0,
   }
-})
-globalThis.db = db`.trim()
+})`.trim()
   }
 
   // Emit a single awaited async startup block for all PG schemas.
@@ -201,15 +201,15 @@ globalThis.db = db`.trim()
     }).join('\n')
 
     return `
-// Schema init — awaited before server starts to guarantee tables exist and prevent globalThis.db race
-await (async () => {
+// Schema init — promise-based startup; awaited in Bun.serve fetch handler before first dispatch
+// (top-level await is invalid in CJS; this pattern is equivalent and CJS-safe)
+let db = null
+const _schemaInitP = (async () => {
 ${tableInits}
-  globalThis.db = {
+  db = globalThis.db = {
 ${dbEntries}
   }
-  const db = globalThis.db
-})().catch(e => { console.error('[arc] schema init failed:', e.message); process.exit(1) })
-const db = globalThis.db`.trim()
+})().catch(e => { console.error('[arc] schema init failed:', e.message); process.exit(1) })`.trim()
   }
 
   _emitModelHelpersPg(schema) {
@@ -218,20 +218,21 @@ const db = globalThis.db`.trim()
     const placeholders = fields.map((_, i) => `$${i + 1}`).join(', ')
     const updates = fields.map((f, i) => `${f.name} = $${i + 1}`).join(', ')
     const selectCols = colList ? `id, ${colList}` : 'id'
+    const fieldNames = JSON.stringify(fields.map(f => f.name))
 
     return `
 // Schema: ${schema.name}
-const db = Object.assign(globalThis.db ?? {}, {
-  ${lc}: {
+Object.assign(globalThis.db ?? (globalThis.db = {}), {
+  ${lc}: (() => { const _flds = ${fieldNames}; return {
     findMany: async (opts = {}) => _pool.query('SELECT ${selectCols} FROM ${lc} LIMIT $1 OFFSET $2', [Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows),
     find: async (id) => _pool.query('SELECT ${selectCols} FROM ${lc} WHERE id = $1', [id]).then(r => r.rows[0] ?? null),
-    ${colList ? `create: async (data) => _pool.query('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => `data.${f.name}`).join(', ')}]).then(r => r.rows[0]),` : ''}
-    ${colList ? `update: async (id, data) => _pool.query('UPDATE ${lc} SET ${updates} WHERE id = $${fields.length + 1} RETURNING *', [${fields.map(f => `data.${f.name}`).join(', ')}, id]).then(r => r.rows[0]),` : ''}
+    ${colList ? `create: async (data) => { const _d = _pick(data, _flds); return _pool.query('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}]).then(r => r.rows[0]) },` : ''}
+    ${colList ? `update: async (id, data) => { const _d = _pick(data, _flds); return _pool.query('UPDATE ${lc} SET ${updates} WHERE id = $${fields.length + 1} RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}, id]).then(r => r.rows[0]) },` : ''}
     delete: async (id) => { await _pool.query('DELETE FROM ${lc} WHERE id = $1', [id]); return true },
     count: async () => _pool.query('SELECT COUNT(*) as count FROM ${lc}').then(r => +r.rows[0].count),
-  }
+  }})(),
 })
-globalThis.db = db`.trim()
+const db = globalThis.db`.trim()
   }
 
   _schemaVars(schema, dialect) {
@@ -327,6 +328,7 @@ const _server = Bun.serve({
     ${healthBody}
       } catch (_he) { return _json({ status: 'error', msg: _he?.message }, 503, { 'Cache-Control': 'no-store, no-cache' }) }
     }
+    ${this.isPg && schemas && schemas.length > 0 ? 'if (db === null) await _schemaInitP' : ''}
     const _rl = _checkRateLimit(req)
     if (_rl) return _rl
     return _dispatch(req, url)

@@ -98,7 +98,7 @@ function _routeCtx(req, env) {
     html: (body, status = 200) => _html(body, status),
     text: (body, status = 200) => _text(body, status),
     redirect: (loc, status = 302) => _redirect(loc, status),
-    parseBody: (req) => _parseBody(req),
+    parseBody: () => _parseBody(req),
     request: req,
     Queue: { enqueue: (job, ...args) => env.QUEUE?.send({ job, args }) },
   }

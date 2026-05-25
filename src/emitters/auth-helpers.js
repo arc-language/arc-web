@@ -163,7 +163,7 @@ const oauth = {
         }),
         signal: AbortSignal.timeout(10000),
       })
-      if (!tokenRes.ok) { const _e = await tokenRes.text().catch(() => tokenRes.status); console.error('[arc:oauth] GitHub token error:', _e); return { ok: false, error: 'auth_failed' } }
+      if (!tokenRes.ok) { console.error('[arc:oauth] GitHub token error: HTTP', tokenRes.status); return { ok: false, error: 'auth_failed' } }
       const { access_token, error } = await tokenRes.json()
       if (error || !access_token) { console.error('[arc:oauth] GitHub: no access_token:', error); return { ok: false, error: 'auth_failed' } }
       const userRes = await fetch('https://api.github.com/user', {
@@ -210,7 +210,7 @@ const oauth = {
         }),
         signal: AbortSignal.timeout(10000),
       })
-      if (!tokenRes.ok) { const _e = await tokenRes.text().catch(() => tokenRes.status); console.error('[arc:oauth] Google token error:', _e); return { ok: false, error: 'auth_failed' } }
+      if (!tokenRes.ok) { console.error('[arc:oauth] Google token error: HTTP', tokenRes.status); return { ok: false, error: 'auth_failed' } }
       const { access_token, id_token, error } = await tokenRes.json()
       if (error || !access_token) { console.error('[arc:oauth] Google: no access_token:', error); return { ok: false, error: 'auth_failed' } }
       const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {

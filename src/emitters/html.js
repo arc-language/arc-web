@@ -1,11 +1,22 @@
 'use strict'
 
 // Recursively check whether an AST node subtree contains an <h1> element
-function _hasH1(nodes) {
-  if (!Array.isArray(nodes)) return false
+function _hasH1(nodes, depth = 0) {
+  if (!Array.isArray(nodes) || depth > 20) return false
   for (const n of nodes) {
     if (n?.type === 'Element' && n.tag === 'h1') return true
-    if (_hasH1(n?.children ?? n?.body ?? [])) return true
+    if (_hasH1(n?.children ?? [], depth + 1)) return true
+    if (n?.type === 'IfNode' || n?.type === 'UnlessNode') {
+      if (_hasH1(n.consequent ?? [], depth + 1) || _hasH1(n.alternate ?? [], depth + 1)) return true
+    }
+    if (n?.type === 'ForNode') {
+      const b = n.body; if (_hasH1(Array.isArray(b) ? b : (b ? [b] : []), depth + 1)) return true
+    }
+    if (n?.type === 'MatchTemplateNode') {
+      for (const arm of n.arms ?? []) {
+        const b = arm.body; if (_hasH1(Array.isArray(b) ? b : (b ? [b] : []), depth + 1)) return true
+      }
+    }
   }
   return false
 }
@@ -470,25 +481,30 @@ class HtmlEmitter {
     // <dialog> trigger: trigger="id" → onclick that calls showModal() then focuses first focusable child
     if (key === 'trigger') {
       const safeId = _safeInlineId(value)
-      parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)_f.focus();}"`)
+      const _action = `var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)_f.focus();}`
+      parts.push(`onclick="${_action}"`)
       // Keyboard accessibility: non-interactive elements need tabindex + role so keyboard users can trigger them
       const tag = node?.tag ?? ''
       const _interactiveTags = new Set(['button', 'a', 'input', 'select', 'textarea', 'summary'])
       if (!_interactiveTags.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
+        // Enter/Space don't fire onclick on non-button elements with role="button"
+        parts.push(`onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${_action}}"`)
       }
       return true
     }
     // <dialog> close: close="id" → onclick that calls close()
     if (key === 'close') {
       const safeId = _safeInlineId(value)
-      parts.push(`onclick="var _d=document.getElementById(${safeId});if(_d)_d.close()"`)
+      const _action = `var _d=document.getElementById(${safeId});if(_d)_d.close()`
+      parts.push(`onclick="${_action}"`)
       const tag = node?.tag ?? ''
       const _interactiveTags = new Set(['button', 'a', 'input', 'select', 'textarea', 'summary'])
       if (!_interactiveTags.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
+        parts.push(`onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${_action}}"`)
       }
       return true
     }

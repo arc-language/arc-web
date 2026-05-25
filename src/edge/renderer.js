@@ -148,7 +148,7 @@ class EdgeRenderer {
       `const _SPAN_RE = new RegExp('<span id="(' + ${JSON.stringify(spanIds)} + ')" data-arc-live><\\/span>', 'g')`,
       ``,
       `function _fillHtml(data) {`,
-      `  if (!data || typeof data !== 'object') data = {}`,
+      `  if (!data || typeof data !== 'object' || Array.isArray(data)) data = {}`,
       `  const { ${[...liveVarsUsed].filter(v => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(v) && v !== '__proto__' && v !== 'constructor' && v !== 'prototype').map(v => `${v} = undefined`).join(', ')} } = data`,
       `  const _m = Object.create(null)`,
       mapEntries,

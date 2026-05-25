@@ -41,7 +41,7 @@ const _queue = {
           if (retries < 3) {
             const delay = Math.pow(2, retries) * 1000
             this._pendingRetries++
-            setTimeout(() => { this._pendingRetries--; this.enqueue(fn, args, retries + 1) }, delay)
+            setTimeout(() => { this.enqueue(fn, args, retries + 1); this._pendingRetries-- }, delay)
           } else {
             console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: fn?.name ?? 'unknown', event: 'dlq', msg: '[arc:queue] job permanently failed after 3 retries — moved to dead letter queue', error: _e?.message ?? String(_e) }))
             if (this._dead.length >= 1000) { this._dead.shift(); console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:queue] DLQ cap reached — oldest entry evicted' })) }
