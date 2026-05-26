@@ -14,9 +14,18 @@ function emitAuthPreamble(opts = {}) {
   return `
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
-const _AUTH_SECRET = process.env.SESSION_SECRET ?? (crypto.randomUUID() + crypto.randomUUID())
-if (!process.env.SESSION_SECRET) {
+let _AUTH_SECRET = process.env.SESSION_SECRET
+if (!_AUTH_SECRET) {
   if (process.env.NODE_ENV === 'production') throw new Error('[arc:auth] SESSION_SECRET must be set in production — set SESSION_SECRET env var')
+  // In dev: persist a stable secret to .arc-dev-secret so sessions survive hot-reloads.
+  // A random secret on every restart would invalidate all signed cookies.
+  const _devSecretPath = new URL('.arc-dev-secret', import.meta.url ?? 'file://' + process.cwd() + '/').pathname
+  try {
+    _AUTH_SECRET = require('fs').readFileSync(_devSecretPath, 'utf8').trim()
+  } catch {
+    _AUTH_SECRET = crypto.randomUUID() + crypto.randomUUID()
+    try { require('fs').writeFileSync(_devSecretPath, _AUTH_SECRET, { mode: 0o600 }) } catch {}
+  }
   console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:auth] SESSION_SECRET is not set — sessions will not persist across restarts. Set SESSION_SECRET env var before deploying to production.' }))
 }
 // __Host- prefix in production: prevents subdomain session fixation (RFC 6265bis).

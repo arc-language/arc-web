@@ -20,6 +20,20 @@ const _AWAIT_FUNS = new Set([
   'email.send',
 ])
 
+// db.MODEL.METHOD calls that are async in the Postgres target (SQLite is sync).
+// These are recognized by the 3-part path pattern rather than a static name set
+// because the MODEL segment is user-defined (e.g. db.posts.findMany).
+const _DB_ASYNC_METHODS = new Set([
+  'findMany', 'findOne', 'find', 'findById',
+  'create', 'update', 'delete', 'deleteMany',
+  'upsert', 'count', 'exists',
+])
+
+function _isDbCall(callPath) {
+  const parts = callPath.split('.')
+  return parts.length === 3 && parts[0] === 'db' && _DB_ASYNC_METHODS.has(parts[2])
+}
+
 function _calleePath(callee) {
   if (!callee) return ''
   if (callee.type === 'Identifier') return callee.name
@@ -48,7 +62,7 @@ function emitRouteStmt(stmt, jsEmitter) {
         return `return ${jsEmitter.emitExpr(expr)};`
       if (_RETURN_AWAIT_FUNS.has(name))
         return `return await ${jsEmitter.emitExpr(expr)};`
-      if (_AWAIT_FUNS.has(name))
+      if (_AWAIT_FUNS.has(name) || _isDbCall(name))
         return `await ${jsEmitter.emitExpr(expr)};`
     }
     return `${jsEmitter.emitExpr(expr ?? stmt)};`
@@ -58,7 +72,7 @@ function emitRouteStmt(stmt, jsEmitter) {
     const kind = stmt.kind === 'let' ? 'let' : 'const'
     if (stmt.init?.type === 'CallExpr') {
       const name = _calleePath(stmt.init.callee)
-      if (_AWAIT_FUNS.has(name))
+      if (_AWAIT_FUNS.has(name) || _isDbCall(name))
         return `${kind} ${stmt.name} = await ${jsEmitter.emitExpr(stmt.init)};`
     }
     return `${kind} ${stmt.name} = ${jsEmitter.emitExpr(stmt.init)};`

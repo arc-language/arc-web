@@ -17,13 +17,14 @@ const { RealtimeEmitter } = require('./realtime/client')
 const { Checker } = require('./checker')
 const { postProcess, PostProcessor } = require('./post')
 const { SourceMapBuilder } = require('./sourcemap')
-const { BunServerEmitter } = require('./emitters/server-bun')
 const { CloudflareEmitter } = require('./emitters/server-cloudflare')
 const { generateWranglerToml } = require('./compilers/wrangler-compiler')
-const { migrate } = require('./compilers/migration-compiler')
 const { buildServer: _buildServerImpl } = require('./commands/build-server')
+const { serve: _serveImpl, createFileWatcher } = require('./commands/serve')
+const { dbCommand: _dbCommandImpl, runSeed: _runSeedImpl } = require('./commands/db')
 const { emit: emitSiteMeta } = require('./emitters/site-meta')
 const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
+const { RED, GREEN, YELLOW, CYAN, DIM, RESET, formatError, showSourceContext } = require('./utils/errors')
 const N = require('./ast')
 
 // ── Import resolver ────────────────────────────────────────────────────────
@@ -292,43 +293,6 @@ function hashString(str) {
   return h
 }
 
-// ── Error formatting ──────────────────────────────────────────────────────
-
-const RED    = process.stderr.isTTY ? '\x1b[31m' : ''
-const YELLOW = process.stderr.isTTY ? '\x1b[33m' : ''
-const GREEN  = process.stdout.isTTY ? '\x1b[32m' : ''
-const CYAN   = process.stderr.isTTY ? '\x1b[36m' : ''
-const DIM    = process.stderr.isTTY ? '\x1b[2m'  : ''
-const RESET  = process.stderr.isTTY ? '\x1b[0m'  : ''
-
-function formatError(e, source, filename) {
-  const msg = e.message ?? String(e)
-  const filePrefix = filename ? `${path.relative(process.cwd(), filename)}: ` : ''
-  // Each line of the message may be a separate error (from checker)
-  const lines = msg.split('\n').filter(Boolean)
-  for (const line of lines) {
-    console.error(`${RED}error${RESET}: ${filePrefix}${line}`)
-    // Try to extract line number from "file:line:col: message" format
-    const m = line.match(/:(\d+)(?::(\d+))?:/)
-    if (m && source) {
-      showSourceContext(source, parseInt(m[1]), m[2] ? parseInt(m[2]) : undefined)
-    }
-  }
-}
-
-function showSourceContext(source, lineNum, col) {
-  if (!lineNum || !source) return
-  const lines = source.split('\n')
-  const line = lines[lineNum - 1]
-  if (!line) return
-  const lineStr = String(lineNum).padStart(4)
-  console.error(`${DIM}${lineStr} │${RESET} ${line}`)
-  if (col && col > 0) {
-    const spaces = ' '.repeat(4 + 3 + col - 1)
-    console.error(`${CYAN}${spaces}^${RESET}`)
-  }
-}
-
 // ── Build command ──────────────────────────────────────────────────────────
 
 async function build(projectDir) {
@@ -555,7 +519,7 @@ async function buildSite(projectDir) {
     let result
     try {
       result = await compile(source, f, { projectDir: absDir, distDir })
-    } catch (e) { formatError(e, source, f); process.exit(1) }
+    } catch (e) { formatError(e, source, f); return null }
     // Pull page-level meta (canonical, etc.) for sitemap emission
     const pageDecl = result.program?.declarations?.find(d => d.type === 'PageDecl')
     const metaResolved = {}
@@ -573,6 +537,7 @@ async function buildSite(projectDir) {
       edgeFunctions: result.edgeFunctions, liveEdgeFunction: result.liveEdgeFunction,
     }
   }))
+  if (compiled.some(r => r === null)) process.exit(1)
 
   // Compute rule occurrences across all pages.
   // Rules used by ≥2 pages go into shared.css; rules unique to one page stay
@@ -1229,100 +1194,10 @@ async function buildServer(projectDir, opts = {}, flags = {}) {
   return _buildServerImpl(projectDir, opts, flags, { formatError })
 }
 
-// H4: Encapsulates the fs.watch + fs.watchFile polling fallback strategy.
-// Starts watching absDir and calls onChange(filePath) when any file changes.
-function _createFileWatcher(absDir, onChange) {
-  const watched = new Set()
-
-  function watchDir(dir) {
-    if (!fs.existsSync(dir)) return
-    try {
-      fs.watch(dir, { recursive: true }, (event, filename) => {
-        if (!filename?.endsWith('.arc')) return
-        onChange(filename)
-      })
-      watched.add(dir)
-    } catch {
-      // fs.watch recursive not supported on all platforms - fall back to polling
-      for (const f of findArcFiles(dir)) {
-        if (watched.has(f)) continue
-        watched.add(f)
-        fs.watchFile(f, { interval: 500 }, () => {
-          onChange(path.relative(absDir, f))
-        })
-      }
-    }
-  }
-
-  watchDir(absDir)
-  return watched
-}
-
-// arc serve [dir] - build server.js then run it, with hot reload on .arc changes
+// arc serve [dir] - build server.js then run it, with hot reload on .arc changes.
+// Extracted to src/commands/serve.js; buildServer is injected to avoid circular deps.
 async function serve(projectDir, flags = {}) {
-  const outFile = await buildServer(projectDir, {}, flags)
-
-  const { spawnSync, spawn } = require('child_process')
-  const bunCheck = spawnSync('bun', ['--version'], { stdio: 'pipe' })
-  const runtime = bunCheck.status === 0 ? 'bun' : 'node'
-
-  if (runtime === 'node') {
-    console.warn('arc: bun not found — falling back to node. Install bun for best performance.')
-    console.warn('     https://bun.sh')
-  }
-
-  const absDir = path.resolve(projectDir)
-  const serverDir = fs.existsSync(path.join(absDir, 'server'))
-    ? path.join(absDir, 'server')
-    : absDir
-
-  let child = null
-  let rebuilding = false
-  let pendingReload = false
-
-  function startChild() {
-    if (child) {
-      child.removeAllListeners()
-      child.kill('SIGTERM')
-    }
-    child = spawn(runtime, [outFile], { stdio: 'inherit', env: process.env })
-    child.on('error', e => console.error(`arc: could not start server: ${e.message}`))
-    child.on('exit', (code, signal) => {
-      if (signal !== 'SIGTERM') process.exit(code ?? 0)
-    })
-  }
-
-  async function rebuild() {
-    if (rebuilding) { pendingReload = true; return }
-    rebuilding = true
-    try {
-      await buildServer(projectDir, {}, flags)
-      console.log(`${CYAN}arc: reloaded${RESET}`)
-      startChild()
-    } catch (e) {
-      console.error(`arc: rebuild failed: ${e.message}`)
-    } finally {
-      rebuilding = false
-      if (pendingReload) { pendingReload = false; await rebuild() }
-    }
-  }
-
-  console.log(`arc: starting server with ${runtime}...`)
-  startChild()
-
-  // Hot reload: watch server/**/*.arc for changes
-  let debounceTimer = null
-  _createFileWatcher(serverDir, (filename) => {
-    clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(() => {
-      console.log(`${DIM}arc: ${filename} changed — rebuilding...${RESET}`)
-      rebuild().catch(e => console.error(`arc: rebuild error: ${e.message}`))
-    }, 150)
-  })
-  console.log(`${DIM}arc: watching ${path.relative(process.cwd(), serverDir)}/**/*.arc${RESET}`)
-
-  process.on('SIGINT', () => { if (child) child.kill('SIGINT'); process.exit(0) })
-  process.on('SIGTERM', () => { if (child) child.kill('SIGTERM'); process.exit(0) })
+  return _serveImpl(projectDir, flags, buildServer)
 }
 
 // H7: Extract db access info from a single AST node chain.
@@ -1555,203 +1430,11 @@ function generate(type, name) {
   }
 }
 
-// ── arc db seed runner ──────────────────────────────────────────────────────
-
-async function runSeed(seedFile, projectDir, opts = {}) {
-  let src
-  try { src = fs.readFileSync(seedFile, 'utf8') }
-  catch (e) { console.error(`arc db seed: cannot read ${seedFile}: ${e.message}`); process.exit(1) }
-  let tokens, program
-  try {
-    tokens = new Lexer(src, seedFile).tokenize()
-    program = new Parser(tokens, seedFile).parse()
-  } catch (e) { formatError(e, src, seedFile); process.exit(1) }
-
-  // Collect all .arc schema files to build db helpers
-  const absDir = path.resolve(projectDir)
-  const serverDir = fs.existsSync(path.join(absDir, 'server')) ? path.join(absDir, 'server') : absDir
-  const arcFiles = findArcFiles(serverDir).filter(f => f !== seedFile)
-  const schemas = []
-  for (const file of arcFiles) {
-    try {
-      const fileSrc = fs.readFileSync(file, 'utf8')
-      const prog = new Parser(new Lexer(fileSrc, file).tokenize(), file).parse()
-      schemas.push(...prog.declarations.filter(d => d.type === 'ModelDecl'))
-    } catch (e) { console.warn(`arc db seed: could not parse ${file}: ${e.message}`) }
-  }
-
-  // Emit a standalone seed script using BunServerEmitter's db helpers
-  const emitter = new BunServerEmitter({ hash: 'arc', db: opts.db ?? 'sqlite' })
-
-  // Build a synthetic program with only the schemas + seed statements
-  const dbPreamble = emitter.emitPreamble(schemas)
-  const dbHelpers = schemas.map(s => emitter.emitModelHelpers(s)).join('\n\n')
-
-  // Emit the seed body using the JS emitter
-  const jsEmitter = new JsEmitter({ hash: 'arc' })
-  const seedBody = jsEmitter.emitBody(program.declarations)
-
-  const urlExport = `process.env.DATABASE_URL = process.env.DATABASE_URL ?? ${JSON.stringify(opts.url ?? '')}`
-
-  const seedScript = `
-'use strict'
-${urlExport}
-${dbPreamble}
-${dbHelpers}
-async function main() {
-  ${seedBody}
-  console.log('[arc:seed] done')
-}
-main().catch(e => { console.error('[arc:seed] failed:', e.message); process.exit(1) })
-`.trim()
-
-  // Write to a temp file and run it
-  const tmpFile = path.join(absDir, 'dist', '_seed.js')
-  fs.mkdirSync(path.join(absDir, 'dist'), { recursive: true })
-  fs.writeFileSync(tmpFile, seedScript)
-
-  const { spawnSync } = require('child_process')
-  const bunCheck = spawnSync('bun', ['--version'], { stdio: 'pipe' })
-  const runtime = bunCheck.status === 0 ? 'bun' : 'node'
-
-  console.log(`arc db seed: running ${path.relative(process.cwd(), seedFile)} with ${runtime}...`)
-  const result = spawnSync(runtime, [tmpFile], { stdio: 'inherit', env: process.env })
-
-  // Clean up temp file
-  try { fs.unlinkSync(tmpFile) } catch {}
-
-  if (result.status !== 0) {
-    console.error('arc db seed: seed script exited with error')
-    process.exit(result.status ?? 1)
-  }
-}
-
 // ── arc db ─────────────────────────────────────────────────────────────────
+// Extracted to src/commands/db.js; delegated here for backward compat.
 
 async function dbCommand(args) {
-  const sub = args[0]
-
-  if (!sub || sub === 'help') {
-    console.log('arc db <subcommand>')
-    console.log('  migrate [dir] [--db sqlite|postgres] [--url <url>] [--dry]')
-    console.log('                — diff models against live DB, apply missing columns/tables')
-    console.log('  seed    [dir] — run server/seed.arc (coming soon)')
-    console.log('  studio        — open DB browser (coming soon)')
-    return
-  }
-
-  if (sub === 'migrate') {
-    const remaining = args.slice(1)
-    const dbIdx = remaining.indexOf('--db')
-    const urlIdx = remaining.indexOf('--url')
-    const dry = remaining.includes('--dry')
-    const dialect = dbIdx !== -1 ? remaining[dbIdx + 1] : 'sqlite'
-    const urlArg = urlIdx !== -1 ? remaining[urlIdx + 1] : null
-    const _dialectVal = dbIdx !== -1 ? remaining[dbIdx + 1] : null
-    const _urlVal = urlIdx !== -1 ? remaining[urlIdx + 1] : null
-    const projectDir = remaining.find(a => !a.startsWith('--') && a !== _dialectVal && a !== _urlVal) ?? '.'
-
-    const absDir = path.resolve(projectDir)
-    const serverDir = fs.existsSync(path.join(absDir, 'server'))
-      ? path.join(absDir, 'server')
-      : absDir
-    const arcFiles = findArcFiles(serverDir)
-
-    if (arcFiles.length === 0) {
-      console.error(`arc db migrate: no .arc files found in ${path.relative(process.cwd(), serverDir)}`)
-      process.exit(1)
-    }
-
-    // Parse all .arc files and collect ModelDecl nodes
-    const schemas = []
-    for (const file of arcFiles) {
-      let src
-      try { src = fs.readFileSync(file, 'utf8') }
-      catch (e) { console.error(`arc db migrate: cannot read ${file}: ${e.message}`); process.exit(1) }
-      try {
-        const tokens = new Lexer(src, file).tokenize()
-        const program = new Parser(tokens, file).parse()
-        schemas.push(...program.declarations.filter(d => d.type === 'ModelDecl'))
-      } catch (e) { formatError(e, src, file); process.exit(1) }
-    }
-
-    if (schemas.length === 0) {
-      console.log('arc db migrate: no model declarations found — nothing to migrate')
-      return
-    }
-
-    const defaultUrl = dialect === 'postgres'
-      ? (process.env.DATABASE_URL ?? 'postgres://localhost/app')
-      : (process.env.DATABASE_URL ?? path.join(absDir, 'app.db'))
-    const url = urlArg ?? defaultUrl
-
-    console.log(`arc db migrate: checking ${schemas.length} model(s) against ${dialect === 'postgres' ? url : path.relative(process.cwd(), url)}${dry ? ' (dry run)' : ''}`)
-
-    let result
-    try {
-      result = await migrate(schemas, { db: dialect, url, dry })
-    } catch (e) {
-      console.error(`arc db migrate: ${e.message}`)
-      process.exit(1)
-    }
-
-    if (result.upToDate) {
-      console.log(`${GREEN}✓${RESET}  Database is up to date — no migrations needed`)
-      return
-    }
-
-    for (const entry of result.report) {
-      const action = entry.isNew ? `${GREEN}create${RESET}` : `${CYAN}alter${RESET}`
-      console.log(`  ${action}  ${entry.table}`)
-      for (const stmt of entry.statements) {
-        console.log(`    ${DIM}${stmt}${RESET}`)
-      }
-    }
-
-    if (dry) {
-      console.log(`\n${YELLOW}dry run — no changes applied. Remove --dry to apply.${RESET}`)
-    } else {
-      console.log(`\n${GREEN}✓${RESET}  ${result.report.length} migration(s) applied`)
-    }
-    return
-  }
-
-  if (sub === 'seed') {
-    const remaining = args.slice(1)
-    const dbIdx = remaining.indexOf('--db')
-    const urlIdx = remaining.indexOf('--url')
-    const dialect = dbIdx !== -1 ? remaining[dbIdx + 1] : 'sqlite'
-    const urlArg = urlIdx !== -1 ? remaining[urlIdx + 1] : null
-    const _dialectVal = dbIdx !== -1 ? remaining[dbIdx + 1] : null
-    const _urlVal = urlIdx !== -1 ? remaining[urlIdx + 1] : null
-    const projectDir = remaining.find(a => !a.startsWith('--') && a !== _dialectVal && a !== _urlVal) ?? '.'
-
-    const absDir = path.resolve(projectDir)
-    const serverDir = fs.existsSync(path.join(absDir, 'server')) ? path.join(absDir, 'server') : absDir
-    const seedFile = path.join(serverDir, 'seed.arc')
-
-    if (!fs.existsSync(seedFile)) {
-      console.error(`arc db seed: no seed file found at ${path.relative(process.cwd(), seedFile)}`)
-      console.error(`  Create ${path.relative(process.cwd(), seedFile)} with db.model.create({...}) calls`)
-      process.exit(1)
-    }
-
-    const defaultUrl = dialect === 'postgres'
-      ? (process.env.DATABASE_URL ?? 'postgres://localhost/app')
-      : (process.env.DATABASE_URL ?? path.join(absDir, 'app.db'))
-    const dbUrl = urlArg ?? defaultUrl
-
-    await runSeed(seedFile, absDir, { db: dialect, url: dbUrl })
-    return
-  }
-
-  if (sub === 'studio') {
-    console.log('arc db studio: coming in 0.3')
-    return
-  }
-
-  console.error(`arc db: unknown subcommand "${sub}". Try: migrate, seed, studio`)
-  process.exit(1)
+  return _dbCommandImpl(args)
 }
 
 // ── Flag helpers ───────────────────────────────────────────────────────────
@@ -1942,7 +1625,6 @@ module.exports = {
     _extractSharedCss,
     _patchPageHtml,
     _injectPrefetchTags,
-    _createFileWatcher,
     _resolveImageFormats,
     _extractDbAccess,
     collectDbCalls,

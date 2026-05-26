@@ -133,14 +133,11 @@ async function applyMigrationSqlite(statements, dbPath) {
   }
   const db = new Database(dbPath)
   try {
-    db.exec('BEGIN')
-    for (const stmt of statements) {
-      db.exec(stmt)
-    }
-    db.exec('COMMIT')
-  } catch (e) {
-    try { db.exec('ROLLBACK') } catch (rbErr) { console.warn('[arc:migrate] rollback attempted after error:', rbErr.message) }
-    throw e
+    // db.transaction wraps DDL+DML in a proper savepoint; manual BEGIN/COMMIT
+    // does not protect DDL in WAL mode — schema changes survive a ROLLBACK.
+    db.transaction(() => {
+      for (const stmt of statements) db.exec(stmt)
+    })()
   } finally {
     db.close()
   }

@@ -83,19 +83,22 @@ const email = {
   send: async ({ to, subject, text, html, from, replyTo }) => {
     const resendKey = process.env.RESEND_API_KEY
     if (resendKey) {
-      const res = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { Authorization: \`Bearer \${resendKey}\`, 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(15000),
-        body: JSON.stringify({
-          from: from ?? process.env.EMAIL_FROM ?? 'noreply@example.com',
-          to: Array.isArray(to) ? to : [to],
-          subject,
-          text,
-          html,
-          reply_to: replyTo,
-        }),
+      const _body = JSON.stringify({
+        from: from ?? process.env.EMAIL_FROM ?? 'noreply@example.com',
+        to: Array.isArray(to) ? to : [to],
+        subject, text, html, reply_to: replyTo,
       })
+      let res
+      for (let _attempt = 0; _attempt <= 1; _attempt++) {
+        if (_attempt > 0) await new Promise(r => setTimeout(r, 1000))
+        res = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: \`Bearer \${resendKey}\`, 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(15000),
+          body: _body,
+        })
+        if (res.ok || res.status < 500) break
+      }
       if (!res.ok) {
         const _errBody = await res.text().catch(() => '')
         throw new Error(\`[arc:email] Resend error: HTTP \${res.status}\${_errBody ? ' — ' + _errBody.slice(0, 120) : ''}\`)
