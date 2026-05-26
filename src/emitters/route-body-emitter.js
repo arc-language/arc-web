@@ -38,11 +38,11 @@ function _isDbCall(callPath) {
   return _DB_ASYNC_METHODS.has(callPath.slice(second + 1))
 }
 
-function _calleePath(callee) {
-  if (!callee) return ''
+function _calleePath(callee, depth = 0) {
+  if (!callee || depth > 10) return ''
   if (callee.type === 'Identifier') return callee.name
   if (callee.type === 'MemberExpr') {
-    const obj = _calleePath(callee.object)
+    const obj = _calleePath(callee.object, depth + 1)
     const prop = callee.property?.name ?? callee.property?.value ?? ''
     return obj ? `${obj}.${prop}` : prop
   }

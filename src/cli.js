@@ -175,14 +175,17 @@ async function compile(source, filename = '<input>', options = {}) {
   const imgRefs = collectImgRefs(program)
   let imgPipeline = null
   if (imgRefs.length > 0 && options.distDir) {
-    // Per-page meta.imageFormats opt-out: default ['avif','webp','original'].
-    // Find the first PageDecl with imageFormats meta (multi-page builds set this).
     const formats = _resolveImageFormats(program)
-    imgPipeline = new ImagePipeline({
-      srcDir: projectDir,
-      outDir: options.distDir,
-      ...(formats ? { formats } : {}),
-    })
+    if (options.sharedImgPipeline) {
+      // Multi-page build: reuse the shared pipeline so concurrent pages don't race on the same image
+      imgPipeline = options.sharedImgPipeline
+    } else {
+      imgPipeline = new ImagePipeline({
+        srcDir: projectDir,
+        outDir: options.distDir,
+        ...(formats ? { formats } : {}),
+      })
+    }
     await imgPipeline.processAll(imgRefs)
   }
 
@@ -241,15 +244,11 @@ function treeshakeBaseCss(css, html) {
     'arc-row', 'arc-col', 'arc-center', 'arc-spacer', 'arc-wrap',
     'arc-sr-only', 'arc-skip-link', 'arc-card',
   ]
-  // Single HTML scan to determine which utilities are referenced
+  // Single HTML scan to determine which utilities are referenced (both quote styles in one pass)
   const usedClasses = new Set()
-  const classReDQ = /class\s*=\s*"([^"]*)"/g
-  const classReSQ = /class\s*=\s*'([^']*)'/g
+  const classRe = /class\s*=\s*["']([^"']*)["']/g
   let m
-  while ((m = classReDQ.exec(html))) {
-    for (const cls of m[1].split(/\s+/)) if (cls) usedClasses.add(cls)
-  }
-  while ((m = classReSQ.exec(html))) {
+  while ((m = classRe.exec(html))) {
     for (const cls of m[1].split(/\s+/)) if (cls) usedClasses.add(cls)
   }
   // Remove rules for each unused utility (preserves original per-class removal logic)
@@ -515,11 +514,14 @@ async function buildSite(projectDir) {
   // ourselves below so the inlined-CSS strategy can be replaced with the
   // shared-file strategy.
   fs.mkdirSync(distDir, { recursive: true })
+  // Shared pipeline deduplicates image processing across concurrent page builds.
+  // Without sharing, two pages referencing the same image would race to write the same output file.
+  const sharedImgPipeline = new ImagePipeline({ srcDir: absDir, outDir: distDir })
   const compiled = await Promise.all(arcFiles.map(async f => {
     const source = await fs.promises.readFile(path.join(absDir, f), 'utf8')
     let result
     try {
-      result = await compile(source, f, { projectDir: absDir, distDir })
+      result = await compile(source, f, { projectDir: absDir, distDir, sharedImgPipeline })
     } catch (e) { formatError(e, source, f); return null }
     // Pull page-level meta (canonical, etc.) for sitemap emission
     const pageDecl = result.program?.declarations?.find(d => d.type === 'PageDecl')

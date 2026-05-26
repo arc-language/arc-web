@@ -58,7 +58,7 @@ async function serve(projectDir, flags, buildServer) {
     }
     const thisChild = spawn(runtime, [outFile], { stdio: 'inherit', env: process.env })
     child = thisChild
-    thisChild.on('error', e => console.error(`arc: could not start server: ${e.message}`))
+    thisChild.on('error', e => console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_spawn_failed', msg: e.message })))
     thisChild.on('exit', (code, signal) => {
       // Ignore exit from superseded children — only act on the currently active one.
       if (child !== thisChild) return
@@ -79,7 +79,7 @@ async function serve(projectDir, flags, buildServer) {
     } finally {
       _rebuilding = false
     }
-    if (_pendingRebuild) { _pendingRebuild = false; rebuild().catch(() => {}) }
+    if (_pendingRebuild) { _pendingRebuild = false; rebuild().catch(e => console.error(`arc: rebuild error: ${e?.message ?? String(e)}`)) }
   }
 
   console.log(`arc: starting server with ${runtime}...`)

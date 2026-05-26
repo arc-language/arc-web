@@ -267,6 +267,8 @@ class HtmlEmitter {
       seo.canonical ? `<meta property="og:url" content="${this.escape(seo.canonical)}">` : '',
       seo.image ? `<meta property="og:image" content="${this.escape(seo.image)}">` : '',
       seo.siteName ? `<meta property="og:site_name" content="${this.escape(seo.siteName)}">` : '',
+      // og:locale derived from page lang (e.g. 'en' → 'en_US', 'zh-TW' → 'zh_TW')
+      (() => { const l = (this._currentLang ?? 'en').replace('-', '_'); const loc = l.includes('_') ? l : `${l}_${l.toUpperCase()}`; return `<meta property="og:locale" content="${this.escape(loc)}">` })(),
       // Twitter Card
       `<meta name="twitter:card" content="${seo.image ? 'summary_large_image' : 'summary'}">`,
       `<meta name="twitter:title" content="${this.escape(title)}">`,
@@ -529,10 +531,11 @@ class HtmlEmitter {
       parts.push(`onclick="${_action}"`)
       const tag = node?.tag ?? ''
       parts.push(`aria-controls="${this.escape(String(value))}"`)
+      // All close triggers get an aria-label so icon-only buttons have an accessible name
+      parts.push(`aria-label="${this.escape(_localize(_LOCALE_CLOSE_DIALOG, this._currentLang))}"`)
       if (!_INTERACTIVE_TAGS.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
-        parts.push(`aria-label="${this.escape(_localize(_LOCALE_CLOSE_DIALOG, this._currentLang))}"`)
         parts.push(`onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${_action}}"`)
       }
       return true
@@ -853,7 +856,7 @@ class HtmlEmitter {
     }
     // Note: autofocus is intentionally omitted: autofocus on <dialog> is ignored by spec.
     // The trigger= onclick handler focuses the first focusable child after showModal().
-    return `<dialog id="${this.escape(String(id))}" role="dialog" aria-modal="true"${labelAttr}>${this.emitChildren(node.children)}</dialog>`
+    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${labelAttr}>${this.emitChildren(node.children)}</dialog>`
   }
 
   emitTooltip(node) {
@@ -865,7 +868,7 @@ class HtmlEmitter {
     return [
       `<span class="arc-tooltip-anchor_${this.componentHash}" aria-describedby="${id}" tabindex="0">`,
       `  ${this.emitChildren(node.children)}`,
-      `  <span role="tooltip" id="${id}" hidden>${this.escape(text)}</span>`,
+      `  <span role="tooltip" id="${id}" class="arc-tooltip-tip_${this.componentHash}">${this.escape(text)}</span>`,
       `</span>`,
     ].join('\n')
   }
@@ -895,7 +898,7 @@ class HtmlEmitter {
     return [
       `<span class="arc-tooltip-anchor_${this.componentHash}" aria-describedby="${id}" tabindex="0">`,
       `  ${inner}`,
-      `  <span role="tooltip" id="${id}" hidden>${this.escape(tooltipText)}</span>`,
+      `  <span role="tooltip" id="${id}" class="arc-tooltip-tip_${this.componentHash}">${this.escape(tooltipText)}</span>`,
       `</span>`,
     ].join('\n')
   }

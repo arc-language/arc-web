@@ -223,7 +223,9 @@ class JsEmitter {
 
     // Check if any computed that binding uses depends on stateVar
     for (const c of computedDecls) {
-      if (expr.includes(c.name) && this.exprReferences(c.init, stateVar)) return true
+      // Use word-boundary regex to avoid false matches (e.g. 'count' matching 'discountRate')
+      const nameRe = new RegExp('(?:^|[^a-zA-Z0-9_])' + c.name + '(?:[^a-zA-Z0-9_]|$)')
+      if (nameRe.test(expr) && this.exprReferences(c.init, stateVar)) return true
     }
 
     return false
@@ -396,6 +398,9 @@ class JsEmitter {
   // ── Expression emission ────────────────────────────────────────────────────
 
   emitRuntimeExpr(exprStr) {
+    // Memoize: same expression string produces same output — avoids double-regex per DOM update
+    this._runtimeExprCache ??= new Map()
+    if (this._runtimeExprCache.has(exprStr)) return this._runtimeExprCache.get(exprStr)
     // Convert @name → _name, and known state/computed identifiers → _name
     let result = exprStr.replace(/@([a-zA-Z_][a-zA-Z0-9_]*)/g, '_$1')
     if (this.stateVarNames) {
@@ -404,6 +409,7 @@ class JsEmitter {
         return this.stateVarNames.has(match) ? `_${match}` : match
       })
     }
+    this._runtimeExprCache.set(exprStr, result)
     return result
   }
 

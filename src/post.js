@@ -135,16 +135,27 @@ class PostProcessor {
   // Preserves content inside <pre>, <code>, <script>, <style>, <textarea>.
 
   minifyHtml(html) {
-    // Preserve content of sensitive tags
+    // Preserve content of sensitive tags using indexOf instead of lazy-dot-all regex
+    // (lazy [\s\S]*? on unclosed tags would cause catastrophic backtracking)
     const preserved = []
-    let result = html.replace(
-      /(<(?:pre|code|script|style|textarea)[^>]*>)([\s\S]*?)(<\/(?:pre|code|script|style|textarea)>)/gi,
-      (_, open, content, close) => {
-        const idx = preserved.length
-        preserved.push(content)
-        return `${open}__PRESERVED_${idx}__${close}`
-      }
-    )
+    const SENSITIVE_RE = /<(pre|code|script|style|textarea)([^>]*)>/gi
+    let result = ''
+    let last = 0
+    let m
+    SENSITIVE_RE.lastIndex = 0
+    while ((m = SENSITIVE_RE.exec(html)) !== null) {
+      const tag = m[1].toLowerCase()
+      const closeTag = `</${tag}>`
+      const closeIdx = html.indexOf(closeTag, m.index + m[0].length)
+      if (closeIdx === -1) break  // unclosed tag: stop preserving, let the rest through
+      const content = html.slice(m.index + m[0].length, closeIdx)
+      const idx = preserved.length
+      preserved.push(content)
+      result += html.slice(last, m.index) + m[0] + `__PRESERVED_${idx}__` + closeTag
+      last = closeIdx + closeTag.length
+      SENSITIVE_RE.lastIndex = last
+    }
+    result += html.slice(last)
 
     // Strip newlines and extra spaces between tags
     result = result

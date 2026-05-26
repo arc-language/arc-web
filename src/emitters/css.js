@@ -242,8 +242,8 @@ class CssEmitter {
 
     let baseCSS = this.baseStyles ? this.emitBase() : ''
 
-    // C5: when there are no user component rules, the @layer base { } wrapper
-    // serves no cascade purpose — strip it. Saves ~20 bytes raw.
+    // When there are no component rules, the @layer base { } wrapper adds no cascade benefit
+    // — unwrap it to save ~20 bytes.
     if (baseCSS && rules.length === 0) {
       const m = baseCSS.match(/^@layer base \{([\s\S]*)\}\s*$/)
       if (m) baseCSS = m[1].trim()
@@ -281,8 +281,12 @@ class CssEmitter {
   .arc-wrap { display: flex; flex-wrap: wrap }
   :focus-visible { outline: 2px solid oklch(60% 0.15 250); outline-offset: 2px }
   .arc-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0 }
-  .arc-skip-link { position: absolute; top: -40px; left: 0; background: #fff; color: #000; padding: 8px 16px; z-index: 9999; text-decoration: none; border: 2px solid #000 }
+  .arc-skip-link { position: absolute; top: -40px; left: 0; background: Canvas; color: CanvasText; padding: 8px 16px; z-index: 9999; text-decoration: none; border: 2px solid CanvasText }
   .arc-skip-link:focus { top: 0 }
+  [class*="arc-tooltip-anchor"] { position: relative; display: inline-flex; cursor: default }
+  [class*="arc-tooltip-tip"] { position: absolute; bottom: 100%; margin-bottom: 4px; left: 50%; transform: translateX(-50%); background: oklch(15% 0 0); color: oklch(100% 0 0); padding: 4px 8px; border-radius: var(--arc-radius-sm,4px); font-size: .875em; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 9999 }
+  [class*="arc-tooltip-anchor"]:hover [class*="arc-tooltip-tip"],
+  [class*="arc-tooltip-anchor"]:focus-within [class*="arc-tooltip-tip"] { opacity: 1 }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;

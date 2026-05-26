@@ -110,7 +110,10 @@ class BuildExecutor {
       }
 
       case 'TemplateLiteral': {
-        const parts = await Promise.all(expr.parts.map(p => this.evalExpr(p, locals)))
+        // Evaluate parts sequentially: template parts may have side effects (readFile)
+        // and concurrent evaluation produces non-deterministic ordering.
+        const parts = []
+        for (const p of expr.parts) parts.push(await this.evalExpr(p, locals))
         return parts.join('')
       }
 
@@ -289,6 +292,7 @@ class BuildExecutor {
       case 'join':    return arr.join(args[0] ?? ',')
       case 'includes': return arr.includes(args[0])
       case 'indexOf': return arr.indexOf(args[0])
+      case 'lastIndexOf': return arr.lastIndexOf(args[0], args[1])
       case 'forEach': {
         if (typeof args[0] !== 'function') throw new Error('@build Array.forEach: callback must be a function')
         for (let i = 0; i < arr.length; i++) await args[0](arr[i], i, arr)

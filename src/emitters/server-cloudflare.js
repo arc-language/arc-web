@@ -125,7 +125,7 @@ function _routeCtx(req, env) {
     redirect: (loc, status = 302) => _redirect(loc, status),
     parseBody: () => _parseBody(req),
     request: req,
-    Queue: { enqueue: (job, ...args) => { if (!env.QUEUE) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:queue] env.QUEUE binding not configured — job dropped', job })); return Promise.resolve({ ok: false, error: 'queue_not_configured' }) } return env.QUEUE.send({ job, args }) } },
+    Queue: { enqueue: (job, ...args) => { if (!env.QUEUE) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc:queue] env.QUEUE binding not configured — add a Queue binding in wrangler.toml', job })); throw new Error('[arc:queue] env.QUEUE binding not configured') } return env.QUEUE.send({ job, args }) } },
   }
 }`.trim()
   }
@@ -311,10 +311,12 @@ export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url)
     if (url.pathname === '/health') {
-      let _dbOk = false
-      if (env.DB) { try { await Promise.race([env.DB.prepare('SELECT 1').first(), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]); _dbOk = true } catch {} }
-      else { _dbOk = true }
-      return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a', queue: env.QUEUE ? 'configured' : 'n/a', ts: new Date().toISOString() }), { status: _dbOk ? 200 : 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
+      try {
+        let _dbOk = false
+        if (env.DB) { try { await Promise.race([env.DB.prepare('SELECT 1').first(), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]); _dbOk = true } catch {} }
+        else { _dbOk = true }
+        return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a', queue: env.QUEUE ? 'configured' : 'n/a', version: typeof __ARC_VERSION__ !== 'undefined' ? __ARC_VERSION__ : 'unknown', ts: new Date().toISOString() }), { status: _dbOk ? 200 : 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
+      } catch (_he) { return new Response(JSON.stringify({ status: 'error' }), { status: 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } }) }
     }
     const _rl = _checkRateLimit(req)
     if (_rl) return _rl

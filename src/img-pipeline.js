@@ -78,25 +78,26 @@ class ImagePipeline {
       const wantAvif = this.formats.includes('avif')
       const wantWebp = this.formats.includes('webp')
       const wantOriginal = this.formats.includes('original') || this.formats.includes('jpg') || this.formats.includes('png')
+      // Flatten all width × format tasks into one Promise.all so all I/O runs concurrently
+      const allTasks = []
       for (const w of widths) {
         const base = `${stem}.${sha8}.${w}w`
-        const tasks = []
         // Use .clone() so Sharp decodes buf only once per width, then branches to each format
         const resized = this.sharp(buf).resize(w)
         if (wantAvif) {
           const p = path.join(this.outDir, `${base}.avif`)
-          tasks.push(resized.clone().avif({ quality: 60 }).toFile(p).then(info => { variants.avif[w] = `${base}.avif`; sizes.avif[w] = info.size }))
+          allTasks.push(resized.clone().avif({ quality: 60 }).toFile(p).then(info => { variants.avif[w] = `${base}.avif`; sizes.avif[w] = info.size }))
         }
         if (wantWebp) {
           const p = path.join(this.outDir, `${base}.webp`)
-          tasks.push(resized.clone().webp({ quality: 75 }).toFile(p).then(info => { variants.webp[w] = `${base}.webp`; sizes.webp[w] = info.size }))
+          allTasks.push(resized.clone().webp({ quality: 75 }).toFile(p).then(info => { variants.webp[w] = `${base}.webp`; sizes.webp[w] = info.size }))
         }
         if (wantOriginal) {
           const p = path.join(this.outDir, `${base}${path.extname(src)}`)
-          tasks.push(resized.clone().toFile(p).then(info => { variants.original[w] = `${base}${path.extname(src)}`; sizes.original[w] = info.size }))
+          allTasks.push(resized.clone().toFile(p).then(info => { variants.original[w] = `${base}${path.extname(src)}`; sizes.original[w] = info.size }))
         }
-        await Promise.all(tasks)
       }
+      await Promise.all(allTasks)
 
       // Smart format selection: if AVIF isn't meaningfully smaller than WebP at
       // every width, drop AVIF — its decode cost outweighs the wire savings.
@@ -126,6 +127,7 @@ class ImagePipeline {
         intrinsicWidth: meta.width,
         intrinsicHeight: meta.height,
       })
+      // _resolve() after processed.set() so concurrent awaiter sees the result immediately
       _resolve()
       } catch (e) { _reject(e); throw e } finally { this._inFlight.delete(sha8) }
     }

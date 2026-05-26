@@ -212,7 +212,8 @@ const oauth = {
     url: (scopes = ['email', 'profile']) => {
       const clientId = process.env.GOOGLE_CLIENT_ID
       if (!clientId) throw new Error('[arc:oauth] GOOGLE_CLIENT_ID env var is not set')
-      const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? ''
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI
+      if (!redirectUri) throw new Error('[arc:oauth] GOOGLE_REDIRECT_URI env var is not set')
       const state = crypto.randomUUID()
       const params = new URLSearchParams({
         client_id: clientId,
@@ -229,7 +230,8 @@ const oauth = {
       const state = url.searchParams.get('state')
       if (!code) return { ok: false, error: 'no_code' }
       if (!state || !expectedState || state !== expectedState) return { ok: false, error: 'auth_failed' }
-      const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? ''
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI
+      if (!redirectUri) throw new Error('[arc:oauth] GOOGLE_REDIRECT_URI env var is not set')
       const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

@@ -222,7 +222,7 @@ class Checker {
   checkClassDecl(decl, declared) {
     const name = decl.name
     if (name) {
-        const firstLine = this._declLines.get(name)
+      const firstLine = this._declLines.get(name)
       if (firstLine != null && firstLine !== decl.line) {
         this.error(`Duplicate declaration: "${name}" already declared`, decl)
       } else {

@@ -872,7 +872,7 @@ page "T"
       ], 0)
       const result = emitter.emitElement(el)
       assert.ok(result.includes('aria-describedby'), `Expected aria-describedby: ${result}`)
-      assert.ok(result.includes('hidden'), `Expected hidden attr on tooltip span: ${result}`)
+      assert.ok(result.includes('role="tooltip"'), `Expected role="tooltip" on tooltip span: ${result}`)
       assert.ok(result.includes('help me'), `Expected tooltip text`)
     })
 
@@ -911,7 +911,7 @@ page "T"
     text "hover me"`
       const { html } = await compile(src)
       assert.ok(html.includes('aria-describedby'), `Expected aria-describedby in:\n${html}`)
-      assert.ok(html.includes('hidden'), `Expected hidden attr on tooltip span in:\n${html}`)
+      assert.ok(html.includes('role="tooltip"'), `Expected role="tooltip" on tooltip span in:\n${html}`)
       assert.ok(html.includes('Help text'), `Expected tooltip text`)
     })
 

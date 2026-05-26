@@ -45,7 +45,7 @@ const _queue = {
             setTimeout(() => { this._pendingRetries--; this.enqueue(fn, args, retries + 1); this._maybeDrain() }, delay)
           } else {
             console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: fn?.name ?? 'unknown', event: 'dlq', msg: '[arc:queue] job permanently failed after 3 retries — moved to dead letter queue', error: _e?.message ?? String(_e) }))
-            if (this._dead.length >= 1000) { this._dead.shift(); console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:queue] DLQ cap reached — oldest entry evicted' })) }
+            if (this._dead.length >= 1000) { this._dead.shift(); console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'dlq_cap_reached', msg: '[arc:queue] DLQ cap reached — oldest entry evicted' })) }
             this._dead.push({ fn, args, error: _e?.message ?? String(_e), failedAt: new Date().toISOString() })
           }
         }

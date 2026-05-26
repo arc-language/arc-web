@@ -109,8 +109,10 @@ async function getExistingColumnsPg(connectionString, tableNames = []) {
 
   const result = new Map()
   for (const row of rows) {
-    if (!result.has(row.table_name)) result.set(row.table_name, new Set())
-    result.get(row.table_name).add(row.column_name)
+    // Normalize to lowercase so lookups are case-insensitive regardless of how the table was created
+    const tbl = row.table_name.toLowerCase()
+    if (!result.has(tbl)) result.set(tbl, new Set())
+    result.get(tbl).add(row.column_name)
   }
   return result
 }

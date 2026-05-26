@@ -109,9 +109,11 @@ function _checkRateLimit(req) {
   // Use the rightmost non-trusted IP from XFF: the leftmost entry is client-controlled and
   // can be spoofed; the correct client IP when behind trusted proxies is the rightmost entry
   // that is NOT in the trusted proxy set.
+  // Without trusted proxies configured, all client-supplied IP headers (x-forwarded-for,
+  // x-real-ip) are spoofable — fall back to 'unknown' so the limiter applies globally.
   const ip = (_TRUSTED_PROXIES && xff)
     ? (xff.split(',').map(s => s.trim()).reverse().find(i => !_TRUSTED_PROXIES.has(i)) ?? xff.split(',')[0].trim())
-    : (req.headers.get('x-real-ip') ?? 'unknown')
+    : 'unknown'
   const now = Date.now()
   const window = 60000
   let entry = _rlMap.get(ip)
@@ -312,8 +314,8 @@ async function ${name}(req, params) {
         : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch{}`)
       : ''
     const healthBody = hasDb
-      ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
-      : `return _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a', ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
+      ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
+      : `return _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a', version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
     const dbLabel = this.isPg ? 'postgres' : (hasDb ? 'sqlite' : 'none')
     return `
 // Hoisted: avoids per-request RegExp allocation at high request rates

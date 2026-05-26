@@ -80,13 +80,18 @@ main().catch(e => { console.error('[arc:seed] failed:', e.message); process.exit
     process.exit(1)
   }
 
+  // Register exit cleanup before spawning so the temp file is removed even on SIGKILL
+  const cleanupTmp = () => { try { fs.unlinkSync(tmpFile) } catch {} }
+  process.on('exit', cleanupTmp)
+
   const bunCheck = spawnSync('bun', ['--version'], { stdio: 'pipe' })
   const runtime = bunCheck.status === 0 ? 'bun' : 'node'
 
   console.log(`arc db seed: running ${path.relative(process.cwd(), seedFile)} with ${runtime}...`)
   const result = spawnSync(runtime, [tmpFile], { stdio: 'inherit', env: process.env })
 
-  try { fs.unlinkSync(tmpFile) } catch {}
+  cleanupTmp()
+  process.off('exit', cleanupTmp)
 
   if (result.status !== 0) {
     console.error('arc db seed: seed script exited with error')
