@@ -9,7 +9,7 @@ function findArcFiles(dir) {
   try { entries = fs.readdirSync(dir, { withFileTypes: true }) }
   catch (e) { console.warn(`arc: warning: cannot read directory ${dir}: ${e.message}`); return results }
   for (const entry of entries) {
-    if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== 'dist') {
+    if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== 'dist' && !entry.name.startsWith('.')) {
       results.push(...findArcFiles(path.join(dir, entry.name)))
     } else if (entry.isFile() && entry.name.endsWith('.arc')) {
       results.push(path.join(dir, entry.name))

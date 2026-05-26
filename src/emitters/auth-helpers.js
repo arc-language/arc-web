@@ -33,7 +33,7 @@ if (!_AUTH_SECRET) {
 }
 // __Host- prefix in production: prevents subdomain session fixation (RFC 6265bis).
 // Requires Secure + Path=/ + no Domain= — all satisfied below. Plain name in dev (no HTTPS).
-const _PROD_COOKIE = process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test'
+const _PROD_COOKIE = process.env.NODE_ENV === 'production'
 const _SESSION_COOKIE = _PROD_COOKIE ? '__Host-${cookieName}' : '${cookieName}'
 const _SESSION_MAX_AGE = ${sessionMaxAge}
 
@@ -44,7 +44,7 @@ function _getHmacKey(secret) {
   if (_hmacKeyCache.has(secret)) return _hmacKeyCache.get(secret)
   // Cache the Promise, not the resolved key — concurrent calls with the same secret
   // await the same derivation instead of each starting their own crypto.subtle.importKey.
-  // Evict the oldest entry (LRU) rather than clearing all so active keys stay warm.
+  // Evict the oldest entry (FIFO — Map preserves insertion order) so active keys stay warm.
   if (_hmacKeyCache.size >= 64) _hmacKeyCache.delete(_hmacKeyCache.keys().next().value)
   const enc = new TextEncoder()
   const p = crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])

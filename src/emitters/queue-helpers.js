@@ -92,7 +92,7 @@ const email = {
         to: Array.isArray(to) ? to : [to],
         subject, text, html, reply_to: replyTo,
       })
-      let res
+      let res = null
       for (let _attempt = 0; _attempt <= 1; _attempt++) {
         if (_attempt > 0) await new Promise(r => setTimeout(r, 1000))
         try {
@@ -108,7 +108,7 @@ const email = {
           // network error — retry once
         }
       }
-      if (!res.ok) {
+      if (res && !res.ok) {
         const _errBody = await res.text().catch(() => '')
         throw new Error(\`[arc:email] Resend error: HTTP \${res.status}\${_errBody ? ' — ' + _errBody.slice(0, 120) : ''}\`)
       }

@@ -57,7 +57,7 @@ async function runSeed(seedFile, projectDir, opts = {}) {
   const jsEmitter = new JsEmitter({ hash: 'arc' })
   const seedBody = jsEmitter.emitBody(program.declarations)
 
-  const urlExport = `process.env.DATABASE_URL = process.env.DATABASE_URL ?? ${JSON.stringify(opts.url ?? '')}`
+  const urlExport = opts.url ? `process.env.DATABASE_URL = process.env.DATABASE_URL ?? ${JSON.stringify(opts.url)}` : ''
 
   const seedScript = `
 'use strict'

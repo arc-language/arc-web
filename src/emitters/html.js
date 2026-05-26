@@ -139,6 +139,7 @@ class HtmlEmitter {
     this.imgPipeline = options.imgPipeline ?? null  // optional ImagePipeline instance
     this._imgOrdinal = 0          // increments for each img encountered (for above-fold detection)
     this._sawSection = false      // toggles true after first <section>
+    this._currentLang = 'en'     // set in emitPage(); used by locale-aware helpers before page is emitted
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -403,7 +404,7 @@ class HtmlEmitter {
     // on auto-injected target="_blank" links (matches the auto-injection above).
     // Check staticAttrs (not raw attrs): bind:aria-label entries stay in attrs but are
     // filtered out of staticAttrs, so a reactive label doesn't suppress this notice.
-    if (htmlTag === 'a' && attrStr.includes('target="_blank"') && !_hasRealLabel(staticAttrs['aria-label'], this) && !_hasRealLabel(staticAttrs['aria-labelledby'], this)) {
+    if (htmlTag === 'a' && staticAttrs.target === '_blank' && !_hasRealLabel(staticAttrs['aria-label'], this) && !_hasRealLabel(staticAttrs['aria-labelledby'], this)) {
       inner += `<span class="arc-sr-only"> ${{ en: '(opens in new tab)', fr: '(ouvre dans un nouvel onglet)', es: '(se abre en nueva pestaña)', de: '(öffnet in neuem Tab)', pt: '(abre em nova aba)', ja: '(新しいタブで開く)', zh: '（在新标签页中打开）', ar: '(يفتح في علامة تبويب جديدة)' }[this._currentLang ?? 'en'] ?? '(opens in new tab)'}</span>`
     }
 
@@ -513,12 +514,11 @@ class HtmlEmitter {
       const _action = `var _d=document.getElementById(${safeId});if(_d)_d.close()`
       parts.push(`onclick="${_action}"`)
       const tag = node?.tag ?? ''
+      parts.push(`aria-controls="${this.escape(String(value))}"`)
       if (!_INTERACTIVE_TAGS.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
         parts.push(`aria-label="${this.escape({ en: 'Close dialog', fr: 'Fermer la boîte de dialogue', es: 'Cerrar diálogo', de: 'Dialog schließen', pt: 'Fechar diálogo', ja: 'ダイアログを閉じる', zh: '关闭对话框', ar: 'إغلاق مربع الحوار' }[this._currentLang ?? 'en'] ?? 'Close dialog')}"`)
-        parts.push(`aria-controls="${this.escape(String(value))}"`)
-
         parts.push(`onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${_action}}"`)
       }
       return true

@@ -149,7 +149,9 @@ async function applyMigrationSqlite(statements, dbPath) {
 async function applyMigrationPg(statements, connectionString) {
   const { Client } = require('pg')
   const client = new Client({ connectionString })
+  let connected = false
   await client.connect()
+  connected = true
   try {
     await client.query('BEGIN')
     for (const stmt of statements) {
@@ -157,10 +159,10 @@ async function applyMigrationPg(statements, connectionString) {
     }
     await client.query('COMMIT')
   } catch (e) {
-    await client.query('ROLLBACK')
+    if (connected) await client.query('ROLLBACK').catch(() => {})
     throw e
   } finally {
-    await client.end()
+    if (connected) await client.end().catch(() => {})
   }
 }
 

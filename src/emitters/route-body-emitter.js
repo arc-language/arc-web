@@ -116,6 +116,8 @@ function emitRouteMatch(stmt, jsEmitter) {
 
   // Move wildcard/identifier catch-all arms to the end so they don't orphan
   // subsequent `else if` clauses. Parser should enforce this, but guard here too.
+  const wildcardCount = (stmt.arms ?? []).filter(a => !a.pattern || a.pattern.type === 'Wildcard' || a.pattern.type === 'Identifier').length
+  if (wildcardCount > 1) console.warn(`[arc] match statement has ${wildcardCount} wildcard/catch-all arms — only the first will be reachable`)
   const sorted = [...(stmt.arms ?? [])].sort((a, b) => {
     const aIsWild = !a.pattern || a.pattern.type === 'Wildcard' || a.pattern.type === 'Identifier'
     const bIsWild = !b.pattern || b.pattern.type === 'Wildcard' || b.pattern.type === 'Identifier'

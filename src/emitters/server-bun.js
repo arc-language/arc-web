@@ -304,7 +304,7 @@ async function ${name}(req, params) {
     const dbProbe = hasDb
       ? (this.isPg
         ? `let _dbOk=false;try{await Promise.race([_pool.query('SELECT 1'),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),2000))]);_dbOk=true}catch{}`
-        : `let _dbOk=false;try{await Promise.race([Promise.resolve().then(()=>_db.query('SELECT 1').get()),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),2000))]);_dbOk=true}catch{}`)
+        : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch{}`)
       : ''
     const healthBody = hasDb
       ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
@@ -326,7 +326,7 @@ const _server = Bun.serve({
     ${healthBody}
       } catch (_he) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'health_check_error', msg: _he?.message ?? String(_he) })); return _json({ status: 'error' }, 503, { 'Cache-Control': 'no-store, no-cache' }) }
     }
-    ${this.isPg && schemas && schemas.length > 0 ? "if (_schemaInitErr) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' })\n    if (db === null) await _schemaInitP\n    if (db === null) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' })" : ''}
+    ${this.isPg && schemas && schemas.length > 0 ? "if (db === null) { if (_schemaInitErr) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' }); await _schemaInitP; if (db === null) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' }) }" : ''}
     const _rl = _checkRateLimit(req)
     if (_rl) return _rl
     return _dispatch(req, url)
