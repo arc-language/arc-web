@@ -207,7 +207,7 @@ ${tableInits}
   db = globalThis.db = {
 ${dbEntries}
   }
-})().catch(e => { console.error('[arc] schema init failed:', e.message); process.exit(1) })`.trim()
+})().catch(e => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'schema_init_failed', msg: e?.message ?? String(e), cause: e?.cause?.message })); process.exit(1) })`.trim()
   }
 
   _schemaVars(schema, dialect) {
@@ -270,6 +270,7 @@ async function ${name}(req, params) {
   } catch (_e) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
     if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
+    if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e) }))
     return _json({ error: 'Internal server error' }, 500)
   }
@@ -309,7 +310,7 @@ const _server = Bun.serve({
     return _dispatch(req, url)
   }
 })
-console.log(\`arc: server running on http://localhost:\${_server.port}\`)
+console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: 'arc: server started', port: _server.port }))
 `.trim()
   }
 }

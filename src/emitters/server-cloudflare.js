@@ -116,7 +116,7 @@ function _routeCtx(req, env) {
     redirect: (loc, status = 302) => _redirect(loc, status),
     parseBody: () => _parseBody(req),
     request: req,
-    Queue: { enqueue: (job, ...args) => { if (!env.QUEUE) { console.warn('[arc:queue] env.QUEUE binding not configured — job dropped:', job); return } return env.QUEUE.send({ job, args }) } },
+    Queue: { enqueue: (job, ...args) => { if (!env.QUEUE) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:queue] env.QUEUE binding not configured — job dropped', job })); return Promise.resolve({ ok: false, error: 'queue_not_configured' }) } return env.QUEUE.send({ job, args }) } },
   }
 }`.trim()
   }
@@ -229,6 +229,7 @@ async function ${name}(req, params, env) {
   } catch (_e) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
     if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
+    if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e) }))
     return _json({ error: 'Internal server error' }, 500)
   }
@@ -281,6 +282,7 @@ function _makeEmail(env) {
         try { await fn(...args, env) } catch (e) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: e?.message ?? String(e) })); if (msg.attempts >= 3) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'dlq', msg: 'max retries exceeded' })); msg.ack() } else { msg.retry() }; continue }
         msg.ack()
       } else {
+        console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', queue: job, event: 'unknown_job', msg: 'no handler registered for job type' }))
         msg.ack()
       }
     }

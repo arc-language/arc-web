@@ -25,12 +25,15 @@ const _SESSION_MAX_AGE = ${sessionMaxAge}
 // HMAC-SHA256 sign/verify (Web Crypto - built into Bun + Node 18+)
 // Keyed by secret string so jwt.sign/verify with custom secrets work correctly
 const _hmacKeyCache = new Map()
-async function _getHmacKey(secret) {
+function _getHmacKey(secret) {
   if (_hmacKeyCache.has(secret)) return _hmacKeyCache.get(secret)
+  // Cache the Promise, not the resolved key — concurrent calls with the same secret
+  // await the same derivation instead of each starting their own crypto.subtle.importKey
+  if (_hmacKeyCache.size > 64) _hmacKeyCache.clear()
   const enc = new TextEncoder()
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
-  _hmacKeyCache.set(secret, key)
-  return key
+  const p = crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
+  _hmacKeyCache.set(secret, p)
+  return p
 }
 
 async function _hmacSign(data, secret) {
@@ -115,6 +118,7 @@ const auth = {
 // JWT (HS256 via Web Crypto)
 const jwt = {
   sign: async (payload, secret = _AUTH_SECRET, expiresIn = 3600) => {
+    if (!Number.isFinite(expiresIn) || expiresIn <= 0) throw new Error('[arc:jwt] expiresIn must be a positive finite number (seconds)')
     const header = { alg: 'HS256', typ: 'JWT' }
     const now = Math.floor(Date.now() / 1000)
     const claims = { ...payload, iat: now, exp: now + expiresIn }
@@ -129,6 +133,11 @@ const jwt = {
     const parts = token.split('.')
     if (parts.length !== 3) return null
     const [headerB64, payloadB64, sig] = parts
+    // Reject tokens that don't declare HS256 — prevents alg:none attacks and cross-algorithm confusion
+    try {
+      const hdr = JSON.parse(atob(headerB64.replace(/-/g, '+').replace(/_/g, '/')))
+      if (hdr.alg !== 'HS256') return null
+    } catch { return null }
     if (!await _hmacVerify(\`\${headerB64}.\${payloadB64}\`, sig, secret)) return null
     try {
       const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')))

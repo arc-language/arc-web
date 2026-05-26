@@ -29,8 +29,9 @@ class EdgeRenderer {
 
     // Find state bindings that reference @live variables
     // stateBindings format: { id, expr: string, line }
-    const liveVarsCombinedRe = new RegExp(`\\b(${[...liveVarNames].join('|')})\\b`)
-    const liveBindings = stateBindings.filter(b => liveVarsCombinedRe.test(b.expr ?? ''))
+    const _liveVarList = [...liveVarNames].map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const liveVarsCombinedRe = _liveVarList.length > 0 ? new RegExp(`\\b(${_liveVarList.join('|')})\\b`) : null
+    const liveBindings = liveVarsCombinedRe ? stateBindings.filter(b => liveVarsCombinedRe.test(b.expr ?? '')) : []
 
     const parts = [
       `'use strict'`,
@@ -108,7 +109,7 @@ class EdgeRenderer {
     // exprStr comes from stateBindings: escape backticks/backslashes so it can't
     // break the surrounding template literal in the generated edge function.
     const mapEntries = bindingExprs.map(({ id, exprStr }) => {
-      const safeExpr = exprStr.replace(/\\/g, '\\\\').replace(/`/g, '\\`')
+      const safeExpr = exprStr.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
       // Wrap in try/catch: if a dotted path like user.name throws when user is null,
       // render empty string rather than crashing the edge function
       return `  try { _m['${id}'] = _esc(String(${safeExpr} ?? '')) } catch { _m['${id}'] = '' }`
@@ -219,7 +220,7 @@ class EdgeRenderer {
       `      return new Response(stream, { headers: _RESPONSE_HEADERS })`,
       `    } catch (e) {`,
       `      console.error('[arc] edge render error:', e instanceof Error ? e.message : String(e))`,
-      `      return new Response('<html lang="en"><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })`,
+      `      return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Error</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })`,
       `    }`,
       `  }`,
       `}`,

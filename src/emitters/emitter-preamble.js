@@ -44,7 +44,9 @@ async function _parseBody(req) {
   const buf = await req.arrayBuffer()
   if (buf.byteLength > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
   const text = new TextDecoder().decode(buf)
-  if (ct.includes('application/json')) return JSON.parse(text)
+  if (ct.includes('application/json')) {
+    try { return JSON.parse(text) } catch { throw Object.assign(new Error('Invalid JSON body'), { status: 400 }) }
+  }
   if (ct.includes('application/x-www-form-urlencoded')) return Object.fromEntries(new URLSearchParams(text))
   return {}
 }

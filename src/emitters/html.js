@@ -487,8 +487,8 @@ class HtmlEmitter {
       parts.push(`onclick="${_action}"`)
       // Keyboard accessibility: non-interactive elements need tabindex + role so keyboard users can trigger them
       const tag = node?.tag ?? ''
-      const _interactiveTags = _INTERACTIVE_TAGS
-      if (!_interactiveTags.has(tag)) {
+      parts.push('aria-haspopup="dialog"')
+      if (!_INTERACTIVE_TAGS.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
         // Enter/Space don't fire onclick on non-button elements with role="button"
@@ -502,10 +502,10 @@ class HtmlEmitter {
       const _action = `var _d=document.getElementById(${safeId});if(_d)_d.close()`
       parts.push(`onclick="${_action}"`)
       const tag = node?.tag ?? ''
-      const _interactiveTags = _INTERACTIVE_TAGS
-      if (!_interactiveTags.has(tag)) {
+      if (!_INTERACTIVE_TAGS.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
+        parts.push('aria-label="Close dialog"')
         parts.push(`onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${_action}}"`)
       }
       return true

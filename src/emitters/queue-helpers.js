@@ -39,7 +39,8 @@ const _queue = {
         } catch (_e) {
           console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: fn?.name ?? 'unknown', msg: _e?.message ?? String(_e) }))
           if (retries < 3) {
-            const delay = Math.pow(2, retries) * 1000
+            // Jitter prevents all failed jobs from retrying simultaneously (thundering herd)
+            const delay = Math.pow(2, retries) * 1000 + Math.random() * 500
             this._pendingRetries++
             setTimeout(() => { this.enqueue(fn, args, retries + 1); this._pendingRetries-- }, delay)
           } else {
@@ -114,7 +115,7 @@ const email = {
         replyTo,
       })
     } catch {
-      console.warn('[arc:email] No provider configured — set RESEND_API_KEY or SMTP_HOST.')
+      console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:email] No provider configured — set RESEND_API_KEY or SMTP_HOST.' }))
     }
   },
 }`.trim()
