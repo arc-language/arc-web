@@ -1561,8 +1561,11 @@ async function runSeed(seedFile, projectDir, opts = {}) {
   let src
   try { src = fs.readFileSync(seedFile, 'utf8') }
   catch (e) { console.error(`arc db seed: cannot read ${seedFile}: ${e.message}`); process.exit(1) }
-  const tokens = new Lexer(src, seedFile).tokenize()
-  const program = new Parser(tokens, seedFile).parse()
+  let tokens, program
+  try {
+    tokens = new Lexer(src, seedFile).tokenize()
+    program = new Parser(tokens, seedFile).parse()
+  } catch (e) { formatError(e, src, seedFile); process.exit(1) }
 
   // Collect all .arc schema files to build db helpers
   const absDir = path.resolve(projectDir)
@@ -1662,10 +1665,14 @@ async function dbCommand(args) {
     // Parse all .arc files and collect ModelDecl nodes
     const schemas = []
     for (const file of arcFiles) {
-      const src = fs.readFileSync(file, 'utf8')
-      const tokens = new Lexer(src, file).tokenize()
-      const program = new Parser(tokens, file).parse()
-      schemas.push(...program.declarations.filter(d => d.type === 'ModelDecl'))
+      let src
+      try { src = fs.readFileSync(file, 'utf8') }
+      catch (e) { console.error(`arc db migrate: cannot read ${file}: ${e.message}`); process.exit(1) }
+      try {
+        const tokens = new Lexer(src, file).tokenize()
+        const program = new Parser(tokens, file).parse()
+        schemas.push(...program.declarations.filter(d => d.type === 'ModelDecl'))
+      } catch (e) { formatError(e, src, file); process.exit(1) }
     }
 
     if (schemas.length === 0) {

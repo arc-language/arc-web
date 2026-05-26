@@ -110,10 +110,13 @@ function _checkRateLimit(req) {
   return null
 }
 
+// Hoisted: avoids per-request RegExp allocation at high request rates
+const _TRACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/
+
 // Route context factory — extracts the common per-request setup shared by every handler
 function _routeCtx(req, env) {
   const _clientId = req.headers.get('x-request-id') ?? ''
-  const traceId = /^[a-zA-Z0-9_-]{1,64}$/.test(_clientId) ? _clientId : crypto.randomUUID()
+  const traceId = _TRACE_ID_RE.test(_clientId) ? _clientId : crypto.randomUUID()
   return {
     traceId,
     json: (data, status = 200) => _json(data, status),
@@ -295,7 +298,7 @@ function _makeEmail(env) {
         }
         try { msg.ack() } catch (_ackErr) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'ack_failed', msg: _ackErr?.message ?? String(_ackErr) })) }
       } else {
-        console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', queue: job, event: 'unknown_job', msg: 'no handler registered for job type' }))
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'unknown_job', msg: 'no handler registered — message discarded' }))
         msg.ack()
       }
     }

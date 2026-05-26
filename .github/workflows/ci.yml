@@ -56,6 +56,9 @@ jobs:
               link href="a.html" "→ A"
           EOF
           node src/cli.js build-site /tmp/buildsite-smoke
+          test -s /tmp/buildsite-smoke/dist/a.html
+          test -s /tmp/buildsite-smoke/dist/b.html
+          grep -q '<!DOCTYPE html>' /tmp/buildsite-smoke/dist/a.html
           test -s /tmp/buildsite-smoke/dist/sitemap.xml
           test -s /tmp/buildsite-smoke/dist/_headers
           test -s /tmp/buildsite-smoke/dist/robots.txt

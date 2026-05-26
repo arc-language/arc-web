@@ -30,6 +30,7 @@ const _redirect = (location, status = 302) =>
 
 // Body parser: JSON or application/x-www-form-urlencoded
 const _MAX_BODY_SIZE = 1024 * 1024 // 1 MB
+const _td = new TextDecoder()
 async function _parseBody(req) {
   const length = +(req.headers.get('content-length') ?? 0)
   if (length > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
@@ -44,7 +45,7 @@ async function _parseBody(req) {
   // Read actual bytes to enforce limit for chunked requests (no Content-Length)
   const buf = await req.arrayBuffer()
   if (buf.byteLength > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
-  const text = new TextDecoder().decode(buf)
+  const text = _td.decode(buf)
   if (ct.includes('application/json')) {
     try { return JSON.parse(text) } catch { throw Object.assign(new Error('Invalid JSON body'), { status: 400 }) }
   }

@@ -220,9 +220,10 @@ class HtmlEmitter {
       ...this._emitHead(title, description, seo, jsonLd),
       '</head>',
       '<body>',
-      // Skip link text can be overridden via page meta { skipLinkText: "..." }
+      // Skip link text: override via page meta { skipLinkText: "..." }, or built-in locale defaults
       `<a href="#main-content" class="arc-skip-link">${this.escape(
-        node.meta?.skipLinkText ? this.evalStaticExpr(node.meta.skipLinkText) : 'Skip to main content'
+        node.meta?.skipLinkText ? this.evalStaticExpr(node.meta.skipLinkText)
+          : ({ en: 'Skip to main content', fr: 'Aller au contenu principal', es: 'Ir al contenido principal', de: 'Zum Hauptinhalt springen', pt: 'Ir para o conteúdo principal', ja: 'メインコンテンツへスキップ', zh: '跳到主要内容', ar: 'تخطى إلى المحتوى الرئيسي' }[lang] ?? 'Skip to main content')
       )}</a>`,
       hasUserMain ? '' : `<main id="main-content">`,
       hasUserMain ? '' : `<h1 class="arc-sr-only">${this.escape(title)}</h1>`,
@@ -238,7 +239,7 @@ class HtmlEmitter {
       '<head>',
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
-      '<meta name="robots" content="index,follow">',
+      `<meta name="robots" content="${this.escape(seo?.robots ?? 'index,follow')}">`,
       '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'; object-src \'none\'; base-uri \'self\'; form-action \'self\';">',
       `<title>${this.escape(title)}</title>`,
       description ? `<meta name="description" content="${this.escape(description)}">` : '',
@@ -557,6 +558,10 @@ class HtmlEmitter {
       if (!attrs.decoding) parts.push('decoding="async"')
       if (attrs.alt === undefined) parts.push('alt=""')
     }
+    // <avatar> maps to <img>. A missing alt makes the identity image invisible to AT users.
+    if (node.tag === 'avatar' && attrs.alt === undefined) {
+      process.stderr.write(`[arc] a11y: <avatar> at line ${node.line ?? '?'} is missing alt= — add alt="Person's name" for identity images, or alt="" if purely decorative\n`)
+    }
 
     // <button> defaults to type="submit" inside a <form> per HTML spec.
     // Arc buttons typically use on:click handlers - submit-by-default is a
@@ -852,6 +857,9 @@ class HtmlEmitter {
     // Fallback summary text - accordion's own `summary=` attr overrides the default
     // English string so non-English pages can localize it.
     const rawSummary = node.attrs?.summary
+    if (!rawSummary && !hasSummary) {
+      process.stderr.write(`[arc] i18n: <accordion> at line ${node.line ?? '?'} is missing summary= — defaulting to English 'Details'. Add summary="..." to localize.\n`)
+    }
     const summaryText = rawSummary
       ? (rawSummary.type ? this.evalStaticExpr(rawSummary) : rawSummary)
       : 'Details'

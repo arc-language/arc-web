@@ -48,6 +48,7 @@ jobs:
           for ex in examples/*/; do
             node src/cli.js build "$ex"
             test -s "$ex/dist/index.html"
+            grep -q '<!DOCTYPE html>' "$ex/dist/index.html"
           done
 
       - name: Publish to npm with provenance

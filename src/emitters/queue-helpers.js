@@ -67,9 +67,10 @@ const Queue = {
   enqueue: (fn, ...args) => _queue.enqueue(fn, args),
   size: () => _queue._items.length,
   dead: () => [..._queue._dead],
-  drain: () => new Promise(resolve => {
+  drain: (timeoutMs = 30000) => new Promise((resolve, reject) => {
     if (_queue._items.length === 0 && !_queue._running && _queue._pendingRetries === 0) return resolve()
-    _queue._drainResolvers.push(resolve)
+    const timer = setTimeout(() => reject(new Error('[arc:queue] drain timed out after ' + timeoutMs + 'ms')), timeoutMs)
+    _queue._drainResolvers.push(() => { clearTimeout(timer); resolve() })
   }),
 }`.trim()
 }

@@ -6,6 +6,10 @@ const N = require('./ast')
 // Hoisted regexes used in parseStyleValue: avoids per-token allocation
 const _CSS_UNIT_RE = /^(px|em|rem|%|vh|vw|vmin|vmax|svh|dvh|ch|ex|fr|deg|rad|ms|s)$/
 const _CSS_NUM_RE = /^\d/
+const _RE_LOWERCASE_START = /^[a-z]/
+const _RE_UPPERCASE_START = /^[A-Z]/
+// Frozen map used in parseRouteDecl: avoids per-call object allocation
+const _ROUTE_METHOD_MAP = Object.freeze({ DEL: 'DELETE', PATCH: 'PATCH' })
 
 // Hoisted to avoid per-rule object allocation in parseStyleRule
 const _PSEUDO_SHORTHANDS = Object.freeze({ hover: ':hover', focus: ':focus-visible', active: ':active', disabled: ':disabled', checked: ':checked', placeholder: '::placeholder' })
@@ -631,7 +635,7 @@ class Parser {
         // Consume it only when the following token indicates more attrs (IDENT, EQ, COLON)
         // or end-of-attrs (NEWLINE, INDENT, DEDENT, EOF, STRING, LBRACE).
         // Never consume if followed by DEDENT/EOF: that would be a child element.
-        if (/^[a-z]/.test(t.value)) {
+        if (_RE_LOWERCASE_START.test(t.value)) {
           if (this._isBareAttrSafe(t.value)) {
             attrs[t.value] = true
             this.pos++
@@ -1476,7 +1480,7 @@ class Parser {
       return { type: 'VariantPattern', variant: 'None', name: null, line: t.line }
     }
     // Constructor patterns: Tag(val) - uppercase IDENT followed by LPAREN
-    if (t.type === T.IDENT && /^[A-Z]/.test(t.value) && this.tokens[this.pos + 1]?.type === T.LPAREN) {
+    if (t.type === T.IDENT && _RE_UPPERCASE_START.test(t.value) && this.tokens[this.pos + 1]?.type === T.LPAREN) {
       const tag = t.value; this.pos++
       this.eat(T.LPAREN)
       const name = this.eat(T.IDENT).value
@@ -2036,8 +2040,7 @@ class Parser {
     this.pos++
     const _rawMethod = (methodTok.value ?? methodTok.type).toUpperCase()
     // Normalize common shorthands to standard HTTP method names
-    const _METHOD_MAP = { DEL: 'DELETE', PATCH: 'PATCH' }
-    const method = _METHOD_MAP[_rawMethod] ?? _rawMethod
+    const method = _ROUTE_METHOD_MAP[_rawMethod] ?? _rawMethod
 
     const pathTok = this.eat(T.STRING)
     const routePath = pathTok.value

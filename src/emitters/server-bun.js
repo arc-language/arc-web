@@ -221,6 +221,8 @@ ${tableInits}
 ${dbEntries}
   }
 })().catch(e => {
+  // Set _schemaInitErr BEFORE process.exit so the guard in the fetch handler works
+  // if exit is deferred (e.g., in test environments that mock process.exit).
   _schemaInitErr = e
   console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'schema_init_failed', msg: e?.message ?? String(e), cause: e?.cause?.message }))
   process.exit(1)
@@ -307,13 +309,17 @@ async function ${name}(req, params) {
     const healthBody = hasDb
       ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
       : `return _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a', ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
+    const dbLabel = this.isPg ? 'postgres' : (hasDb ? 'sqlite' : 'none')
     return `
+// Hoisted: avoids per-request RegExp allocation at high request rates
+const _TRACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/
+
 // Start Bun server
 const _server = Bun.serve({
   port: ${port},
   async fetch(req) {
     const _clientId = req.headers.get('x-request-id') ?? ''
-    req._traceId = /^[a-zA-Z0-9_-]{1,64}$/.test(_clientId) ? _clientId : crypto.randomUUID().slice(0, 8)
+    req._traceId = _TRACE_ID_RE.test(_clientId) ? _clientId : crypto.randomUUID().slice(0, 8)
     const url = new URL(req.url)
     if (url.pathname === '/health') {
       try {
@@ -326,7 +332,7 @@ const _server = Bun.serve({
     return _dispatch(req, url)
   }
 })
-console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: 'arc: server started', port: _server.port }))
+console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: 'arc: server started', port: _server.port, db: '${dbLabel}' }))
 `.trim()
   }
 }

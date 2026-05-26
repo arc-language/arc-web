@@ -145,7 +145,8 @@ const jwt = {
     if (!await _hmacVerify(\`\${headerB64}.\${payloadB64}\`, sig, secret)) return null
     try {
       const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')))
-      if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null
+      // Require exp — tokens without an expiry claim are rejected (permanent tokens are a security risk)
+      if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null
       return payload
     } catch { return null }
   },
@@ -239,6 +240,8 @@ const oauth = {
         const _idParts = id_token.split('.')
         const _idPayload = JSON.parse(atob(_idParts[1].replace(/-/g, '+').replace(/_/g, '/')))
         if (_idPayload.aud !== process.env.GOOGLE_CLIENT_ID) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_aud_mismatch', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
+        // Validate issuer: only accept tokens from Google's OIDC endpoint
+        if (_idPayload.iss !== 'https://accounts.google.com' && _idPayload.iss !== 'accounts.google.com') { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_iss_mismatch', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
       } catch { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_id_token_decode_failed', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
       const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: \`Bearer \${access_token}\` },
