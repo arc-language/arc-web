@@ -395,7 +395,11 @@ class HtmlEmitter {
 
     // Append a visually-hidden "opens in new tab" notice for screen readers
     // on auto-injected target="_blank" links (matches the auto-injection above).
-    if (htmlTag === 'a' && attrStr.includes('target="_blank"') && !attrs?.['aria-label'] && !attrs?.['aria-labelledby']) {
+    // Check that aria-label/aria-labelledby is a real resolved string, not an AST
+    // node object — a reactive binding like aria-label={someState} is truthy as an
+    // object but would stringify to "[object Object]" and is not a valid label.
+    const _hasRealLabel = (v) => v && (typeof v === 'string' || (typeof v === 'object' && v.type && this.isStaticExpr(v)))
+    if (htmlTag === 'a' && attrStr.includes('target="_blank"') && !_hasRealLabel(attrs?.['aria-label']) && !_hasRealLabel(attrs?.['aria-labelledby'])) {
       inner += `<span class="arc-sr-only"> (opens in new tab)</span>`
     }
 
