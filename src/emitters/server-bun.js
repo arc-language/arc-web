@@ -318,7 +318,7 @@ const _server = Bun.serve({
     if (url.pathname === '/health') {
       try {
     ${healthBody}
-      } catch (_he) { return _json({ status: 'error', msg: _he?.message }, 503, { 'Cache-Control': 'no-store, no-cache' }) }
+      } catch (_he) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'health_check_error', msg: _he?.message ?? String(_he) })); return _json({ status: 'error' }, 503, { 'Cache-Control': 'no-store, no-cache' }) }
     }
     ${this.isPg && schemas && schemas.length > 0 ? "if (_schemaInitErr) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' })\n    if (db === null) await _schemaInitP\n    if (db === null) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' })" : ''}
     const _rl = _checkRateLimit(req)

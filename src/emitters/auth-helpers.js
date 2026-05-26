@@ -231,14 +231,15 @@ const oauth = {
       let _gToken; try { _gToken = await tokenRes.json() } catch { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_token_parse_error', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
       const { access_token, id_token, error: _gErr } = _gToken
       if (_gErr || !access_token) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_no_token', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
+      // Require id_token: Google's OIDC flow always returns one; absence indicates an unexpected
+      // response (non-OIDC scope, revoked app, or token swap attack). Fail closed.
+      if (!id_token) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_no_id_token', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
       // Validate id_token aud claim: reject tokens issued for a different client_id
-      if (id_token) {
-        try {
-          const _idParts = id_token.split('.')
-          const _idPayload = JSON.parse(atob(_idParts[1].replace(/-/g, '+').replace(/_/g, '/')))
-          if (_idPayload.aud !== process.env.GOOGLE_CLIENT_ID) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_aud_mismatch', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
-        } catch { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_id_token_decode_failed', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
-      }
+      try {
+        const _idParts = id_token.split('.')
+        const _idPayload = JSON.parse(atob(_idParts[1].replace(/-/g, '+').replace(/_/g, '/')))
+        if (_idPayload.aud !== process.env.GOOGLE_CLIENT_ID) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_aud_mismatch', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
+      } catch { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_id_token_decode_failed', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
       const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: \`Bearer \${access_token}\` },
         signal: AbortSignal.timeout(10000),

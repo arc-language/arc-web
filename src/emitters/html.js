@@ -535,8 +535,11 @@ class HtmlEmitter {
   _safeUri(key, value) {
     if (key === 'href' || key === 'src' || key === 'action' || key === 'formaction') {
       let normalized = String(value)
-      // Decode percent-encoded characters (e.g. javascript%3A) before scheme check
-      try { normalized = decodeURIComponent(normalized) } catch {}
+      // Decode percent-encoding iteratively until stable — prevents double-encoded bypasses
+      // like javascript%253A → javascript%3A → javascript: slipping through a single-pass check.
+      for (let _i = 0; _i < 10; _i++) {
+        try { const _d = decodeURIComponent(normalized); if (_d === normalized) break; normalized = _d } catch { break }
+      }
       // Strip all whitespace (including Unicode) and control characters before scheme comparison
       normalized = normalized.replace(/[\u0000-\u001F\u007F-\u009F\u00AD\uFEFF\s]/g, '').toLowerCase()
       if (normalized.startsWith('javascript:') || normalized.startsWith('data:') || normalized.startsWith('vbscript:') || normalized.startsWith('blob:')) {
