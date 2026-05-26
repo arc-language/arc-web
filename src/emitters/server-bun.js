@@ -121,9 +121,15 @@ function _checkRateLimit(req) {
   _sqliteSetup() {
     return `
 const { Database } = require('bun:sqlite')
-const _db = new Database(process.env.DATABASE_URL ?? 'app.db', { create: true })
-_db.run('PRAGMA journal_mode = WAL')
-_db.run('PRAGMA synchronous = normal')
+let _db
+try {
+  _db = new Database(process.env.DATABASE_URL ?? 'app.db', { create: true })
+  _db.run('PRAGMA journal_mode = WAL')
+  _db.run('PRAGMA synchronous = normal')
+} catch (_dbInitErr) {
+  console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'db_init_failed', msg: _dbInitErr?.message ?? String(_dbInitErr) }))
+  process.exit(1)
+}
 `
   }
 
@@ -293,11 +299,10 @@ async function ${name}(req, params) {
   emitBunServe(routes, schemas) {
     const port = '+(process.env.PORT ?? 3000)'
     const hasDb = schemas && schemas.length > 0
-    const _timeout2s = `new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))`
     const dbProbe = hasDb
       ? (this.isPg
-        ? `let _dbOk=false;try{await Promise.race([_pool.query('SELECT 1'),${_timeout2s}]);_dbOk=true}catch{}`
-        : `let _dbOk=false;try{await Promise.race([new Promise((res,rej)=>{try{_db.query('SELECT 1').get();res()}catch(e){rej(e)}}),${_timeout2s}]);_dbOk=true}catch{}`)
+        ? `let _dbOk=false;try{await _pool.query('SELECT 1');_dbOk=true}catch{}`
+        : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch{}`)
       : ''
     const healthBody = hasDb
       ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
@@ -315,7 +320,7 @@ const _server = Bun.serve({
     ${healthBody}
       } catch (_he) { return _json({ status: 'error', msg: _he?.message }, 503, { 'Cache-Control': 'no-store, no-cache' }) }
     }
-    ${this.isPg && schemas && schemas.length > 0 ? "if (_schemaInitErr) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' })\n    if (db === null) await _schemaInitP" : ''}
+    ${this.isPg && schemas && schemas.length > 0 ? "if (_schemaInitErr) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' })\n    if (db === null) await _schemaInitP\n    if (db === null) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' })" : ''}
     const _rl = _checkRateLimit(req)
     if (_rl) return _rl
     return _dispatch(req, url)

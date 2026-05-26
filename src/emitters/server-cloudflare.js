@@ -95,7 +95,9 @@ ${SHARED_RESPONSE_HELPERS}
 const _rlMap = new Map()
 function _checkRateLimit(req) {
   if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'DELETE' && req.method !== 'PATCH') return null
-  const ip = req.headers.get('cf-connecting-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown'
+  // cf-connecting-ip is set by CF infrastructure and is not forgeable by clients.
+  // XFF is client-controlled and is NOT trusted here — use 'unknown' if cf-connecting-ip absent.
+  const ip = req.headers.get('cf-connecting-ip') ?? 'unknown'
   const now = Date.now()
   const window = 60000
   if (_rlMap.size > 10000) {
@@ -277,7 +279,7 @@ function _makeEmail(env) {
       : 'const _jobRegistry = {}'
 
     const queueHandler = jobs.length > 0 ? `
-  async queue(batch, env) {
+  async queue(batch, env, ctx) {
     for (const msg of batch.messages) {
       const { job, args: _rawArgs } = msg.body
       const args = Array.isArray(_rawArgs) ? _rawArgs : []

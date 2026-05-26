@@ -177,15 +177,16 @@ const oauth = {
         }),
         signal: AbortSignal.timeout(10000),
       })
-      if (!tokenRes.ok) { console.error('[arc:oauth] GitHub token error: HTTP', tokenRes.status); return { ok: false, error: 'auth_failed' } }
-      const { access_token, error } = await tokenRes.json()
-      if (error || !access_token) { console.error('[arc:oauth] GitHub: no access_token:', error); return { ok: false, error: 'auth_failed' } }
+      if (!tokenRes.ok) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_token_error', provider: 'github', status: tokenRes.status })); return { ok: false, error: 'auth_failed' } }
+      let _ghToken; try { _ghToken = await tokenRes.json() } catch { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_token_parse_error', provider: 'github' })); return { ok: false, error: 'auth_failed' } }
+      const { access_token, error: _ghErr } = _ghToken
+      if (_ghErr || !access_token) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_no_token', provider: 'github' })); return { ok: false, error: 'auth_failed' } }
       const userRes = await fetch('https://api.github.com/user', {
         headers: { Authorization: \`Bearer \${access_token}\`, 'User-Agent': 'arc-server' },
         signal: AbortSignal.timeout(10000),
       })
-      if (!userRes.ok) { console.error('[arc:oauth] GitHub user fetch failed:', userRes.status); return { ok: false, error: 'auth_failed' } }
-      const user = await userRes.json()
+      if (!userRes.ok) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_user_error', provider: 'github', status: userRes.status })); return { ok: false, error: 'auth_failed' } }
+      let user; try { user = await userRes.json() } catch { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_user_parse_error', provider: 'github' })); return { ok: false, error: 'auth_failed' } }
       // accessToken not included: callers should not store provider tokens long-term.
       // Use the token within this callback if needed, then discard it.
       return { ok: true, user }
@@ -226,23 +227,24 @@ const oauth = {
         }),
         signal: AbortSignal.timeout(10000),
       })
-      if (!tokenRes.ok) { console.error('[arc:oauth] Google token error: HTTP', tokenRes.status); return { ok: false, error: 'auth_failed' } }
-      const { access_token, id_token, error } = await tokenRes.json()
-      if (error || !access_token) { console.error('[arc:oauth] Google: no access_token:', error); return { ok: false, error: 'auth_failed' } }
+      if (!tokenRes.ok) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_token_error', provider: 'google', status: tokenRes.status })); return { ok: false, error: 'auth_failed' } }
+      let _gToken; try { _gToken = await tokenRes.json() } catch { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_token_parse_error', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
+      const { access_token, id_token, error: _gErr } = _gToken
+      if (_gErr || !access_token) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_no_token', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
       // Validate id_token aud claim: reject tokens issued for a different client_id
       if (id_token) {
         try {
           const _idParts = id_token.split('.')
           const _idPayload = JSON.parse(atob(_idParts[1].replace(/-/g, '+').replace(/_/g, '/')))
-          if (_idPayload.aud !== process.env.GOOGLE_CLIENT_ID) { console.error('[arc:oauth] Google id_token aud mismatch'); return { ok: false, error: 'auth_failed' } }
-        } catch { console.error('[arc:oauth] Google id_token decode failed'); return { ok: false, error: 'auth_failed' } }
+          if (_idPayload.aud !== process.env.GOOGLE_CLIENT_ID) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_aud_mismatch', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
+        } catch { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_id_token_decode_failed', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
       }
       const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: \`Bearer \${access_token}\` },
         signal: AbortSignal.timeout(10000),
       })
-      if (!userRes.ok) { console.error('[arc:oauth] Google userinfo failed:', userRes.status); return { ok: false, error: 'auth_failed' } }
-      const user = await userRes.json()
+      if (!userRes.ok) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_user_error', provider: 'google', status: userRes.status })); return { ok: false, error: 'auth_failed' } }
+      let user; try { user = await userRes.json() } catch { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'oauth_user_parse_error', provider: 'google' })); return { ok: false, error: 'auth_failed' } }
       // accessToken not included: callers should not store provider tokens long-term.
       return { ok: true, user }
     },

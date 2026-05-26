@@ -35,6 +35,10 @@ function _safeInlineId(val) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+function _hasRealLabel(v, emitter) {
+  return v && (typeof v === 'string' || (typeof v === 'object' && v.type && emitter.isStaticExpr(v)))
+}
+
 // Maps Arc element names to HTML element names
 const ELEMENT_MAP = {
   // Arc layout primitives → semantic/div HTML
@@ -395,11 +399,9 @@ class HtmlEmitter {
 
     // Append a visually-hidden "opens in new tab" notice for screen readers
     // on auto-injected target="_blank" links (matches the auto-injection above).
-    // Check that aria-label/aria-labelledby is a real resolved string, not an AST
-    // node object — a reactive binding like aria-label={someState} is truthy as an
-    // object but would stringify to "[object Object]" and is not a valid label.
-    const _hasRealLabel = (v) => v && (typeof v === 'string' || (typeof v === 'object' && v.type && this.isStaticExpr(v)))
-    if (htmlTag === 'a' && attrStr.includes('target="_blank"') && !_hasRealLabel(attrs?.['aria-label']) && !_hasRealLabel(attrs?.['aria-labelledby'])) {
+    // Check staticAttrs (not raw attrs): bind:aria-label entries stay in attrs but are
+    // filtered out of staticAttrs, so a reactive label doesn't suppress this notice.
+    if (htmlTag === 'a' && attrStr.includes('target="_blank"') && !_hasRealLabel(staticAttrs['aria-label'], this) && !_hasRealLabel(staticAttrs['aria-labelledby'], this)) {
       inner += `<span class="arc-sr-only"> (opens in new tab)</span>`
     }
 
@@ -537,7 +539,7 @@ class HtmlEmitter {
       try { normalized = decodeURIComponent(normalized) } catch {}
       // Strip all whitespace (including Unicode) and control characters before scheme comparison
       normalized = normalized.replace(/[\u0000-\u001F\u007F-\u009F\u00AD\uFEFF\s]/g, '').toLowerCase()
-      if (normalized.startsWith('javascript:') || normalized.startsWith('data:') || normalized.startsWith('vbscript:')) {
+      if (normalized.startsWith('javascript:') || normalized.startsWith('data:') || normalized.startsWith('vbscript:') || normalized.startsWith('blob:')) {
         return null
       }
     }
