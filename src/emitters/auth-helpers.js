@@ -17,7 +17,7 @@ function emitAuthPreamble(opts = {}) {
 const _AUTH_SECRET = process.env.SESSION_SECRET ?? (crypto.randomUUID() + crypto.randomUUID())
 if (!process.env.SESSION_SECRET) {
   if (process.env.NODE_ENV === 'production') throw new Error('[arc:auth] SESSION_SECRET must be set in production — set SESSION_SECRET env var')
-  console.warn('[arc:auth] WARNING: SESSION_SECRET is not set. A random key is being used — sessions will not persist across restarts. Set SESSION_SECRET env var before deploying to production.')
+  console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:auth] SESSION_SECRET is not set — sessions will not persist across restarts. Set SESSION_SECRET env var before deploying to production.' }))
 }
 const _SESSION_COOKIE = '${cookieName}'
 const _SESSION_MAX_AGE = ${sessionMaxAge}
@@ -28,8 +28,9 @@ const _hmacKeyCache = new Map()
 function _getHmacKey(secret) {
   if (_hmacKeyCache.has(secret)) return _hmacKeyCache.get(secret)
   // Cache the Promise, not the resolved key — concurrent calls with the same secret
-  // await the same derivation instead of each starting their own crypto.subtle.importKey
-  if (_hmacKeyCache.size > 64) _hmacKeyCache.clear()
+  // await the same derivation instead of each starting their own crypto.subtle.importKey.
+  // Evict the oldest entry (LRU) rather than clearing all so active keys stay warm.
+  if (_hmacKeyCache.size >= 64) _hmacKeyCache.delete(_hmacKeyCache.keys().next().value)
   const enc = new TextEncoder()
   const p = crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
   _hmacKeyCache.set(secret, p)

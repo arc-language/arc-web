@@ -200,7 +200,7 @@ ${blocks.join('\n')}
 // Job: ${job.name}
 async function _job_${job.name}(${params}${params ? ', ' : ''}env) {
   ${hasDb ? 'const db = _getDb(env.DB)' : ''}
-  const Queue = { enqueue: (job, ...args) => env.QUEUE?.send({ job, args }) }
+  const Queue = { enqueue: (job, ...args) => { if (!env.QUEUE) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:queue] env.QUEUE binding not configured — job dropped', job })); return Promise.resolve({ ok: false, error: 'queue_not_configured' }) } return env.QUEUE.send({ job, args }) } }
   const email = ${this._emailHelper()}
   ${body}
 }`.trim()
@@ -234,7 +234,7 @@ async function ${name}(req, params, env) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
     if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
     if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e) }))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))
     return _json({ error: 'Internal server error' }, 500)
   }
 }`.trim()
@@ -247,14 +247,14 @@ function _makeEmail(env) {
   return {
     send: async (opts) => {
       const apiKey = env.RESEND_API_KEY
-      if (!apiKey) { console.warn('[arc:email] Set RESEND_API_KEY binding'); return }
+      if (!apiKey) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:email] RESEND_API_KEY binding not set — email not sent' })); return }
       const _r = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: \`Bearer \${apiKey}\`, 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(15000),
         body: JSON.stringify({ from: opts.from ?? 'noreply@example.com', to: Array.isArray(opts.to) ? opts.to : [opts.to], subject: opts.subject, text: opts.text, html: opts.html }),
       })
-      if (!_r.ok) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: \`[arc:email] Resend error: HTTP \${_r.status}\` })); return { ok: false, error: 'HTTP ' + _r.status } }
+      if (!_r.ok) { const _errBody = await _r.text().catch(() => ''); console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: \`[arc:email] Resend error: HTTP \${_r.status}\${_errBody ? ' — ' + _errBody.slice(0, 120) : ''}\` })); return { ok: false, error: 'HTTP ' + _r.status } }
       const _body = await _r.json().catch(() => ({}))
       return { ok: true, id: _body?.id }
     }
@@ -309,7 +309,7 @@ export default {
       let _dbOk = false
       if (env.DB) { try { await Promise.race([env.DB.prepare('SELECT 1').first(), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]); _dbOk = true } catch {} }
       else { _dbOk = true }
-      return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a', queue: env.QUEUE ? 'configured' : 'n/a', ts: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
+      return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a', queue: env.QUEUE ? 'configured' : 'n/a', ts: new Date().toISOString() }), { status: _dbOk ? 200 : 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
     }
     const _rl = _checkRateLimit(req)
     if (_rl) return _rl

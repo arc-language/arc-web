@@ -255,7 +255,7 @@ class HtmlEmitter {
       seo.image ? `<meta name="twitter:image" content="${this.escape(seo.image)}">` : '',
       seo.twitterSite ? `<meta name="twitter:site" content="${this.escape(seo.twitterSite)}">` : '',
       // JSON-LD structured data
-      jsonLd ? `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, '\\u003c')}</script>` : '',
+      jsonLd ? `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/&/g, '\\u0026').replace(/</g, '\\u003c').replace(/>/g, '\\u003e')}</script>` : '',
       '<link rel="stylesheet" href="styles.css">',
     ]
   }

@@ -271,7 +271,7 @@ async function ${name}(req, params) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
     if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
     if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e) }))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))
     return _json({ error: 'Internal server error' }, 500)
   }
 }`.trim()
@@ -289,8 +289,8 @@ async function ${name}(req, params) {
         : `let _dbOk=false;try{await Promise.race([new Promise((res,rej)=>{try{_db.query('SELECT 1').get();res()}catch(e){rej(e)}}),${_timeout2s}]);_dbOk=true}catch{}`)
       : ''
     const healthBody = hasDb
-      ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
-      : `return _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a' }, 200, { 'Cache-Control': 'no-store, no-cache' })`
+      ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
+      : `return _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a', ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
     return `
 // Start Bun server
 const _server = Bun.serve({

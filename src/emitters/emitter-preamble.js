@@ -35,8 +35,6 @@ async function _parseBody(req) {
   if (length > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
   const ct = req.headers.get('content-type') ?? ''
   if (ct.includes('multipart/form-data')) {
-    // Content-Length check applies to multipart too — avoids reading giant uploads into memory
-    if (length > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
     const fd = await req.formData()
     return Object.fromEntries(fd.entries())
   }
