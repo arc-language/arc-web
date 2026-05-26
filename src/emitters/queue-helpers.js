@@ -94,7 +94,7 @@ const email = {
       })
       let res = null
       for (let _attempt = 0; _attempt <= 1; _attempt++) {
-        if (_attempt > 0) await new Promise(r => setTimeout(r, 1000))
+        if (_attempt > 0) await new Promise(r => setTimeout(r, 1000 + Math.random() * 500))
         try {
           res = await fetch('https://api.resend.com/emails', {
             method: 'POST',
@@ -112,7 +112,7 @@ const email = {
         const _errBody = await res.text().catch(() => '')
         throw new Error(\`[arc:email] Resend error: HTTP \${res.status}\${_errBody ? ' — ' + _errBody.slice(0, 120) : ''}\`)
       }
-      return res.json()
+      return res ? res.json() : null
     }
     // SMTP fallback via nodemailer
     try {

@@ -239,7 +239,7 @@ async function ${name}(req, params, env) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
     if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
     if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, method: '${route.method}', path: '${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))
     return _json({ error: 'Internal server error' }, 500)
   }
 }`.trim()
@@ -298,8 +298,8 @@ function _makeEmail(env) {
         }
         try { msg.ack() } catch (_ackErr) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'ack_failed', msg: _ackErr?.message ?? String(_ackErr) })) }
       } else {
-        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'unknown_job', msg: 'no handler registered — message discarded' }))
-        msg.ack()
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'unknown_job', msg: 'no handler registered — retrying so message is not silently lost' }))
+        try { msg.retry() } catch (_e) { msg.ack() }
       }
     }
   },` : ''

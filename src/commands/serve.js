@@ -49,7 +49,7 @@ async function serve(projectDir, flags, buildServer) {
     : absDir
 
   let child = null
-  let _rebuildChain = Promise.resolve()
+  let _rebuilding = false
 
   function startChild() {
     if (child) {
@@ -66,19 +66,20 @@ async function serve(projectDir, flags, buildServer) {
     })
   }
 
-  function rebuild() {
-    _rebuildChain = _rebuildChain.then(async () => {
-      try {
-        await buildServer(projectDir, {}, flags)
-        console.log(`${CYAN}arc: reloaded${RESET}`)
-        startChild()
-      } catch (e) {
-        console.error(`arc: rebuild failed: ${e?.stack ?? e?.message ?? String(e)}`)
-      }
-      // Reset to a fresh resolved promise so settled chain nodes can be GC'd.
-      _rebuildChain = Promise.resolve()
-    })
-    return _rebuildChain
+  let _pendingRebuild = false
+  async function rebuild() {
+    if (_rebuilding) { _pendingRebuild = true; return }
+    _rebuilding = true
+    try {
+      await buildServer(projectDir, {}, flags)
+      console.log(`${CYAN}arc: reloaded${RESET}`)
+      startChild()
+    } catch (e) {
+      console.error(`arc: rebuild failed: ${e?.stack ?? e?.message ?? String(e)}`)
+    } finally {
+      _rebuilding = false
+    }
+    if (_pendingRebuild) { _pendingRebuild = false; rebuild().catch(() => {}) }
   }
 
   console.log(`arc: starting server with ${runtime}...`)
@@ -89,7 +90,7 @@ async function serve(projectDir, flags, buildServer) {
     clearTimeout(debounceTimer)
     debounceTimer = setTimeout(() => {
       console.log(`${DIM}arc: ${filename} changed — rebuilding...${RESET}`)
-      rebuild().catch(e => console.error(`arc: rebuild error: ${e.message}`))
+      rebuild().catch(e => console.error(`arc: rebuild error: ${e?.message ?? String(e)}`))
     }, 150)
   })
   console.log(`${DIM}arc: watching ${path.relative(process.cwd(), serverDir)}/**/*.arc${RESET}`)

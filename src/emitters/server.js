@@ -117,6 +117,8 @@ class ServerEmitter {
     return [
       `// @server fn ${fn.name}`,
       `async function _handler_${fn.name}(req) {`,
+      `  const _clientId = req.headers.get('x-request-id') ?? ''`,
+      `  const _traceId = /^[a-zA-Z0-9_-]{1,64}$/.test(_clientId) ? _clientId : Math.random().toString(36).slice(2, 10)`,
       `  try {`,
       `    // Parse ADP or JSON request body`,
       `    const _body = req.method === 'POST' ? await _parseBody(req) : {}`,
@@ -130,7 +132,7 @@ class ServerEmitter {
       `      headers: { 'Content-Type': 'application/x-adp', 'Content-Length': String(_encoded.length) }`,
       `    })`,
       `  } catch (_e) {`,
-      `    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', fn: '${fn.name}', msg: _e?.message ?? String(_e) }))`,
+      `    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, fn: '${fn.name}', msg: _e?.message ?? String(_e) }))`,
       `    return new Response(JSON.stringify({ error: 'Internal server error' }), {`,
       `      status: 500, headers: { 'Content-Type': 'application/json' }`,
       `    })`,

@@ -106,7 +106,12 @@ setInterval(() => _rlMap.clear(), 60 * 60 * 1000).unref()
 function _checkRateLimit(req) {
   if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'DELETE' && req.method !== 'PATCH') return null
   const xff = req.headers.get('x-forwarded-for')
-  const ip = (_TRUSTED_PROXIES && xff) ? xff.split(',')[0].trim() : (req.headers.get('x-real-ip') ?? 'unknown')
+  // Use the rightmost non-trusted IP from XFF: the leftmost entry is client-controlled and
+  // can be spoofed; the correct client IP when behind trusted proxies is the rightmost entry
+  // that is NOT in the trusted proxy set.
+  const ip = (_TRUSTED_PROXIES && xff)
+    ? (xff.split(',').map(s => s.trim()).reverse().find(i => !_TRUSTED_PROXIES.has(i)) ?? xff.split(',')[0].trim())
+    : (req.headers.get('x-real-ip') ?? 'unknown')
   const now = Date.now()
   const window = 60000
   let entry = _rlMap.get(ip)
@@ -290,7 +295,7 @@ async function ${name}(req, params) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
     if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
     if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, route: '${route.method} ${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, method: '${route.method}', path: '${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))
     return _json({ error: 'Internal server error' }, 500)
   }
 }`.trim()

@@ -136,8 +136,8 @@ const server = http.createServer(async (req, res) => {
   let urlPath = (req.url || '/').split('?')[0]
   if (urlPath === '' || urlPath === '/') urlPath = '/'
   if (urlPath === '/_arc/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }))
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' })
+    res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }))
     return
   }
 ${edgeRoutingBlock}

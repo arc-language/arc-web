@@ -23,6 +23,17 @@ function _hasH1(nodes, depth = 0) {
 
 const _INTERACTIVE_TAGS = new Set(['button', 'a', 'input', 'select', 'textarea', 'summary'])
 
+// Locale maps hoisted to module scope — constructed once, not per-element-emit
+const _LOCALE_NEW_TAB = { en: '(opens in new tab)', fr: '(ouvre dans un nouvel onglet)', es: '(se abre en nueva pestaña)', de: '(öffnet in neuem Tab)', pt: '(abre em nova aba)', ja: '(新しいタブで開く)', zh: '（在新标签页中打开）', ar: '(يفتح في علامة تبويب جديدة)' }
+const _LOCALE_CLOSE_DIALOG = { en: 'Close dialog', fr: 'Fermer la boîte de dialogue', es: 'Cerrar diálogo', de: 'Dialog schließen', pt: 'Fechar diálogo', ja: 'ダイアログを閉じる', zh: '关闭对话框', ar: 'إغلاق مربع الحوار' }
+const _LOCALE_SKIP_LINK = { en: 'Skip to main content', fr: 'Aller au contenu principal', es: 'Ir al contenido principal', de: 'Zum Hauptinhalt springen', pt: 'Ir para o conteúdo principal', ja: 'メインコンテンツへスキップ', zh: '跳到主要内容', ar: 'تخطى إلى المحتوى الرئيسي' }
+const _LOCALE_DETAILS = { en: 'Details', fr: 'Détails', es: 'Detalles', de: 'Details', pt: 'Detalhes', ja: '詳細', zh: '详情', ar: 'تفاصيل' }
+
+// BCP 47-aware locale lookup: tries full tag (zh-TW) then primary subtag (zh) then 'en'
+function _localize(map, lang) {
+  return map[lang] ?? map[(lang ?? 'en').split('-')[0]] ?? map['en']
+}
+
 const _ESC_RE = /[&<>"']/g
 const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }
 
@@ -179,6 +190,7 @@ class HtmlEmitter {
       twitterSite: evalMeta('twitterSite'),
       ogType: evalMeta('ogType') || 'website',
       siteName: evalMeta('siteName'),
+      robots: evalMeta('robots'),
     }
 
     // Don't double-wrap if the page already has a top-level <main>
@@ -225,9 +237,9 @@ class HtmlEmitter {
       // Skip link text: override via page meta { skipLinkText: "..." }, or built-in locale defaults
       `<a href="#main-content" class="arc-skip-link">${this.escape(
         node.meta?.skipLinkText ? this.evalStaticExpr(node.meta.skipLinkText)
-          : ({ en: 'Skip to main content', fr: 'Aller au contenu principal', es: 'Ir al contenido principal', de: 'Zum Hauptinhalt springen', pt: 'Ir para o conteúdo principal', ja: 'メインコンテンツへスキップ', zh: '跳到主要内容', ar: 'تخطى إلى المحتوى الرئيسي' }[lang] ?? 'Skip to main content')
+          : _localize(_LOCALE_SKIP_LINK, lang)
       )}</a>`,
-      hasUserMain ? '' : `<main id="main-content">`,
+      hasUserMain ? '' : `<main id="main-content" aria-label="${this.escape(title)}">`,
       hasUserMain ? '' : `<h1 class="arc-sr-only">${this.escape(title)}</h1>`,
       bodyContent,
       hasUserMain ? '' : '</main>',
@@ -405,7 +417,7 @@ class HtmlEmitter {
     // Check staticAttrs (not raw attrs): bind:aria-label entries stay in attrs but are
     // filtered out of staticAttrs, so a reactive label doesn't suppress this notice.
     if (htmlTag === 'a' && staticAttrs.target === '_blank' && !_hasRealLabel(staticAttrs['aria-label'], this) && !_hasRealLabel(staticAttrs['aria-labelledby'], this)) {
-      inner += `<span class="arc-sr-only"> ${{ en: '(opens in new tab)', fr: '(ouvre dans un nouvel onglet)', es: '(se abre en nueva pestaña)', de: '(öffnet in neuem Tab)', pt: '(abre em nova aba)', ja: '(新しいタブで開く)', zh: '（在新标签页中打开）', ar: '(يفتح في علامة تبويب جديدة)' }[this._currentLang ?? 'en'] ?? '(opens in new tab)'}</span>`
+      inner += `<span class="arc-sr-only"> ${_localize(_LOCALE_NEW_TAB, this._currentLang)}</span>`
     }
 
     return `<${htmlTag}${attrStr}>${inner}</${htmlTag}>`
@@ -494,7 +506,9 @@ class HtmlEmitter {
       const safeId = _safeInlineId(value)
       // safeId is JSON.stringify(id) with " → &quot; (via _safeInlineId), so onclick is XSS-safe.
       // &quot; inside onclick="..." is decoded by the browser before JS executes.
-      const _action = `var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)_f.focus();}`
+      // requestAnimationFrame defers focus until after the dialog is painted — avoids silent focus
+      // failure in Safari where the dialog display transition isn't complete at showModal() time.
+      const _action = `var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)requestAnimationFrame(function(){_f.focus();});}`
       parts.push(`onclick="${_action}"`)
       // Keyboard accessibility: non-interactive elements need tabindex + role so keyboard users can trigger them
       const tag = node?.tag ?? ''
@@ -518,7 +532,7 @@ class HtmlEmitter {
       if (!_INTERACTIVE_TAGS.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
-        parts.push(`aria-label="${this.escape({ en: 'Close dialog', fr: 'Fermer la boîte de dialogue', es: 'Cerrar diálogo', de: 'Dialog schließen', pt: 'Fechar diálogo', ja: 'ダイアログを閉じる', zh: '关闭对话框', ar: 'إغلاق مربع الحوار' }[this._currentLang ?? 'en'] ?? 'Close dialog')}"`)
+        parts.push(`aria-label="${this.escape(_localize(_LOCALE_CLOSE_DIALOG, this._currentLang))}"`)
         parts.push(`onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${_action}}"`)
       }
       return true
@@ -851,7 +865,7 @@ class HtmlEmitter {
     return [
       `<span class="arc-tooltip-anchor_${this.componentHash}" aria-describedby="${id}" tabindex="0">`,
       `  ${this.emitChildren(node.children)}`,
-      `  <span role="tooltip" id="${id}" popover="hint">${this.escape(text)}</span>`,
+      `  <span role="tooltip" id="${id}" hidden>${this.escape(text)}</span>`,
       `</span>`,
     ].join('\n')
   }
@@ -866,7 +880,7 @@ class HtmlEmitter {
     }
     const summaryText = rawSummary
       ? (rawSummary.type ? this.evalStaticExpr(rawSummary) : rawSummary)
-      : ({ en: 'Details', fr: 'Détails', es: 'Detalles', de: 'Details', pt: 'Detalhes', ja: '詳細', zh: '详情', ar: 'تفاصيل' }[this._currentLang ?? 'en'] ?? 'Details')
+      : _localize(_LOCALE_DETAILS, this._currentLang)
     const summaryFallback = hasSummary ? '' : `<summary>${this.escape(String(summaryText))}</summary>\n`
     return `<details class="arc-accordion_${this.componentHash}">\n${summaryFallback}${this.emitChildren(node.children)}\n</details>`
   }
@@ -881,7 +895,7 @@ class HtmlEmitter {
     return [
       `<span class="arc-tooltip-anchor_${this.componentHash}" aria-describedby="${id}" tabindex="0">`,
       `  ${inner}`,
-      `  <span role="tooltip" id="${id}" popover="hint">${this.escape(tooltipText)}</span>`,
+      `  <span role="tooltip" id="${id}" hidden>${this.escape(tooltipText)}</span>`,
       `</span>`,
     ].join('\n')
   }

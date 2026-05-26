@@ -36,9 +36,9 @@ async function _parseBody(req) {
   if (length > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
   const ct = req.headers.get('content-type') ?? ''
   if (ct.includes('multipart/form-data')) {
-    // Note: Content-Length check already applied above (line 35). Chunked multipart
-    // (no Content-Length) bypasses both checks — req.formData() has no built-in size
-    // limit. A full fix requires a streaming multipart parser (out of scope here).
+    // Reject chunked multipart (no Content-Length) — req.formData() has no built-in
+    // size limit, so an attacker could stream an unbounded body to exhaust memory.
+    if (!req.headers.get('content-length')) throw Object.assign(new Error('Chunked multipart not supported — send Content-Length'), { status: 413 })
     const fd = await req.formData()
     return Object.fromEntries(fd.entries())
   }

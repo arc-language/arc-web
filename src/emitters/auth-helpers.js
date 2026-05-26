@@ -169,7 +169,8 @@ const oauth = {
   github: {
     // Returns { url, state } - store state in session and verify in callback
     url: (scopes = ['user:email']) => {
-      const clientId = process.env.GITHUB_CLIENT_ID ?? ''
+      const clientId = process.env.GITHUB_CLIENT_ID
+      if (!clientId) throw new Error('[arc:oauth] GITHUB_CLIENT_ID env var is not set')
       const state = crypto.randomUUID()
       const params = new URLSearchParams({ client_id: clientId, scope: scopes.join(' '), state })
       return { url: \`https://github.com/login/oauth/authorize?\${params}\`, state }
@@ -209,7 +210,8 @@ const oauth = {
   google: {
     // Returns { url, state } - store state in session and verify in callback
     url: (scopes = ['email', 'profile']) => {
-      const clientId = process.env.GOOGLE_CLIENT_ID ?? ''
+      const clientId = process.env.GOOGLE_CLIENT_ID
+      if (!clientId) throw new Error('[arc:oauth] GOOGLE_CLIENT_ID env var is not set')
       const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? ''
       const state = crypto.randomUUID()
       const params = new URLSearchParams({

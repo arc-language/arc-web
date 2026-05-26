@@ -36,6 +36,7 @@ class ImagePipeline {
     this.sharp = sharpLib
     this.hashByPath = new Map()      // src path → sha8
     this.processed = new Map()       // sha8 → { widths, variants, color, w, h, useAvif }
+    this._inFlight = new Map()       // sha8 → Promise — coalesces concurrent calls for same image
   }
 
   // imgRefs: [{ src, alt, containerWidth?, position: 'above-fold'|'below-fold' }]
@@ -57,7 +58,16 @@ class ImagePipeline {
       const sha8 = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 8)
       this.hashByPath.set(src, sha8)
       if (this.processed.has(sha8)) return   // F5: dedup by content
+      // Coalesce concurrent calls for the same image (e.g. same img on multiple pages compiled in parallel).
+      // Without this, two concurrent processAll() calls (one per page in Promise.all) both pass the
+      // processed.has(sha8) guard and write to the same output file simultaneously.
+      if (this._inFlight.has(sha8)) { await this._inFlight.get(sha8); return }
 
+      let _resolve, _reject
+      const p = new Promise((res, rej) => { _resolve = res; _reject = rej })
+      this._inFlight.set(sha8, p)
+
+      try {
       const img = this.sharp(buf)
       const meta = await img.metadata()
       const widths = this._chooseWidths(meta.width, ref.containerWidth)
@@ -116,6 +126,8 @@ class ImagePipeline {
         intrinsicWidth: meta.width,
         intrinsicHeight: meta.height,
       })
+      _resolve()
+      } catch (e) { _reject(e); throw e } finally { this._inFlight.delete(sha8) }
     }
 
     const results = await Promise.allSettled([...unique].map(processImage))

@@ -85,8 +85,8 @@ serve(async (req: Request): Promise<Response> => {
   let path = url.pathname
   if (path === '' || path === '/') path = '/'
   if (path === '/_arc/health') {
-    return new Response(JSON.stringify({ status: 'ok' }), {
-      headers: { 'Content-Type': 'application/json' }
+    return new Response(JSON.stringify({ status: 'ok', uptime: performance.now() / 1000, ts: new Date().toISOString() }), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' }
     })
   }
 ${edgeRoutingBlock}

@@ -51,7 +51,8 @@ function _isBlockedIpv6(h) {
   // so it's a viable SSRF target equivalent to '::1' / '0.0.0.0'.
   return h === '::1' || h === '::' ||
     h.startsWith('fc') || h.startsWith('fd') ||
-    h.startsWith('fe80') ||
+    // fe80::/10 link-local covers fe80–febf; startsWith('fe8') + startsWith('fe9') + 'fea' + 'feb'
+    h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb') ||
     h.startsWith('::ffff:10.') || h.startsWith('::ffff:127.') ||
     h.startsWith('::ffff:192.168.') ||
     /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(h) ||
@@ -253,19 +254,19 @@ class BuildExecutor {
     switch (method) {
       case 'map': {
         if (typeof args[0] !== 'function') throw new Error('@build Array.map: callback must be a function')
-        return Promise.all(arr.map(item => args[0](item)))
+        return Promise.all(arr.map((item, i) => args[0](item, i, arr)))
       }
       case 'filter': {
         if (typeof args[0] !== 'function') throw new Error('@build Array.filter: callback must be a function')
         const results = []
         for (let i = 0; i < arr.length; i++) {
-          if (await args[0](arr[i])) results.push(arr[i])
+          if (await args[0](arr[i], i, arr)) results.push(arr[i])
         }
         return results
       }
       case 'find': {
         if (typeof args[0] !== 'function') throw new Error('@build Array.find: callback must be a function')
-        for (const item of arr) { if (await args[0](item)) return item } return undefined
+        for (let i = 0; i < arr.length; i++) { if (await args[0](arr[i], i, arr)) return arr[i] } return undefined
       }
       case 'sort': {
         // Probe comparator before sorting to detect async comparators early
@@ -282,7 +283,7 @@ class BuildExecutor {
       case 'flat':    return arr.flat(args[0] ?? 1)
       case 'flatMap': {
         if (typeof args[0] !== 'function') throw new Error('@build Array.flatMap: callback must be a function')
-        return (await Promise.all(arr.map(item => args[0](item)))).flat()
+        return (await Promise.all(arr.map((item, i) => args[0](item, i, arr)))).flat()
       }
       case 'reverse': return [...arr].reverse()
       case 'join':    return arr.join(args[0] ?? ',')
@@ -302,12 +303,12 @@ class BuildExecutor {
       }
       case 'some': {
         if (typeof args[0] !== 'function') throw new Error('@build Array.some: callback must be a function')
-        for (const item of arr) { if (await args[0](item)) return true }
+        for (let i = 0; i < arr.length; i++) { if (await args[0](arr[i], i, arr)) return true }
         return false
       }
       case 'every': {
         if (typeof args[0] !== 'function') throw new Error('@build Array.every: callback must be a function')
-        for (const item of arr) { if (!(await args[0](item))) return false }
+        for (let i = 0; i < arr.length; i++) { if (!(await args[0](arr[i], i, arr))) return false }
         return true
       }
       default: throw new Error(`Array.${method} not supported at build time`)

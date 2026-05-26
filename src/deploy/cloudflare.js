@@ -74,8 +74,8 @@ export default {
     let path = url.pathname
     if (path === '' || path === '/') path = '/'
     if (path === '/_arc/health') {
-      return new Response(JSON.stringify({ status: 'ok', runtime: 'cloudflare-workers' }), {
-        headers: { 'Content-Type': 'application/json' }
+      return new Response(JSON.stringify({ status: 'ok', runtime: 'cloudflare-workers', ts: new Date().toISOString() }), {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' }
       })
     }
 ${edgeRoutingBlock}
