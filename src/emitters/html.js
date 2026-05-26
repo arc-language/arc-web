@@ -483,6 +483,8 @@ class HtmlEmitter {
     // <dialog> trigger: trigger="id" → onclick that calls showModal() then focuses first focusable child
     if (key === 'trigger') {
       const safeId = _safeInlineId(value)
+      // safeId is JSON.stringify(id) with " → &quot; (via _safeInlineId), so onclick is XSS-safe.
+      // &quot; inside onclick="..." is decoded by the browser before JS executes.
       const _action = `var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)_f.focus();}`
       parts.push(`onclick="${_action}"`)
       // Keyboard accessibility: non-interactive elements need tabindex + role so keyboard users can trigger them
@@ -526,8 +528,12 @@ class HtmlEmitter {
   // Non-URI attributes are returned as-is (the value unchanged).
   _safeUri(key, value) {
     if (key === 'href' || key === 'src' || key === 'action' || key === 'formaction') {
-      const strVal = String(value).replace(/[\t\n\r ]/g, '').toLowerCase()
-      if (strVal.startsWith('javascript:') || strVal.startsWith('data:') || strVal.startsWith('vbscript:')) {
+      let normalized = String(value)
+      // Decode percent-encoded characters (e.g. javascript%3A) before scheme check
+      try { normalized = decodeURIComponent(normalized) } catch {}
+      // Strip all whitespace (including Unicode) and control characters before scheme comparison
+      normalized = normalized.replace(/[\u0000-\u001F\u007F-\u009F\u00AD\uFEFF\s]/g, '').toLowerCase()
+      if (normalized.startsWith('javascript:') || normalized.startsWith('data:') || normalized.startsWith('vbscript:')) {
         return null
       }
     }

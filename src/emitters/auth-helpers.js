@@ -19,7 +19,10 @@ if (!process.env.SESSION_SECRET) {
   if (process.env.NODE_ENV === 'production') throw new Error('[arc:auth] SESSION_SECRET must be set in production — set SESSION_SECRET env var')
   console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:auth] SESSION_SECRET is not set — sessions will not persist across restarts. Set SESSION_SECRET env var before deploying to production.' }))
 }
-const _SESSION_COOKIE = '${cookieName}'
+// __Host- prefix in production: prevents subdomain session fixation (RFC 6265bis).
+// Requires Secure + Path=/ + no Domain= — all satisfied below. Plain name in dev (no HTTPS).
+const _PROD_COOKIE = process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test'
+const _SESSION_COOKIE = _PROD_COOKIE ? '__Host-${cookieName}' : '${cookieName}'
 const _SESSION_MAX_AGE = ${sessionMaxAge}
 
 // HMAC-SHA256 sign/verify (Web Crypto - built into Bun + Node 18+)
@@ -94,7 +97,7 @@ const auth = {
   // Set session cookie on a Response (preserves all existing headers including duplicate Set-Cookie)
   set: async (res, payload) => {
     const value = await _sessionEncode(payload)
-    const cookie = \`\${_SESSION_COOKIE}=\${value}; HttpOnly; SameSite=Strict; Max-Age=\${_SESSION_MAX_AGE}; Path=/\${(process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') ? '; Secure' : ''}\`
+    const cookie = \`\${_SESSION_COOKIE}=\${value}; HttpOnly; SameSite=Strict; Max-Age=\${_SESSION_MAX_AGE}; Path=/\${_PROD_COOKIE ? '; Secure' : ''}\`
     const h = new Headers(res.headers)
     h.append('Set-Cookie', cookie)
     return new Response(res.body, { status: res.status, headers: h })
@@ -102,7 +105,7 @@ const auth = {
 
   // Clear session cookie on a Response
   clear: (res) => {
-    const cookie = \`\${_SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/\${(process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') ? '; Secure' : ''}\`
+    const cookie = \`\${_SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/\${_PROD_COOKIE ? '; Secure' : ''}\`
     const h = new Headers(res.headers)
     h.append('Set-Cookie', cookie)
     return new Response(res.body, { status: res.status, headers: h })
@@ -183,7 +186,9 @@ const oauth = {
       })
       if (!userRes.ok) { console.error('[arc:oauth] GitHub user fetch failed:', userRes.status); return { ok: false, error: 'auth_failed' } }
       const user = await userRes.json()
-      return { ok: true, user, accessToken: access_token }
+      // accessToken not included: callers should not store provider tokens long-term.
+      // Use the token within this callback if needed, then discard it.
+      return { ok: true, user }
     },
   },
 
@@ -224,13 +229,22 @@ const oauth = {
       if (!tokenRes.ok) { console.error('[arc:oauth] Google token error: HTTP', tokenRes.status); return { ok: false, error: 'auth_failed' } }
       const { access_token, id_token, error } = await tokenRes.json()
       if (error || !access_token) { console.error('[arc:oauth] Google: no access_token:', error); return { ok: false, error: 'auth_failed' } }
+      // Validate id_token aud claim: reject tokens issued for a different client_id
+      if (id_token) {
+        try {
+          const _idParts = id_token.split('.')
+          const _idPayload = JSON.parse(atob(_idParts[1].replace(/-/g, '+').replace(/_/g, '/')))
+          if (_idPayload.aud !== process.env.GOOGLE_CLIENT_ID) { console.error('[arc:oauth] Google id_token aud mismatch'); return { ok: false, error: 'auth_failed' } }
+        } catch { console.error('[arc:oauth] Google id_token decode failed'); return { ok: false, error: 'auth_failed' } }
+      }
       const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: \`Bearer \${access_token}\` },
         signal: AbortSignal.timeout(10000),
       })
       if (!userRes.ok) { console.error('[arc:oauth] Google userinfo failed:', userRes.status); return { ok: false, error: 'auth_failed' } }
       const user = await userRes.json()
-      return { ok: true, user, accessToken: access_token, idToken: id_token }
+      // accessToken not included: callers should not store provider tokens long-term.
+      return { ok: true, user }
     },
   },
 }
