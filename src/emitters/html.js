@@ -743,8 +743,11 @@ class HtmlEmitter {
       // Sanitize keyExpr: escape any backticks/backslashes that would break the outer template literal
       const safeKeyExpr = keyExpr.replace(/\\/g, '\\\\').replace(/`/g, '\\`')
       const keyVal = `\${_esc(String(${safeKeyExpr}??''))}`
-      // Insert data-arc-key after the first tag opening
-      html = html.replace(/^(<\w[^>]*)>/, `$1 data-arc-key="${keyVal}">`)
+      // Insert data-arc-key after the first tag opening.
+      // Use a quoted-attribute-aware regex so a > inside an attribute value (e.g.
+      // data-x="a>b") doesn't cause a premature match. In practice the emitter
+      // HTML-escapes > to &gt; in attribute values, but this is future-proof.
+      html = html.replace(/^(<\w+(?:[^"'>]|"[^"]*"|'[^']*')*?)>/, `$1 data-arc-key="${keyVal}">`)
     }
 
     return html
@@ -794,15 +797,23 @@ class HtmlEmitter {
     if (label) {
       labelAttr = ` aria-label="${this.escape(String(label))}"`
     } else {
-      // Look for the first heading child; use aria-labelledby pointing to it
-      const firstHeading = (node.children ?? []).find(c =>
+      // Look for the first heading child; use aria-labelledby pointing to it.
+      // Clone heading node to inject the id without mutating the original AST
+      // (emitModal can be called multiple times on the same AST for widget reuse).
+      const headingIdx = (node.children ?? []).findIndex(c =>
         c.type === 'Element' && (c.tag === 'heading' || /^h[1-6]$/.test(c.tag))
       )
-      if (firstHeading) {
-        const headingId = `${id}-title`
-        if (!firstHeading.id && !firstHeading.attrs?.id) firstHeading.id = headingId
-        const actualId = firstHeading.id ?? firstHeading.attrs?.id ?? headingId
+      if (headingIdx >= 0) {
+        const orig = node.children[headingIdx]
+        const existingId = orig.id ?? orig.attrs?.id
+        const actualId = existingId ?? `${id}-title`
         labelAttr = ` aria-labelledby="${this.escape(String(actualId))}"`
+        if (!existingId) {
+          // Clone to avoid mutating the shared AST node
+          const patchedChildren = [...node.children]
+          patchedChildren[headingIdx] = { ...orig, attrs: { ...(orig.attrs ?? {}), id: actualId } }
+          node = { ...node, children: patchedChildren }
+        }
       } else {
         // No heading found - keep id-based aria-label as last resort
         labelAttr = ` aria-label="${this.escape(String(id))}"`

@@ -96,11 +96,17 @@ ${SHARED_RESPONSE_HELPERS}
 
 // In-memory rate limiter — 60 POST requests per IP per minute (sliding window)
 // Applies to all mutating requests. Resets hourly to prevent unbounded Map growth.
+// Set TRUSTED_PROXY_IPS (comma-separated) to opt-in to X-Forwarded-For trust.
+// Without it, X-Forwarded-For is ignored to prevent IP spoofing.
 const _rlMap = new Map()
+const _TRUSTED_PROXIES = process.env.TRUSTED_PROXY_IPS
+  ? new Set(process.env.TRUSTED_PROXY_IPS.split(',').map(s => s.trim()).filter(Boolean))
+  : null
 setInterval(() => _rlMap.clear(), 60 * 60 * 1000).unref()
 function _checkRateLimit(req) {
   if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'DELETE' && req.method !== 'PATCH') return null
-  const ip = req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? req.headers.get('x-real-ip') ?? 'unknown'
+  const xff = req.headers.get('x-forwarded-for')
+  const ip = (_TRUSTED_PROXIES && xff) ? xff.split(',')[0].trim() : (req.headers.get('x-real-ip') ?? 'unknown')
   const now = Date.now()
   const window = 60000
   let entry = _rlMap.get(ip)
@@ -202,12 +208,17 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
 // Schema init — promise-based startup; awaited in Bun.serve fetch handler before first dispatch
 // (top-level await is invalid in CJS; this pattern is equivalent and CJS-safe)
 let db = null
+let _schemaInitErr = null
 const _schemaInitP = (async () => {
 ${tableInits}
   db = globalThis.db = {
 ${dbEntries}
   }
-})().catch(e => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'schema_init_failed', msg: e?.message ?? String(e), cause: e?.cause?.message })); process.exit(1) })`.trim()
+})().catch(e => {
+  _schemaInitErr = e
+  console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'schema_init_failed', msg: e?.message ?? String(e), cause: e?.cause?.message }))
+  process.exit(1)
+})`.trim()
   }
 
   _schemaVars(schema, dialect) {
@@ -304,7 +315,7 @@ const _server = Bun.serve({
     ${healthBody}
       } catch (_he) { return _json({ status: 'error', msg: _he?.message }, 503, { 'Cache-Control': 'no-store, no-cache' }) }
     }
-    ${this.isPg && schemas && schemas.length > 0 ? 'if (db === null) await _schemaInitP' : ''}
+    ${this.isPg && schemas && schemas.length > 0 ? "if (_schemaInitErr) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' })\n    if (db === null) await _schemaInitP" : ''}
     const _rl = _checkRateLimit(req)
     if (_rl) return _rl
     return _dispatch(req, url)
