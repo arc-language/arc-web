@@ -635,7 +635,9 @@ class HtmlEmitter {
     const ifHtml = `<div id="${ifId}" hidden>${ifContent}</div>`
     const elseHtml = elseId ? `<div id="${elseId}">${elseContent}</div>` : ''
 
-    return `<div aria-live="polite">${ifHtml}${elseHtml ? '\n' + elseHtml : ''}</div>`
+    // No aria-live by default — most reactive changes are visual-only. Authors opt in
+    // with an explicit aria-live attr on a parent element when content changes are meaningful to AT.
+    return `<div>${ifHtml}${elseHtml ? '\n' + elseHtml : ''}</div>`
   }
 
   emitUnless(node) {
@@ -769,7 +771,7 @@ class HtmlEmitter {
       this.stateBindings.push({ id: armId, expr: condExpr, kind: 'if-show', line: node.line })
       return `<div id="${armId}" hidden>${body}</div>`
     }).join('\n')
-    return `<div aria-live="polite">${arms}</div>`
+    return `<div>${arms}</div>`
   }
 
   // ── Native patterns (zero JS) ──────────────────────────────────────────────

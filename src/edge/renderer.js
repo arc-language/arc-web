@@ -82,16 +82,21 @@ class EdgeRenderer {
     const calls = liveDecls.map(d => `(${this.jsEmitter.emitExpr(d.init)})`).join(', ')
     const names = liveDecls.map(d => d.name).join(', ')
 
+    const nameList = liveDecls.map(d => d.name)
+    const nameArray = JSON.stringify(nameList)
     return [
       `async function _resolveData(request) {`,
       `  const _session = request._arc_session ?? {}`,
-      `  try {`,
-      `    const [${names}] = await Promise.all([${calls}])`,
-      `    return { ${names} }`,
-      `  } catch (e) {`,
-      `    console.error('[arc] @live data error:', e instanceof Error ? e.message : String(e))
-    return { __arc_render_error__: true }`,
+      `  const _results = await Promise.allSettled([${calls}])`,
+      `  const _names = ${nameArray}`,
+      `  const _data = {}`,
+      `  let _anyError = false`,
+      `  for (let _i = 0; _i < _names.length; _i++) {`,
+      `    if (_results[_i].status === 'fulfilled') { _data[_names[_i]] = _results[_i].value }`,
+      `    else { console.error('[arc] @live failed:', _names[_i], _results[_i].reason instanceof Error ? _results[_i].reason.message : String(_results[_i].reason)); _data[_names[_i]] = undefined; _anyError = true }`,
       `  }`,
+      `  if (_anyError && Object.values(_data).every(v => v === undefined)) return { __arc_render_error__: true }`,
+      `  return _data`,
       `}`,
       ``,
     ].join('\n')

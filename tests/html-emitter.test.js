@@ -360,13 +360,16 @@ page "T"
       assert.ok(!html.includes('shown'), `Should not include "shown":\n${html}`)
     })
 
-    test('reactive if (on @state) emits aria-live container', async () => {
+    test('reactive if (on @state) emits reactive container (no default aria-live)', async () => {
       const src = `page "T"
   @state let show = true
   if show
     text "visible"`
       const { html } = await compile(src)
-      assert.ok(html.includes('aria-live'), `Expected aria-live container in:\n${html}`)
+      // aria-live is opt-in; default reactive wrapper is a plain div so only meaningful
+      // AT changes get announced (authors add aria-live explicitly when needed)
+      assert.ok(!html.includes('aria-live'), `Default reactive if should not have aria-live:\n${html}`)
+      assert.ok(html.includes('hidden'), `Expected hidden branch in:\n${html}`)
     })
 
     test('reactive if with else emits both branches with separate ids', async () => {
@@ -414,7 +417,7 @@ page "T"
       assert.ok(html.includes('Default'), `Expected wildcard arm in:\n${html}`)
     })
 
-    test('reactive match template emits aria-live container', async () => {
+    test('reactive match template wrapper does not emit aria-live by default', async () => {
       const src = `page "T"
   @state let mode = "dark"
   match mode {
@@ -423,7 +426,8 @@ page "T"
     _ => text "Default"
   }`
       const { html } = await compile(src)
-      assert.ok(html.includes('aria-live'), `Expected aria-live for reactive match:\n${html}`)
+      // aria-live is opt-in; default reactive match wrapper is a plain div
+      assert.ok(!html.includes('aria-live'), `Default reactive match should not have aria-live:\n${html}`)
     })
   })
 
@@ -843,7 +847,7 @@ page "T"
         line: 0
       }
       const result = emitter.emitNode(node)
-      assert.ok(result.includes('aria-live'), `Expected aria-live: ${result}`)
+      assert.ok(!result.includes('aria-live'), `Default match should not have aria-live: ${result}`)
       assert.ok(result.includes('hidden'), `Expected hidden arms: ${result}`)
     })
 
@@ -858,7 +862,7 @@ page "T"
         line: 0
       }
       const result = emitter.emitNode(node)
-      assert.ok(result.includes('aria-live'))
+      assert.ok(!result.includes('aria-live'), `Default match should not have aria-live: ${result}`)
     })
 
     test('emitTooltipAttr wraps element with aria-describedby anchor', () => {
@@ -894,8 +898,9 @@ page "T"
       const emitter = new HtmlEmitter({ hash: 'h1', buildContext: { broken: false } })
       const node = N.UnlessNode(N.Identifier('broken', 0), [N.TextNode('OK', 0)], 0)
       const result = emitter.emitNode(node)
-      // Unless wraps in UnaryExpr which is not static: emits a reactive aria-live container
-      assert.ok(result.includes('aria-live'), `Got: ${result}`)
+      // Unless wraps in UnaryExpr which is not static: emits a reactive container (no default aria-live)
+      assert.ok(result.includes('hidden'), `Expected hidden branch in reactive unless: ${result}`)
+      assert.ok(!result.includes('aria-live'), `Default reactive unless should not have aria-live: ${result}`)
     })
   })
 

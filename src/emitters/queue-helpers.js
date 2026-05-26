@@ -52,10 +52,13 @@ const _queue = {
       }
     } finally {
       this._running = false
-      if (this._items.length === 0 && this._pendingRetries === 0) {
-        const resolvers = this._drainResolvers.splice(0)
-        for (const resolve of resolvers) resolve()
-      }
+    }
+    // Notify drain waiters AFTER _running is false so any work enqueued from within
+    // a drain callback correctly starts a new _process() rather than being dropped.
+    // Check again here because a retry may have re-enqueued during the loop above.
+    if (this._items.length === 0 && this._pendingRetries === 0) {
+      const resolvers = this._drainResolvers.splice(0)
+      for (const resolve of resolvers) resolve()
     }
   }
 }
@@ -114,8 +117,12 @@ const email = {
         to, subject, text, html,
         replyTo,
       })
-    } catch {
-      console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:email] No provider configured — set RESEND_API_KEY or SMTP_HOST.' }))
+    } catch (_smtpErr) {
+      if (_smtpErr?.code === 'MODULE_NOT_FOUND') {
+        console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:email] No provider configured — set RESEND_API_KEY or SMTP_HOST.' }))
+      } else {
+        throw _smtpErr
+      }
     }
   },
 }`.trim()

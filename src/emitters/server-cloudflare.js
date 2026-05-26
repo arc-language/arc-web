@@ -90,13 +90,17 @@ ${SHARED_RESPONSE_HELPERS}
 
 // In-memory rate limiter — 60 mutating requests per IP per minute (sliding window)
 // Uses the global isolate scope (persists across requests within the same isolate instance).
+// No setInterval: CF isolates don't guarantee timer firing across requests. Instead, expired
+// entries are purged lazily when the Map exceeds 10k entries to bound memory.
 const _rlMap = new Map()
-setInterval(() => _rlMap.clear(), 60 * 60 * 1000)
 function _checkRateLimit(req) {
   if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'DELETE' && req.method !== 'PATCH') return null
-  const ip = req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? req.headers.get('cf-connecting-ip') ?? 'unknown'
+  const ip = req.headers.get('cf-connecting-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown'
   const now = Date.now()
   const window = 60000
+  if (_rlMap.size > 10000) {
+    for (const [k, v] of _rlMap) if (now > v.resetAt) _rlMap.delete(k)
+  }
   let entry = _rlMap.get(ip)
   if (!entry || now > entry.resetAt) { entry = { count: 0, resetAt: now + window }; _rlMap.set(ip, entry) }
   entry.count++
@@ -279,8 +283,15 @@ function _makeEmail(env) {
       const args = Array.isArray(_rawArgs) ? _rawArgs : []
       const fn = _jobRegistry[job]
       if (fn) {
-        try { await fn(...args, env) } catch (e) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: e?.message ?? String(e) })); if (msg.attempts >= 3) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'dlq', msg: 'max retries exceeded' })); msg.ack() } else { msg.retry() }; continue }
-        msg.ack()
+        try { await fn(...args, env) } catch (e) {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: e?.message ?? String(e) }))
+          try {
+            if (msg.attempts >= 3) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'dlq', msg: 'max retries exceeded' })); msg.ack() }
+            else { msg.retry() }
+          } catch (_ackErr) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'ack_failed', msg: _ackErr?.message ?? String(_ackErr) })) }
+          continue
+        }
+        try { msg.ack() } catch (_ackErr) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'ack_failed', msg: _ackErr?.message ?? String(_ackErr) })) }
       } else {
         console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', queue: job, event: 'unknown_job', msg: 'no handler registered for job type' }))
         msg.ack()
