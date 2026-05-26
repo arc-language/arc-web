@@ -850,6 +850,9 @@ class HtmlEmitter {
     if (this.options.allowRaw !== true) {
       throw new Error('Arc: RawNode requires opt-in via allowRaw: true')
     }
+    // WARNING: node.html is emitted verbatim with no sanitization.
+    // allowRaw must ONLY be used for trusted, developer-authored content.
+    // Never pass user-supplied input through RawNode — use escape() instead.
     return node.html
   }
 

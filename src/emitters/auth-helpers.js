@@ -23,13 +23,14 @@ const _SESSION_COOKIE = '${cookieName}'
 const _SESSION_MAX_AGE = ${sessionMaxAge}
 
 // HMAC-SHA256 sign/verify (Web Crypto - built into Bun + Node 18+)
-// Single cached key — only one SESSION_SECRET is used at runtime
-let _hmacKey = null
+// Keyed by secret string so jwt.sign/verify with custom secrets work correctly
+const _hmacKeyCache = new Map()
 async function _getHmacKey(secret) {
-  if (_hmacKey) return _hmacKey
+  if (_hmacKeyCache.has(secret)) return _hmacKeyCache.get(secret)
   const enc = new TextEncoder()
-  _hmacKey = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
-  return _hmacKey
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
+  _hmacKeyCache.set(secret, key)
+  return key
 }
 
 async function _hmacSign(data, secret) {
@@ -89,7 +90,7 @@ const auth = {
   // Set session cookie on a Response (preserves all existing headers including duplicate Set-Cookie)
   set: async (res, payload) => {
     const value = await _sessionEncode(payload)
-    const cookie = \`\${_SESSION_COOKIE}=\${value}; HttpOnly; SameSite=Strict; Max-Age=\${_SESSION_MAX_AGE}; Path=/\${process.env.NODE_ENV === 'production' ? '; Secure' : ''}\`
+    const cookie = \`\${_SESSION_COOKIE}=\${value}; HttpOnly; SameSite=Strict; Max-Age=\${_SESSION_MAX_AGE}; Path=/\${(process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') ? '; Secure' : ''}\`
     const h = new Headers(res.headers)
     h.append('Set-Cookie', cookie)
     return new Response(res.body, { status: res.status, headers: h })
@@ -97,7 +98,7 @@ const auth = {
 
   // Clear session cookie on a Response
   clear: (res) => {
-    const cookie = \`\${_SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/\${process.env.NODE_ENV === 'production' ? '; Secure' : ''}\`
+    const cookie = \`\${_SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/\${(process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') ? '; Secure' : ''}\`
     const h = new Headers(res.headers)
     h.append('Set-Cookie', cookie)
     return new Response(res.body, { status: res.status, headers: h })

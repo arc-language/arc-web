@@ -88,6 +88,22 @@ class CloudflareEmitter {
 
 ${SHARED_RESPONSE_HELPERS}
 
+// In-memory rate limiter — 60 mutating requests per IP per minute (sliding window)
+// Uses the global isolate scope (persists across requests within the same isolate instance).
+const _rlMap = new Map()
+setInterval(() => _rlMap.clear(), 60 * 60 * 1000)
+function _checkRateLimit(req) {
+  if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'DELETE' && req.method !== 'PATCH') return null
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? req.headers.get('cf-connecting-ip') ?? 'unknown'
+  const now = Date.now()
+  const window = 60000
+  let entry = _rlMap.get(ip)
+  if (!entry || now > entry.resetAt) { entry = { count: 0, resetAt: now + window }; _rlMap.set(ip, entry) }
+  entry.count++
+  if (entry.count > 60) return _json({ error: 'Too many requests' }, 429, { 'Retry-After': String(Math.ceil((entry.resetAt - now) / 1000)) })
+  return null
+}
+
 // Route context factory — extracts the common per-request setup shared by every handler
 function _routeCtx(req, env) {
   const _clientId = req.headers.get('x-request-id') ?? ''
@@ -282,6 +298,8 @@ export default {
       else { _dbOk = true }
       return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a', queue: env.QUEUE ? 'configured' : 'n/a', ts: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
     }
+    const _rl = _checkRateLimit(req)
+    if (_rl) return _rl
     return _dispatch(req, url, env)
   },${queueHandler}
 }`.trim()
