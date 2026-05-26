@@ -24,14 +24,18 @@ const _AWAIT_FUNS = new Set([
 // These are recognized by the 3-part path pattern rather than a static name set
 // because the MODEL segment is user-defined (e.g. db.posts.findMany).
 const _DB_ASYNC_METHODS = new Set([
-  'findMany', 'findOne', 'find', 'findById',
-  'create', 'update', 'delete', 'deleteMany',
-  'upsert', 'count', 'exists',
+  'findMany', 'findOne', 'find', 'findById', 'findFirst', 'findUnique',
+  'create', 'createMany', 'update', 'updateMany', 'delete', 'deleteMany',
+  'upsert', 'count', 'exists', 'aggregate',
 ])
 
 function _isDbCall(callPath) {
-  const parts = callPath.split('.')
-  return parts.length === 3 && parts[0] === 'db' && _DB_ASYNC_METHODS.has(parts[2])
+  // Avoid split() allocation — check db. prefix, then find the method after the second dot.
+  const first = callPath.indexOf('.')
+  if (first === -1 || callPath.slice(0, first) !== 'db') return false
+  const second = callPath.indexOf('.', first + 1)
+  if (second === -1 || callPath.indexOf('.', second + 1) !== -1) return false
+  return _DB_ASYNC_METHODS.has(callPath.slice(second + 1))
 }
 
 function _calleePath(callee) {
@@ -110,7 +114,16 @@ function emitRouteMatch(stmt, jsEmitter) {
   const subj = `_ms${id}`
   const cond = jsEmitter.emitExpr(stmt.subject)
 
-  const arms = (stmt.arms ?? []).map((arm, i) => {
+  // Move wildcard/identifier catch-all arms to the end so they don't orphan
+  // subsequent `else if` clauses. Parser should enforce this, but guard here too.
+  const sorted = [...(stmt.arms ?? [])].sort((a, b) => {
+    const aIsWild = !a.pattern || a.pattern.type === 'Wildcard' || a.pattern.type === 'Identifier'
+    const bIsWild = !b.pattern || b.pattern.type === 'Wildcard' || b.pattern.type === 'Identifier'
+    if (aIsWild === bIsWild) return 0
+    return aIsWild ? 1 : -1
+  })
+
+  const arms = sorted.map((arm, i) => {
     const body = emitRouteArmBody(arm.body, jsEmitter)
     const pfx = i === 0 ? 'if' : 'else if'
 

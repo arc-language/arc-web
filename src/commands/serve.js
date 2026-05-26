@@ -2,22 +2,9 @@
 
 const fs = require('fs')
 const path = require('path')
+const { spawn, spawnSync } = require('child_process')
 const { CYAN, DIM, RESET } = require('../utils/errors')
-
-function findArcFiles(dir) {
-  const results = []
-  let entries
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }) }
-  catch (e) { console.warn(`arc: warning: cannot read directory ${dir}: ${e.message}`); return results }
-  for (const entry of entries) {
-    if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== 'dist') {
-      results.push(...findArcFiles(path.join(dir, entry.name)))
-    } else if (entry.isFile() && entry.name.endsWith('.arc')) {
-      results.push(path.join(dir, entry.name))
-    }
-  }
-  return results
-}
+const { findArcFiles } = require('../utils/fs')
 
 function createFileWatcher(absDir, onChange) {
   const watched = new Set()
@@ -48,7 +35,6 @@ function createFileWatcher(absDir, onChange) {
 async function serve(projectDir, flags, buildServer) {
   const outFile = await buildServer(projectDir, {}, flags)
 
-  const { spawnSync, spawn } = require('child_process')
   const bunCheck = spawnSync('bun', ['--version'], { stdio: 'pipe' })
   const runtime = bunCheck.status === 0 ? 'bun' : 'node'
 
@@ -70,9 +56,12 @@ async function serve(projectDir, flags, buildServer) {
       child.removeAllListeners()
       child.kill('SIGTERM')
     }
-    child = spawn(runtime, [outFile], { stdio: 'inherit', env: process.env })
-    child.on('error', e => console.error(`arc: could not start server: ${e.message}`))
-    child.on('exit', (code, signal) => {
+    const thisChild = spawn(runtime, [outFile], { stdio: 'inherit', env: process.env })
+    child = thisChild
+    thisChild.on('error', e => console.error(`arc: could not start server: ${e.message}`))
+    thisChild.on('exit', (code, signal) => {
+      // Ignore exit from superseded children — only act on the currently active one.
+      if (child !== thisChild) return
       if (signal !== 'SIGTERM') process.exit(code ?? 0)
     })
   }
@@ -84,8 +73,10 @@ async function serve(projectDir, flags, buildServer) {
         console.log(`${CYAN}arc: reloaded${RESET}`)
         startChild()
       } catch (e) {
-        console.error(`arc: rebuild failed: ${e.message}`)
+        console.error(`arc: rebuild failed: ${e?.stack ?? e?.message ?? String(e)}`)
       }
+      // Reset to a fresh resolved promise so settled chain nodes can be GC'd.
+      _rebuildChain = Promise.resolve()
     })
     return _rebuildChain
   }

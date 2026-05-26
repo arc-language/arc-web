@@ -25,6 +25,7 @@ const { dbCommand: _dbCommandImpl, runSeed: _runSeedImpl } = require('./commands
 const { emit: emitSiteMeta } = require('./emitters/site-meta')
 const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
 const { RED, GREEN, YELLOW, CYAN, DIM, RESET, formatError, showSourceContext } = require('./utils/errors')
+const { findArcFiles } = require('./utils/fs')
 const N = require('./ast')
 
 // ── Import resolver ────────────────────────────────────────────────────────
@@ -1582,20 +1583,6 @@ if (require.main === module) {
   })
 }
 
-function findArcFiles(dir) {
-  const results = []
-  let entries
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }) }
-  catch (e) { console.warn(`arc: warning: cannot read directory ${dir}: ${e.message}`); return results }
-  for (const entry of entries) {
-    if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== 'dist') {
-      results.push(...findArcFiles(path.join(dir, entry.name)))
-    } else if (entry.isFile() && entry.name.endsWith('.arc')) {
-      results.push(path.join(dir, entry.name))
-    }
-  }
-  return results
-}
 
 // Public API: just `compile`. Internals are namespaced under `_internal` to
 // signal they are not a stability contract - they exist only so tests can

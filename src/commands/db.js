@@ -2,26 +2,30 @@
 
 const fs = require('fs')
 const path = require('path')
+const { spawnSync } = require('child_process')
 const { Lexer } = require('../lexer')
 const { Parser } = require('../parser')
 const { BunServerEmitter } = require('../emitters/server-bun')
 const { JsEmitter } = require('../emitters/js')
 const { migrate } = require('../compilers/migration-compiler')
 const { GREEN, YELLOW, CYAN, DIM, RESET, formatError } = require('../utils/errors')
+const { findArcFiles } = require('../utils/fs')
 
-function findArcFiles(dir) {
-  const results = []
-  let entries
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }) }
-  catch (e) { console.warn(`arc: warning: cannot read directory ${dir}: ${e.message}`); return results }
-  for (const entry of entries) {
-    if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== 'dist') {
-      results.push(...findArcFiles(path.join(dir, entry.name)))
-    } else if (entry.isFile() && entry.name.endsWith('.arc')) {
-      results.push(path.join(dir, entry.name))
-    }
-  }
-  return results
+function _parseDbArgs(remaining) {
+  const dbIdx = remaining.indexOf('--db')
+  const urlIdx = remaining.indexOf('--url')
+  const dialect = dbIdx !== -1 ? remaining[dbIdx + 1] : 'sqlite'
+  const urlArg = urlIdx !== -1 ? remaining[urlIdx + 1] : null
+  const dry = remaining.includes('--dry')
+  const projectDir = remaining.find(a => !a.startsWith('--') && a !== dialect && a !== urlArg) ?? '.'
+  return { dialect, urlArg, dry, projectDir }
+}
+
+function _resolveDbUrl(dialect, absDir, urlArg) {
+  const defaultUrl = dialect === 'postgres'
+    ? (process.env.DATABASE_URL ?? 'postgres://localhost/app')
+    : (process.env.DATABASE_URL ?? path.join(absDir, 'app.db'))
+  return urlArg ?? defaultUrl
 }
 
 async function runSeed(seedFile, projectDir, opts = {}) {
@@ -68,10 +72,14 @@ main().catch(e => { console.error('[arc:seed] failed:', e.message); process.exit
 `.trim()
 
   const tmpFile = path.join(absDir, 'dist', '_seed.js')
-  fs.mkdirSync(path.join(absDir, 'dist'), { recursive: true })
-  fs.writeFileSync(tmpFile, seedScript)
+  try {
+    fs.mkdirSync(path.join(absDir, 'dist'), { recursive: true })
+    fs.writeFileSync(tmpFile, seedScript, { mode: 0o600 })
+  } catch (e) {
+    console.error(`arc db seed: cannot write temp file: ${e.message}`)
+    process.exit(1)
+  }
 
-  const { spawnSync } = require('child_process')
   const bunCheck = spawnSync('bun', ['--version'], { stdio: 'pipe' })
   const runtime = bunCheck.status === 0 ? 'bun' : 'node'
 
@@ -99,16 +107,7 @@ async function dbCommand(args) {
   }
 
   if (sub === 'migrate') {
-    const remaining = args.slice(1)
-    const dbIdx = remaining.indexOf('--db')
-    const urlIdx = remaining.indexOf('--url')
-    const dry = remaining.includes('--dry')
-    const dialect = dbIdx !== -1 ? remaining[dbIdx + 1] : 'sqlite'
-    const urlArg = urlIdx !== -1 ? remaining[urlIdx + 1] : null
-    const _dialectVal = dbIdx !== -1 ? remaining[dbIdx + 1] : null
-    const _urlVal = urlIdx !== -1 ? remaining[urlIdx + 1] : null
-    const projectDir = remaining.find(a => !a.startsWith('--') && a !== _dialectVal && a !== _urlVal) ?? '.'
-
+    const { dialect, urlArg, dry, projectDir } = _parseDbArgs(args.slice(1))
     const absDir = path.resolve(projectDir)
     const serverDir = fs.existsSync(path.join(absDir, 'server'))
       ? path.join(absDir, 'server')
@@ -137,11 +136,7 @@ async function dbCommand(args) {
       return
     }
 
-    const defaultUrl = dialect === 'postgres'
-      ? (process.env.DATABASE_URL ?? 'postgres://localhost/app')
-      : (process.env.DATABASE_URL ?? path.join(absDir, 'app.db'))
-    const url = urlArg ?? defaultUrl
-
+    const url = _resolveDbUrl(dialect, absDir, urlArg)
     console.log(`arc db migrate: checking ${schemas.length} model(s) against ${dialect === 'postgres' ? url : path.relative(process.cwd(), url)}${dry ? ' (dry run)' : ''}`)
 
     let result
@@ -174,15 +169,7 @@ async function dbCommand(args) {
   }
 
   if (sub === 'seed') {
-    const remaining = args.slice(1)
-    const dbIdx = remaining.indexOf('--db')
-    const urlIdx = remaining.indexOf('--url')
-    const dialect = dbIdx !== -1 ? remaining[dbIdx + 1] : 'sqlite'
-    const urlArg = urlIdx !== -1 ? remaining[urlIdx + 1] : null
-    const _dialectVal = dbIdx !== -1 ? remaining[dbIdx + 1] : null
-    const _urlVal = urlIdx !== -1 ? remaining[urlIdx + 1] : null
-    const projectDir = remaining.find(a => !a.startsWith('--') && a !== _dialectVal && a !== _urlVal) ?? '.'
-
+    const { dialect, urlArg, projectDir } = _parseDbArgs(args.slice(1))
     const absDir = path.resolve(projectDir)
     const serverDir = fs.existsSync(path.join(absDir, 'server')) ? path.join(absDir, 'server') : absDir
     const seedFile = path.join(serverDir, 'seed.arc')
@@ -193,12 +180,7 @@ async function dbCommand(args) {
       process.exit(1)
     }
 
-    const defaultUrl = dialect === 'postgres'
-      ? (process.env.DATABASE_URL ?? 'postgres://localhost/app')
-      : (process.env.DATABASE_URL ?? path.join(absDir, 'app.db'))
-    const dbUrl = urlArg ?? defaultUrl
-
-    await runSeed(seedFile, absDir, { db: dialect, url: dbUrl })
+    await runSeed(seedFile, absDir, { db: dialect, url: _resolveDbUrl(dialect, absDir, urlArg) })
     return
   }
 

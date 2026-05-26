@@ -19,9 +19,12 @@ if (!_AUTH_SECRET) {
   if (process.env.NODE_ENV === 'production') throw new Error('[arc:auth] SESSION_SECRET must be set in production — set SESSION_SECRET env var')
   // In dev: persist a stable secret to .arc-dev-secret so sessions survive hot-reloads.
   // A random secret on every restart would invalidate all signed cookies.
-  const _devSecretPath = new URL('.arc-dev-secret', import.meta.url ?? 'file://' + process.cwd() + '/').pathname
+  // __dirname anchors to the emitted file's directory (CJS; import.meta is not available in CJS).
+  const _devSecretPath = require('path').join(typeof __dirname !== 'undefined' ? __dirname : process.cwd(), '.arc-dev-secret')
   try {
-    _AUTH_SECRET = require('fs').readFileSync(_devSecretPath, 'utf8').trim()
+    const _stored = require('fs').readFileSync(_devSecretPath, 'utf8').trim()
+    if (!_stored) throw new Error('empty')
+    _AUTH_SECRET = _stored
   } catch {
     _AUTH_SECRET = crypto.randomUUID() + crypto.randomUUID()
     try { require('fs').writeFileSync(_devSecretPath, _AUTH_SECRET, { mode: 0o600 }) } catch {}

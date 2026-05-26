@@ -138,6 +138,8 @@ async function applyMigrationSqlite(statements, dbPath) {
     db.transaction(() => {
       for (const stmt of statements) db.exec(stmt)
     })()
+  } catch (e) {
+    throw new Error(`arc db migrate: migration failed (SQLite DDL is not fully transactional — DB may be in partial state if multiple statements were run): ${e.message}`)
   } finally {
     db.close()
   }

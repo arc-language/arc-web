@@ -163,6 +163,7 @@ class HtmlEmitter {
   emitPage(node) {
     const title = node.title ? this.evalStaticExpr(node.title) : 'Arc App'
     const lang = node.meta?.lang ? this.evalStaticExpr(node.meta.lang) : 'en'
+    this._currentLang = lang
     const description = node.meta?.description ? this.evalStaticExpr(node.meta.description) : ''
     const meta = node.meta ?? {}
     const evalMeta = (k) => meta[k] ? this.evalStaticExpr(meta[k]) : ''
@@ -403,7 +404,7 @@ class HtmlEmitter {
     // Check staticAttrs (not raw attrs): bind:aria-label entries stay in attrs but are
     // filtered out of staticAttrs, so a reactive label doesn't suppress this notice.
     if (htmlTag === 'a' && attrStr.includes('target="_blank"') && !_hasRealLabel(staticAttrs['aria-label'], this) && !_hasRealLabel(staticAttrs['aria-labelledby'], this)) {
-      inner += `<span class="arc-sr-only"> (opens in new tab)</span>`
+      inner += `<span class="arc-sr-only"> ${{ en: '(opens in new tab)', fr: '(ouvre dans un nouvel onglet)', es: '(se abre en nueva pestaña)', de: '(öffnet in neuem Tab)', pt: '(abre em nova aba)', ja: '(新しいタブで開く)', zh: '（在新标签页中打开）', ar: '(يفتح في علامة تبويب جديدة)' }[this._currentLang ?? 'en'] ?? '(opens in new tab)'}</span>`
     }
 
     return `<${htmlTag}${attrStr}>${inner}</${htmlTag}>`
@@ -497,6 +498,7 @@ class HtmlEmitter {
       // Keyboard accessibility: non-interactive elements need tabindex + role so keyboard users can trigger them
       const tag = node?.tag ?? ''
       parts.push('aria-haspopup="dialog"')
+      parts.push(`aria-controls="${this.escape(String(value))}"`)
       if (!_INTERACTIVE_TAGS.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
@@ -514,7 +516,9 @@ class HtmlEmitter {
       if (!_INTERACTIVE_TAGS.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
-        parts.push('aria-label="Close dialog"')
+        parts.push(`aria-label="${this.escape({ en: 'Close dialog', fr: 'Fermer la boîte de dialogue', es: 'Cerrar diálogo', de: 'Dialog schließen', pt: 'Fechar diálogo', ja: 'ダイアログを閉じる', zh: '关闭对话框', ar: 'إغلاق مربع الحوار' }[this._currentLang ?? 'en'] ?? 'Close dialog')}"`)
+        parts.push(`aria-controls="${this.escape(String(value))}"`)
+
         parts.push(`onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${_action}}"`)
       }
       return true
@@ -835,7 +839,7 @@ class HtmlEmitter {
     }
     // Note: autofocus is intentionally omitted: autofocus on <dialog> is ignored by spec.
     // The trigger= onclick handler focuses the first focusable child after showModal().
-    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${labelAttr}>${this.emitChildren(node.children)}</dialog>`
+    return `<dialog id="${this.escape(String(id))}" role="dialog" aria-modal="true"${labelAttr}>${this.emitChildren(node.children)}</dialog>`
   }
 
   emitTooltip(node) {
@@ -862,7 +866,7 @@ class HtmlEmitter {
     }
     const summaryText = rawSummary
       ? (rawSummary.type ? this.evalStaticExpr(rawSummary) : rawSummary)
-      : 'Details'
+      : ({ en: 'Details', fr: 'Détails', es: 'Detalles', de: 'Details', pt: 'Detalhes', ja: '詳細', zh: '详情', ar: 'تفاصيل' }[this._currentLang ?? 'en'] ?? 'Details')
     const summaryFallback = hasSummary ? '' : `<summary>${this.escape(String(summaryText))}</summary>\n`
     return `<details class="arc-accordion_${this.componentHash}">\n${summaryFallback}${this.emitChildren(node.children)}\n</details>`
   }

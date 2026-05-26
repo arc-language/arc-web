@@ -303,8 +303,8 @@ async function ${name}(req, params) {
     const hasDb = schemas && schemas.length > 0
     const dbProbe = hasDb
       ? (this.isPg
-        ? `let _dbOk=false;try{await _pool.query('SELECT 1');_dbOk=true}catch{}`
-        : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch{}`)
+        ? `let _dbOk=false;try{await Promise.race([_pool.query('SELECT 1'),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),2000))]);_dbOk=true}catch{}`
+        : `let _dbOk=false;try{await Promise.race([Promise.resolve().then(()=>_db.query('SELECT 1').get()),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),2000))]);_dbOk=true}catch{}`)
       : ''
     const healthBody = hasDb
       ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`

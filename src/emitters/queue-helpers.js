@@ -42,7 +42,7 @@ const _queue = {
             // Jitter prevents all failed jobs from retrying simultaneously (thundering herd)
             const delay = Math.pow(2, retries) * 1000 + Math.random() * 500
             this._pendingRetries++
-            setTimeout(() => { this.enqueue(fn, args, retries + 1); this._pendingRetries-- }, delay)
+            setTimeout(() => { this._pendingRetries--; this.enqueue(fn, args, retries + 1); this._maybeDrain() }, delay)
           } else {
             console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: fn?.name ?? 'unknown', event: 'dlq', msg: '[arc:queue] job permanently failed after 3 retries — moved to dead letter queue', error: _e?.message ?? String(_e) }))
             if (this._dead.length >= 1000) { this._dead.shift(); console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:queue] DLQ cap reached — oldest entry evicted' })) }
@@ -55,8 +55,12 @@ const _queue = {
     }
     // Notify drain waiters AFTER _running is false so any work enqueued from within
     // a drain callback correctly starts a new _process() rather than being dropped.
-    // Check again here because a retry may have re-enqueued during the loop above.
-    if (this._items.length === 0 && this._pendingRetries === 0) {
+    this._maybeDrain()
+  },
+  _maybeDrain() {
+    // Called from both _process() end and retry callbacks so drain resolvers fire
+    // only when the queue is truly idle (no items, not running, no pending retries).
+    if (this._items.length === 0 && !this._running && this._pendingRetries === 0) {
       const resolvers = this._drainResolvers.splice(0)
       for (const resolve of resolvers) resolve()
     }
@@ -91,13 +95,18 @@ const email = {
       let res
       for (let _attempt = 0; _attempt <= 1; _attempt++) {
         if (_attempt > 0) await new Promise(r => setTimeout(r, 1000))
-        res = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { Authorization: \`Bearer \${resendKey}\`, 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(15000),
-          body: _body,
-        })
-        if (res.ok || res.status < 500) break
+        try {
+          res = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { Authorization: \`Bearer \${resendKey}\`, 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(15000),
+            body: _body,
+          })
+          if (res.ok || res.status < 500) break
+        } catch (_fetchErr) {
+          if (_attempt >= 1) throw _fetchErr
+          // network error — retry once
+        }
       }
       if (!res.ok) {
         const _errBody = await res.text().catch(() => '')
