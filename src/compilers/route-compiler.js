@@ -65,16 +65,103 @@ function compileRoutes(routes, opts = {}) {
   return emitDispatchFn(root, opts)
 }
 
+// Collect all routes reachable without any :param segment — their full path is a
+// compile-time literal we can match directly via switch(_pathname), skipping
+// split('/').filter(Boolean) for every request that hits them.
+function collectStaticPaths(root) {
+  const result = []
+  function walk(node, prefix) {
+    if (node.handlers.size > 0) {
+      result.push({ path: prefix || '/', handlers: node.handlers })
+    }
+    for (const [seg, child] of node.children) {
+      walk(child, prefix + '/' + seg)
+    }
+    // Do not walk paramChild — those paths are dynamic
+  }
+  walk(root, '')
+  return result
+}
+
 function emitDispatchFn(root, opts = {}) {
   const extra = opts.extraParam ? `, ${opts.extraParam}` : ''
+
+  // Static path fast path: direct string equality avoids .split('/').filter(Boolean)
+  // for every request that hits a param-free route.
+  const staticPaths = collectStaticPaths(root)
+  let fastPath = ''
+  if (staticPaths.length > 0) {
+    const cases = staticPaths.map(({ path, handlers }) => {
+      const methodCases = [...handlers.entries()]
+        .map(([m, h]) => `        case '${m}': return ${h}(req, _EMPTY_PARAMS)`)
+        .join('\n')
+      return `    case '${path}':\n      switch (req.method) {\n${methodCases}\n        default: return new Response('Method Not Allowed', { status: 405 })\n      }`
+    }).join('\n')
+    fastPath = `switch (_pathname) {\n${cases}\n  }\n  `
+  }
+
   const body = emitTrieNodeWithExtra(root, 0, 1, extra)
   return `
-function _dispatch(req, url${extra}) {
-  const segments = url.pathname.slice(1).split('/').filter(Boolean)
+const _EMPTY_PARAMS = Object.create(null)
+function _dispatch(req, _pathname${extra}) {
+  ${fastPath}const segments = _pathname.slice(1).split('/').filter(Boolean)
   const method = req.method
-  const params = {}
+  let params = _EMPTY_PARAMS
   ${body}
-  return new Response('Not Found', { status: 404 })
+}`.trim()
+}
+
+// Emit Bun native routes object (C++ routing — fastest path).
+// Bun.serve({ routes }) dispatches before JS executes, bypassing the JS trie entirely.
+function emitBunRoutesObject(routes, opts = {}) {
+  const byPath = new Map()
+  for (const { method, path, handlerName } of routes) {
+    if (!byPath.has(path)) byPath.set(path, [])
+    byPath.get(path).push({ method: method.toUpperCase(), handlerName })
+  }
+
+  const preambleLines = []
+  if (!opts.noTracing) {
+    preambleLines.push(`        const _clientId = req.headers.get('x-request-id') ?? ''`)
+    preambleLines.push(`        req._traceId = _TRACE_ID_RE.test(_clientId) ? _clientId : crypto.randomUUID().slice(0, 8)`)
+  }
+  if (!opts.noRateLimit) {
+    preambleLines.push(`        const _rl = _checkRateLimit(req); if (_rl) return _rl`)
+  }
+  const preamble = preambleLines.length > 0 ? '\n' + preambleLines.join('\n') : ''
+
+  const healthEntry = `    '/health': {
+      GET: async () => _json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' }),
+    },`
+
+  const routeEntries = []
+  for (const [path, methods] of byPath) {
+    const handlerLines = methods.map(({ method, handlerName }) => {
+      const staticConstName = opts.staticHandlers?.get(handlerName)
+      // Item 4: static routes use a sync wrapper — no async/await overhead
+      if (staticConstName && !preamble) {
+        return `      ${method}: (_req, _ctx) => ${staticConstName},`
+      }
+      if (staticConstName && preamble) {
+        // Preamble is sync (rate-limit check) — still avoid Promise for the return
+        return `      ${method}: (req, _ctx) => {${preamble}
+        return ${staticConstName}
+      },`
+      }
+      return `      ${method}: async (req, { params }) => {${preamble}
+        return ${handlerName}(req, params ?? {})
+      },`
+    }).join('\n')
+    routeEntries.push(`    '${path}': {\n${handlerLines}\n    },`)
+  }
+
+  return `
+// Bun native routes object — dispatched in C++ before JS executes
+const _arcRoutes = {
+  routes: {
+${healthEntry}
+${routeEntries.join('\n')}
+  },
 }`.trim()
 }
 
@@ -84,12 +171,17 @@ function emitTrieNodeWithExtra(node, depth, indent, extra) {
   const lines = []
 
   if (node.children.size === 0 && !node.paramChild) {
-    lines.push(`${pad}switch (method) {`)
-    for (const [method, handler] of node.handlers) {
-      lines.push(`${pad}  case '${method}': return ${handler}(req, params${extra})`)
+    if (node.handlers.size === 0) {
+      // Leaf with no handlers (e.g., empty routes list) — return 404
+      lines.push(`${pad}return new Response('Not Found', { status: 404 })`)
+    } else {
+      lines.push(`${pad}switch (method) {`)
+      for (const [method, handler] of node.handlers) {
+        lines.push(`${pad}  case '${method}': return ${handler}(req, params${extra})`)
+      }
+      lines.push(`${pad}  default: return new Response('Method Not Allowed', { status: 405 })`)
+      lines.push(`${pad}}`)
     }
-    lines.push(`${pad}  default: return new Response('Method Not Allowed', { status: 405 })`)
-    lines.push(`${pad}}`)
     return lines.join('\n')
   }
 
@@ -103,6 +195,7 @@ function emitTrieNodeWithExtra(node, depth, indent, extra) {
     }
     if (node.paramChild) {
       lines.push(`${pad}  default: {`)
+      lines.push(`${pad}    if (params === _EMPTY_PARAMS) params = Object.create(null)`)
       lines.push(`${pad}    params['${node.param}'] = seg${depth}`)
       lines.push(emitTrieNodeWithExtra(node.paramChild, depth + 1, indent + 2, extra))
       lines.push(`${pad}  }`)
@@ -111,6 +204,7 @@ function emitTrieNodeWithExtra(node, depth, indent, extra) {
     }
     lines.push(`${pad}}`)
   } else if (node.paramChild) {
+    lines.push(`${pad}if (params === _EMPTY_PARAMS) params = Object.create(null)`)
     lines.push(`${pad}params['${node.param}'] = segments[${depth}]`)
     lines.push(emitTrieNodeWithExtra(node.paramChild, depth + 1, indent, extra))
   }
@@ -135,4 +229,4 @@ function emitMethodDispatchWithExtra(handlers, pad, extra) {
   return lines.join('\n')
 }
 
-module.exports = { compileRoutes, insertRoute, makeNode }
+module.exports = { compileRoutes, emitBunRoutesObject, insertRoute, makeNode }

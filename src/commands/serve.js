@@ -48,6 +48,11 @@ async function serve(projectDir, flags, buildServer) {
     ? path.join(absDir, 'server')
     : absDir
 
+  // --port flag: pass as PORT env var to the child process
+  const childEnv = flags.port
+    ? { ...process.env, PORT: String(flags.port) }
+    : process.env
+
   let child = null
   let _rebuilding = false
 
@@ -56,7 +61,7 @@ async function serve(projectDir, flags, buildServer) {
       child.removeAllListeners()
       child.kill('SIGTERM')
     }
-    const thisChild = spawn(runtime, [outFile], { stdio: 'inherit', env: process.env })
+    const thisChild = spawn(runtime, [outFile], { stdio: 'inherit', env: childEnv })
     child = thisChild
     thisChild.on('error', e => console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_spawn_failed', msg: e.message })))
     thisChild.on('exit', (code, signal) => {

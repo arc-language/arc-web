@@ -184,6 +184,26 @@ test('route-compiler: empty routes returns safe dispatch', () => {
   assert.ok(js.includes('404'), '404 for empty routes')
 })
 
+test('route-compiler: emits static path switch for param-free routes', () => {
+  const js = compileRoutes([
+    { method: 'GET', path: '/', handlerName: '_route_get_root' },
+    { method: 'GET', path: '/users', handlerName: '_route_get_users' },
+    { method: 'GET', path: '/users/:id', handlerName: '_route_get_users_id' },
+  ])
+  assert.ok(js.includes("case '/'"), 'root path in static switch')
+  assert.ok(js.includes("case '/users'"), 'users path in static switch')
+  assert.ok(!js.includes("case '/users/:id'"), 'param path not in static switch')
+})
+
+test('route-compiler: static switch precedes segment split', () => {
+  const js = compileRoutes([
+    { method: 'GET', path: '/', handlerName: '_route_get_root' },
+  ])
+  const switchPos = js.indexOf("switch (_pathname)")
+  const splitPos = js.indexOf("split('/')")
+  assert.ok(switchPos < splitPos, 'static switch emitted before split')
+})
+
 // ── BunServerEmitter ──────────────────────────────────────────────────────────
 
 test('BunServerEmitter: emits empty string for programs with no routes/models', () => {
@@ -205,6 +225,36 @@ test('BunServerEmitter: emits Bun.serve() for programs with routes', () => {
   assert.ok(out.includes('Bun.serve'), 'Bun.serve() emitted')
   assert.ok(out.includes('_dispatch'), 'dispatch function emitted')
   assert.ok(out.includes('_route_get_posts'), 'route handler emitted')
+})
+
+test('BunServerEmitter: static literal routes emit sync handler', () => {
+  const prog = parse(`
+@route get "/" -> Response
+  json({ ok: true })
+`)
+  const out = new BunServerEmitter({}).emitProgram(prog)
+  assert.ok(!out.includes('async function _route_get_root'), 'static handler is not async')
+  assert.ok(out.includes('function _route_get_root(req, params) { return _STATIC__route_get_root }'), 'sync static handler emitted')
+})
+
+test('BunServerEmitter: async handler preserved for routes with await', () => {
+  const prog = parse(`
+@route post "/echo" -> Response
+  const body = parseBody(request)
+  json(body)
+`)
+  const out = new BunServerEmitter({}).emitProgram(prog)
+  assert.ok(out.includes('async function _route_post_echo'), 'non-static handler stays async')
+})
+
+test('BunServerEmitter: fetch handler is sync', () => {
+  const prog = parse(`
+@route get "/" -> Response
+  json({ ok: true })
+`)
+  const out = new BunServerEmitter({}).emitProgram(prog)
+  assert.ok(out.includes('fetch(req) {'), 'fetch handler is sync')
+  assert.ok(!out.includes('async fetch(req)'), 'fetch handler is not async')
 })
 
 test('BunServerEmitter: emits CREATE TABLE for model declarations', () => {
@@ -325,4 +375,33 @@ model Post
   const emitter = new BunServerEmitter({ db: 'postgres' })
   const out = emitter.emitProgram(prog)
   assert.ok(out.includes('async ('), 'async db methods emitted')
+})
+
+// ── Echo fast path ────────────────────────────────────────────────────────────
+
+test('BunServerEmitter: echo pattern emits arrayBuffer passthrough', () => {
+  const prog = parse(`
+@route post "/echo" -> Response
+  const body = parseBody(request)
+  json(body)
+`)
+  const out = new BunServerEmitter({}).emitProgram(prog)
+  assert.ok(out.includes('arrayBuffer'), 'arrayBuffer passthrough emitted')
+  assert.ok(out.includes('[echo]'), 'echo comment tag emitted')
+  assert.ok(!out.includes('const parseBody = _parseBody'), 'no parseBody alias in echo handler')
+  // The echo handler itself must not stringify — check the specific handler function
+  const echoStart = out.indexOf('// Route: POST /echo [echo]')
+  const echoEnd = out.indexOf('\n}', echoStart) + 2
+  assert.ok(!out.slice(echoStart, echoEnd).includes('JSON.stringify'), 'no JSON.stringify in echo handler body')
+})
+
+test('BunServerEmitter: non-echo post route uses normal handler', () => {
+  const prog = parse(`
+@route post "/items" -> Response
+  const body = parseBody(request)
+  json({ received: true })
+`)
+  const out = new BunServerEmitter({}).emitProgram(prog)
+  assert.ok(!out.includes('[echo]'), 'non-echo route not tagged as echo')
+  assert.ok(out.includes('_parseBody'), 'normal handler uses _parseBody')
 })

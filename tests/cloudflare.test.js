@@ -18,7 +18,7 @@ function parse(src) {
 test('route-compiler: no extraParam passes (req, params)', () => {
   const js = compileRoutes([{ method: 'GET', path: '/posts', handlerName: '_route_get_posts' }])
   assert.ok(js.includes('_route_get_posts(req, params)'), 'no extra param by default')
-  assert.ok(js.includes('function _dispatch(req, url)'), 'dispatch has 2 params')
+  assert.ok(js.includes('function _dispatch(req, _pathname)'), 'dispatch has 2 params')
 })
 
 test('route-compiler: extraParam=env passes (req, params, env)', () => {
@@ -27,7 +27,7 @@ test('route-compiler: extraParam=env passes (req, params, env)', () => {
     { extraParam: 'env' }
   )
   assert.ok(js.includes('_route_get_posts(req, params, env)'), 'env forwarded to handler')
-  assert.ok(js.includes('function _dispatch(req, url, env)'), 'dispatch has env param')
+  assert.ok(js.includes('function _dispatch(req, _pathname, env)'), 'dispatch has env param')
 })
 
 // ── CloudflareEmitter ─────────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ test('CloudflareEmitter: emits export default with fetch handler', () => {
   const { worker } = emitter.emitProgram(prog)
   assert.ok(worker.includes('export default'), 'CF export default emitted')
   assert.ok(worker.includes('async fetch(req, env, ctx)'), 'CF fetch handler emitted')
-  assert.ok(worker.includes('_dispatch(req, url, env)'), 'env forwarded to dispatch')
+  assert.ok(worker.includes('_dispatch(req, url.pathname, env)'), 'env forwarded to dispatch')
 })
 
 test('CloudflareEmitter: uses D1 bindings for model queries', () => {
