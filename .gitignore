@@ -1,3 +1,6 @@
+arc-compiler/target/
+benchmarks/
+bun.lock
 .optimizer-cache/
 .testproof-cache/
 .cleanproof-cache/
