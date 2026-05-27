@@ -1,0 +1,5 @@
+/home/claude/arc/arc-compiler/target/release/build/serde_core-a27c34c79878a8da/build_script_build-a27c34c79878a8da.d: /home/claude/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.228/build.rs
+
+/home/claude/arc/arc-compiler/target/release/build/serde_core-a27c34c79878a8da/build_script_build-a27c34c79878a8da: /home/claude/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.228/build.rs
+
+/home/claude/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.228/build.rs:
