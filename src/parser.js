@@ -644,6 +644,18 @@ class Parser {
         }
         break
       }
+
+      // `class` is a reserved keyword (T.CLASS) but is valid as an HTML attribute
+      if (t.type === T.CLASS) {
+        const next = this.tokens[this.pos + 1]
+        if (next?.type === T.EQ) {
+          this.pos += 2
+          attrs['class'] = this.parseExpr()
+          continue
+        }
+        break
+      }
+
       break
     }
     return attrs
