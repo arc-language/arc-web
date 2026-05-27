@@ -13,13 +13,31 @@ function tableName(modelName) {
   return modelName.toLowerCase() + 's'
 }
 
+// Derive SQL DEFAULT value from a field's initializer literal node
+function _fieldDefaultSql(field, dialect) {
+  const node = field.init
+  if (!node || node.type !== 'Literal') return ''
+  const v = node.value
+  if (v === null || v === undefined) return ' DEFAULT NULL'
+  if (typeof v === 'boolean') return dialect === 'postgres' ? ` DEFAULT ${v}` : ` DEFAULT ${v ? 1 : 0}`
+  if (typeof v === 'number') return ` DEFAULT ${v}`
+  if (typeof v === 'string') return ` DEFAULT '${v.replace(/'/g, "''")}'`
+  return ''
+}
+
 // Build the desired column definitions from an Arc ModelDecl
 function desiredColumns(schema, dialect = 'sqlite') {
   const idDef = dialect === 'postgres' ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'
   const nonIdFields = (schema.fields ?? []).filter(f => f.name && !f.decorators?.includes('@id'))
   const cols = [{ name: 'id', sql: idDef, isPk: true }]
   for (const f of nonIdFields) {
-    cols.push({ name: f.name, sql: arcTypeToSql(f.typeAnnotation?.name, dialect), isPk: false })
+    const rawType = f.typeAnnotation?.name ?? ''
+    const isOptional = f.typeAnnotation?.nullable === true || rawType.endsWith('?') || f.optional === true
+    const sqlType = arcTypeToSql(rawType.replace(/\?$/, ''), dialect)
+    const notNull = isOptional ? '' : ' NOT NULL'
+    const unique = f.decorators?.includes('@unique') ? ' UNIQUE' : ''
+    const defaultVal = _fieldDefaultSql(f, dialect)
+    cols.push({ name: f.name, sql: `${sqlType}${notNull}${defaultVal}${unique}`, isPk: false })
   }
   return cols
 }
@@ -211,5 +229,57 @@ async function migrate(schemas, opts = {}) {
   return { applied: !dry, upToDate: false, report, sql: allStatements.join('\n') }
 }
 
-module.exports = { migrate, generateModelMigration, desiredColumns, tableName, arcTypeToSql }
+// Drop all model tables from the database (used by arc db reset)
+async function dropTables(schemas, opts = {}) {
+  const dialect = opts.db ?? 'sqlite'
+  const dbUrl = opts.url ?? (dialect === 'postgres' ? 'postgres://localhost/app' : 'app.db')
+  const tableNames = schemas.map(s => tableName(s.name)).filter(t => _SAFE_IDENT.test(t))
+
+  if (dialect === 'postgres') {
+    const { Client } = require('pg')
+    const client = new Client({ connectionString: dbUrl })
+    await client.connect()
+    try {
+      await client.query('BEGIN')
+      for (const tbl of tableNames) {
+        await client.query(`DROP TABLE IF EXISTS ${tbl} CASCADE`)
+      }
+      await client.query('COMMIT')
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {})
+      throw e
+    } finally {
+      await client.end().catch(() => {})
+    }
+    return { dropped: tableNames }
+  }
+
+  // SQLite: drop each table, or delete the file if it exists and all model tables are being cleared
+  const fs = require('fs')
+  try { await fs.promises.access(dbUrl) } catch { return { dropped: [] } }
+
+  let Database
+  try {
+    ;({ Database } = require('bun:sqlite'))
+  } catch {
+    try { Database = require('better-sqlite3') }
+    catch { throw new Error('arc db reset: install better-sqlite3 or run with bun') }
+  }
+
+  const db = new Database(dbUrl)
+  try {
+    // Check all existing tables — if only model tables + sqlite internals remain, we can drop safely
+    const existing = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(r => r.name)
+    const modelSet = new Set(tableNames)
+    const toDrop = existing.filter(t => modelSet.has(t))
+    db.transaction(() => {
+      for (const tbl of toDrop) db.exec(`DROP TABLE IF EXISTS ${tbl}`)
+    })()
+    return { dropped: toDrop }
+  } finally {
+    db.close()
+  }
+}
+
+module.exports = { migrate, generateModelMigration, desiredColumns, tableName, dropTables, arcTypeToSql }
 

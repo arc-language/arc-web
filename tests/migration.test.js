@@ -53,9 +53,11 @@ model Post
   assert.strictEqual(cols[0].name, 'id')
   assert.ok(cols[0].sql.includes('PRIMARY KEY'))
   assert.strictEqual(cols[1].name, 'title')
-  assert.strictEqual(cols[1].sql, 'TEXT')
+  assert.ok(cols[1].sql.startsWith('TEXT'))
+  assert.ok(cols[1].sql.includes('NOT NULL'))
   assert.strictEqual(cols[2].name, 'published')
-  assert.strictEqual(cols[2].sql, 'INTEGER')
+  assert.ok(cols[2].sql.startsWith('INTEGER'))
+  assert.ok(cols[2].sql.includes('NOT NULL'))
 })
 
 test('desiredColumns: Postgres uses SERIAL and correct types', () => {
@@ -68,9 +70,12 @@ model User
 `)
   const cols = desiredColumns(schema, 'postgres')
   assert.ok(cols[0].sql.includes('SERIAL'))
-  assert.strictEqual(cols[1].sql, 'TEXT')   // Email → TEXT
-  assert.strictEqual(cols[2].sql, 'BOOLEAN')
-  assert.strictEqual(cols[3].sql, 'TIMESTAMPTZ')
+  assert.ok(cols[1].sql.startsWith('TEXT'))        // Email → TEXT
+  assert.ok(cols[1].sql.includes('NOT NULL'))
+  assert.ok(cols[2].sql.startsWith('BOOLEAN'))
+  assert.ok(cols[2].sql.includes('NOT NULL'))
+  assert.ok(cols[3].sql.startsWith('TIMESTAMPTZ'))
+  assert.ok(cols[3].sql.includes('NOT NULL'))
 })
 
 // ── generateModelMigration ────────────────────────────────────────────────────
