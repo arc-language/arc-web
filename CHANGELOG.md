@@ -65,6 +65,16 @@ Arc becomes a **full-stack language**. The same `.arc` source now compiles to bo
   ```
 - **`arc new --template api`** — scaffolds a full-stack API project with `server/routes/`, `server/schemas/`, `server/jobs/`, `server/seed.arc`.
 
+### Performance
+
+- **Arc lean server: 56,856 req/s on `GET /`** (static HTML) — 2× Hono, 10× Next.js, measured with autocannon 100 connections pipelining=1.
+- **Arc lean server: 41,178 req/s on `POST /api/echo`** — leading all Bun frameworks including Hono (38,717) and Elysia (33,398).
+- **Sync static handlers** — `GET` routes with compile-time-constant responses emit a sync `function` instead of `async function`, eliminating one Promise allocation per request.
+- **Sync `fetch` handler** — `Bun.serve({ fetch })` is sync; Bun accepts both `Response` and `Promise<Response>` return values, so static routes bypass the microtask queue entirely.
+- **Compile-time dispatch fast path** — `switch(_pathname)` over literal strings precedes the radix-trie `split('/')` for all param-free routes, saving two allocations per request on the most common paths.
+- **Echo pattern optimization** — routes matching `const body = parseBody(request); json(body)` compile to raw `ArrayBuffer` passthrough with zero JSON parse/stringify overhead.
+- **JSON-first body parser** — `_parseBody` checks `application/json` before `multipart/form-data`, saving one `includes()` call on the hot path for API routes.
+
 ### Fixed
 
 - **`auth.github` → `oauth.github`** in `examples/api/server/routes/auth.arc` — GitHub OAuth lives on the `oauth` object, not `auth`.

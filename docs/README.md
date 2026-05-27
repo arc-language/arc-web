@@ -35,6 +35,7 @@ Complete reference for the [Arc compiler](../README.md). Start with [Getting Sta
 | [Image Pipeline](features/images.md) | AVIF/WebP/JPEG, smart format selection, dedup |
 | [Edge Rendering](features/edge-rendering.md) | `@live` + `@server`; targets; streaming |
 | [Realtime](features/realtime.md) | `@realtime` channels; ADP binary frames |
+| [Backend HTTP Server](reference/cli.md#arc-build-server-dir) | `@route`, `@auth`, `arc/db` models, background `job`s — compiles to Bun or Cloudflare Workers |
 | [Multi-page Sites](features/multi-page.md) | `arc build-site`, shared CSS, prefetch, View Transitions |
 | [Deployment](features/deployment.md) | `_headers`, sitemap, Cloudflare / Netlify / Bun / Deno / Node |
 | [Accessibility](features/accessibility.md) | Skip link, sr-only, `prefers-reduced-motion`, ARIA defaults |

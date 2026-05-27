@@ -15,6 +15,7 @@ Quick table first; detailed sections below.
 | Edge SSR | Vercel/Cloudflare adapter | adapter per host | adapter per host | n/a | **built-in (WinterCG)** |
 | Realtime / WebSocket | bring your own | bring your own | bring your own | bring your own | **`@realtime`** |
 | Binary RPC format | JSON | JSON | JSON | JSON | **ADP (3× smaller)** |
+| Backend HTTP server | API routes (Node.js) | n/a | n/a | n/a | **`@route` → Bun / CF Workers** |
 | Production deps | hundreds | tens | dozens | 0 | **0** |
 
 Tradeoffs follow.
@@ -193,7 +194,7 @@ Arc's output is the same idea but auto-emits:
 - **You're integrating into an existing React/Vue/Svelte app** — Arc replaces, doesn't embed
 - **You need full TypeScript types from npm libraries** — Arc has its own type system; `.ts` files aren't compilable input
 - **Your team's existing skills are React/Vue/etc.** — switching cost matters more than payload bytes for many projects
-- **You need a mature plugin ecosystem TODAY** — Arc is 0.1.0; the plugin story is still emerging
+- **You need a mature plugin ecosystem TODAY** — Arc is 0.2.x; the plugin story is still emerging
 
 ---
 

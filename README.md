@@ -6,7 +6,7 @@
 
 <br>
 
-[![Tests](https://img.shields.io/badge/tests-1071%20passing-brightgreen?style=flat-square)](#)
+[![Tests](https://img.shields.io/badge/tests-1150%20passing-brightgreen?style=flat-square)](#)
 [![Coverage](https://img.shields.io/badge/coverage-95.85%25-brightgreen?style=flat-square)](#)
 [![Build](https://img.shields.io/badge/build-0.11s-brightgreen?style=flat-square)](#)
 [![Bundle](https://img.shields.io/badge/output-1688%20B%20Brotli-blue?style=flat-square)](#)
@@ -34,6 +34,7 @@ No framework runtime ships to the browser. Ever.
 | **Static page (Brotli)** | 200 KB | 1.8 KB | **1.7 KB** |
 | **Dashboard client JS** | 225 KB | 0 B† | **225 B** |
 | **Build time** | 14 s | 1.5 s | **0.11 s** |
+| **Backend req/s (GET /)** | 5,658 | n/a | **56,856** |
 | **Runtime deps to install** | hundreds | tens | **zero** |
 | **Auto sitemap / `_headers`** | plugin | plugin | **built-in** |
 | **Image pipeline (AVIF + WebP)** | plugin | plugin | **built-in** |
@@ -245,6 +246,45 @@ Measured on Linux 6.8 / Node 24 / Chrome 149. Lighthouse mobile profile (Slow 4G
 ```
 
 **Arc is 10–250× faster to build than its competitors.**
+
+### Full-stack server throughput (HTML page + JSON API, same process)
+
+Measured on Linux 6.8 / Bun 1.x / Node.js 24. autocannon: 100 connections, 10 s, pipelining=1.
+
+#### GET / — pre-compiled static HTML
+
+```
+                  requests/second (higher is better)
+                  ───────────────────────────────────────────────────────────
+  Arc lean     ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇   56,856  ← winner
+  Elysia (Bun) ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                          30,351
+  Hono (Bun)   ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                          29,992
+  Fastify      ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                               24,345
+  Next.js      ▇▇▇▇▇                                               5,658
+```
+
+#### POST /api/echo — JSON request/response
+
+```
+                  requests/second (higher is better)
+                  ───────────────────────────────────────────────────────────
+  Arc lean     ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                41,178  ← winner
+  Hono (Bun)   ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                  38,717
+  Elysia (Bun) ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                      33,398
+  Fastify      ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                                    17,420
+  Next.js      ▇▇▇▇                                                 4,032
+```
+
+| Framework | GET / | POST /echo | p99 GET / | p99 POST |
+| --- | ---: | ---: | ---: | ---: |
+| **Arc lean (Bun)** | **56,856** | **41,178** | **5 ms** | **6 ms** |
+| Hono (Bun) | 29,992 | 38,717 | 9 ms | 5 ms |
+| Elysia (Bun) | 30,351 | 33,398 | 11 ms | 9 ms |
+| Fastify (Node) | 24,345 | 17,420 | 9 ms | 16 ms |
+| Next.js (Node) | 5,658 | 4,032 | 70 ms | 53 ms |
+
+Arc's `GET /` is **pre-compiled to a `Response` constant at build time** — zero per-request HTML work.
+The POST echo path uses **raw `ArrayBuffer` passthrough** — zero JSON parse/stringify.
 
 ---
 
@@ -471,7 +511,7 @@ flowchart LR
     A[index.arc] --> B[Lexer]
     B --> C[Parser]
     C --> D[Checker]
-    D --> E[@build exec]
+    D --> E["@build exec"]
     E --> F[Optimizer]
     F --> G[Img Pipeline]
     G --> H[HTML emit]
@@ -516,6 +556,8 @@ flowchart LR
 ```bash
 arc build [dir]            # Single-page build → dist/index.html
 arc build-site [dir]       # Multi-page build with shared CSS, sitemap, _headers
+arc build-server [dir]     # Full-stack Bun server → dist/server.js
+arc build-server --watch   # Rebuild on any .arc change (hot server dev)
 arc dev [dir]              # Watch mode with live reload
 arc check [files…]         # Type + a11y check without emitting
 arc new <name>             # Scaffold a project (--template default|counter|blog)
@@ -557,7 +599,7 @@ Extensive reference + recipes + internals at [`docs/`](docs/). Highlights:
 ## 🤝 Contributing
 
 Arc is small (~5,200 lines of pure Node, zero deps). Every PR runs:
-- 1,058 tests with the built-in Node test runner
+- 1,150 tests with the built-in Node test runner
 - 95.85% line coverage, 86.52% branch, 91.59% function
 - Lighthouse-100 verification on the example sites
 

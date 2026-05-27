@@ -27,7 +27,7 @@ Maintainers will review for the criteria above and merge if eligible. Submitting
 
 ## Live sites
 
-*This section is empty pending the public 0.1.0 launch. Submit yours!*
+*No community submissions yet — be the first! Open a PR or start a [Showcase Discussion](https://github.com/arc-language/arc-web/discussions/categories/showcase).*
 
 ## Examples + reference projects
 

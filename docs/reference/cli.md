@@ -73,6 +73,37 @@ If `dir` has only one `.arc` file, `build-site` falls back to `build`.
 
 See [Multi-page](../features/multi-page.md).
 
+## `arc build-server [dir]`
+
+Compile all `@route` declarations in `dir` into a production Bun HTTP server.
+
+```bash
+arc build-server              # build current dir
+arc build-server my-api       # build my-api/
+```
+
+Output:
+```
+dist/
+└── server.js     # self-contained Bun server (bun run dist/server.js)
+```
+
+Flags:
+
+| Flag | Effect |
+| --- | --- |
+| `--no-rate-limit` | Omit built-in rate-limiter middleware |
+| `--no-tracing` | Omit request trace ID injection |
+| `--bun-routes` | Use Bun native C++ route dispatcher (fastest, Bun 1.x only) |
+| `--db postgres` | Emit PostgreSQL queries + `pg` Pool (default: SQLite via `bun:sqlite`) |
+
+Stats:
+```
+arc: server built → dist/server.js (18.1 KB)
+```
+
+See [Deployment](../features/deployment.md) for running in production.
+
 ## `arc dev [dir]`
 
 Watch mode with live reload. Browser reconnects automatically when files change.
@@ -92,6 +123,42 @@ Live reload uses Server-Sent Events. Endpoints:
 - `/styles.css`, `/app.js` — assets
 
 The dev server uses `arc build` internally; it does not run `build-site` (no shared CSS in dev — fewer reloads).
+
+## `arc db <subcommand>`
+
+Manage database schema and data for projects with `model` declarations.
+
+```bash
+arc db migrate [dir]   # diff models against live DB, apply missing tables/columns
+arc db status  [dir]   # show per-model migration status (no changes applied)
+arc db reset   [dir]   # drop all model tables, re-migrate, run seed.arc if present
+arc db seed    [dir]   # run server/seed.arc
+```
+
+Flags shared by all subcommands:
+
+| Flag | Effect |
+| --- | --- |
+| `--db sqlite\|postgres` | Dialect (default: `sqlite`) |
+| `--url <url>` | Connection string (default: `app.db` or `DATABASE_URL`) |
+
+Additional flags:
+
+| Flag | Subcommand | Effect |
+| --- | --- | --- |
+| `--dry` | `migrate` | Show SQL that would run without applying |
+| `--no-seed` | `reset` | Skip seed step after reset |
+
+Example output:
+
+```
+  ⚡ arc db  →  app.db
+
+  CREATE  posts    (id, title, body, published, createdAt)
+  ALTER   users    (+email)
+
+  ✓  2 migrations applied in 34ms
+```
 
 ## `arc check [files...]`
 

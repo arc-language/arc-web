@@ -25,7 +25,7 @@ npx arc-web build
 
 ```bash
 arc --version
-# 0.1.0
+# 0.2.0
 ```
 
 ## Optional: image pipeline
@@ -60,6 +60,7 @@ my-app/
 cd my-app
 arc build               # single page  → dist/index.html
 arc build-site          # multi-page   → dist/*.html + shared.css + sitemap + _headers
+arc build-server        # full-stack server → dist/server.js
 arc dev                 # watch mode with live reload
 ```
 
