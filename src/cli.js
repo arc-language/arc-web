@@ -51,10 +51,13 @@ async function resolveImports(program, projectDir, filename, visited, rootDir) {
     const src = imp.source
     if (!src || src.startsWith('arc/')) continue // stdlib - not a file
 
+    const fileDir = path.dirname(path.resolve(projectDir, filename))
     const candidates = [
       path.resolve(projectDir, src),
       path.resolve(projectDir, src + '.arc'),
       path.resolve(projectDir, src.replace(/\.arc$/, '') + '.arc'),
+      path.resolve(fileDir, src),
+      path.resolve(fileDir, src + '.arc'),
     ]
     const importPath = candidates.find(p => fs.existsSync(p))
     if (!importPath) {
@@ -117,6 +120,9 @@ async function resolveImports(program, projectDir, filename, visited, rootDir) {
         merged.push(decl)
       } else if (decl.type === 'StateDecl' && wantedNames.has(decl.name)) {
         merged.push(decl)
+      } else if (decl.type === 'DesignBlock') {
+        // Always merge design blocks (they define CSS tokens/globals, no name to match)
+        merged.push(decl)
       }
     }
   }
@@ -155,7 +161,7 @@ async function compile(source, filename = '<input>', options = {}) {
 
   // 2b. Resolve imports - read imported .arc files and merge their declarations
   const initialVisited = new Set(filename !== '<input>' ? [path.resolve(filename)] : [])
-  program = await resolveImports(program, projectDir, filename, initialVisited)
+  program = await resolveImports(program, projectDir, filename, initialVisited, options.rootDir)
 
   // 3. Semantic check
   const checker = new Checker(filename)
@@ -301,6 +307,18 @@ function hashString(str) {
   return h
 }
 
+// Walk up from dir to find the nearest ancestor containing package.json (project root)
+function _findProjectRoot(dir) {
+  let d = path.resolve(dir)
+  for (let i = 0; i < 8; i++) {
+    if (fs.existsSync(path.join(d, 'package.json'))) return d
+    const parent = path.dirname(d)
+    if (parent === d) break
+    d = parent
+  }
+  return path.resolve(dir)
+}
+
 // ── Build command ──────────────────────────────────────────────────────────
 
 async function build(projectDir) {
@@ -328,9 +346,10 @@ async function build(projectDir) {
   const sourceMapBuilder = new SourceMapBuilder()
   const _t0 = Date.now()
 
+  const rootDir = _findProjectRoot(absDir)
   let result
   try {
-    result = await compile(source, filename, { projectDir: absDir, distDir: path.join(absDir, 'dist'), sourceMap: sourceMapBuilder })
+    result = await compile(source, filename, { projectDir: absDir, rootDir, distDir: path.join(absDir, 'dist'), sourceMap: sourceMapBuilder })
   } catch (e) {
     formatError(e, source, filename)
     process.exit(1)
@@ -538,11 +557,12 @@ async function buildSite(projectDir) {
   // Shared pipeline deduplicates image processing across concurrent page builds.
   // Without sharing, two pages referencing the same image would race to write the same output file.
   const sharedImgPipeline = new ImagePipeline({ srcDir: absDir, outDir: distDir })
+  const rootDir = _findProjectRoot(absDir)
   const compiled = await Promise.all(arcFiles.map(async f => {
     const source = await fs.promises.readFile(path.join(absDir, f), 'utf8')
     let result
     try {
-      result = await compile(source, f, { projectDir: absDir, distDir, sharedImgPipeline })
+      result = await compile(source, f, { projectDir: absDir, rootDir, distDir, sharedImgPipeline })
     } catch (e) { formatError(e, source, f); return null }
     // Pull page-level meta (canonical, etc.) for sitemap emission
     const pageDecl = result.program?.declarations?.find(d => d.type === 'PageDecl')

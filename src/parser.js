@@ -5,7 +5,7 @@ const N = require('./ast')
 
 // Hoisted regexes used in parseStyleValue: avoids per-token allocation
 const _CSS_UNIT_RE = /^(px|em|rem|%|vh|vw|vmin|vmax|svh|dvh|ch|ex|fr|deg|rad|ms|s)$/
-const _CSS_NUM_RE = /^\d/
+const _CSS_NUM_RE = /^-?\d/
 const _RE_LOWERCASE_START = /^[a-z]/
 const _RE_UPPERCASE_START = /^[A-Z]/
 // Frozen map used in parseRouteDecl: avoids per-call object allocation
@@ -13,6 +13,93 @@ const _ROUTE_METHOD_MAP = Object.freeze({ DEL: 'DELETE', PATCH: 'PATCH' })
 
 // Hoisted to avoid per-rule object allocation in parseStyleRule
 const _PSEUDO_SHORTHANDS = Object.freeze({ hover: ':hover', focus: ':focus-visible', active: ':active', disabled: ':disabled', checked: ':checked', placeholder: '::placeholder' })
+
+// Consume CSS function body after the opening '(' has been appended to `fn`.
+// Uses space-separated parts for proper CSS output, joining commas tightly.
+function _consumeCssFunctionBody(tokens, parser, fn) {
+  const parts = []
+  let depth = 1
+  while (tokens[parser.pos] && depth > 0) {
+    const ft = tokens[parser.pos]
+    if (ft.type === T.RPAREN) {
+      depth--
+      parser.pos++
+      if (depth === 0) break
+      if (parts.length > 0) parts[parts.length - 1] += ')'
+      else parts.push(')')
+      continue
+    }
+    if (ft.type === T.NEWLINE || ft.type === T.DEDENT || ft.type === T.EOF) { depth = 0; break }
+    if (ft.type === T.COMMA) {
+      if (parts.length > 0) parts[parts.length - 1] += ','
+      else parts.push(',')
+      parser.pos++
+      continue
+    }
+    if (ft.type === T.HASH) {
+      parser.pos++
+      let hex = '#'
+      while (tokens[parser.pos]?.type === T.IDENT || tokens[parser.pos]?.type === T.NUMBER) {
+        hex += String(tokens[parser.pos++].value ?? '')
+      }
+      parts.push(hex)
+      continue
+    }
+    if (ft.type === T.MINUS) {
+      parser.pos++
+      if (parts.length > 0) {
+        const next = tokens[parser.pos]
+        if (next && next.type === T.IDENT) {
+          parts[parts.length - 1] += '-' + next.value
+          parser.pos++
+          if (tokens[parser.pos]?.type === T.LPAREN) {
+            let inner = parts.pop() + '('
+            parser.pos++
+            depth++
+            inner = _consumeCssFunctionBody(tokens, parser, inner)
+            depth-- // balanced by recursive call
+            parts.push(inner)
+          }
+        } else if (next && next.type === T.NUMBER) {
+          // handles -2 in --bg-2 or negative numbers like -0.5
+          parts[parts.length - 1] += '-' + String(next.value)
+          parser.pos++
+        } else {
+          parts[parts.length - 1] += '-'
+        }
+      } else {
+        const next = tokens[parser.pos]
+        if (next && next.type === T.NUMBER) { parts.push('-' + String(next.value)); parser.pos++ }
+        else parts.push('-')
+      }
+      continue
+    }
+    if (ft.type === T.LPAREN) {
+      parser.pos++; depth++
+      const base = (parts.length > 0 ? parts.pop() : '') + '('
+      const inner = _consumeCssFunctionBody(tokens, parser, base)
+      depth--
+      parts.push(inner)
+      continue
+    }
+    if (ft.type === T.IDENT && tokens[parser.pos + 1]?.type === T.LPAREN) {
+      let inner = ft.value + '('
+      parser.pos += 2; depth++
+      inner = _consumeCssFunctionBody(tokens, parser, inner)
+      depth--
+      parts.push(inner)
+      continue
+    }
+    const prev = parts[parts.length - 1]
+    const val = String(ft.value ?? ft.type)
+    const isUnit = _CSS_UNIT_RE.test(val)
+    const prevIsNum = prev !== undefined && _CSS_NUM_RE.test(prev)
+    if (isUnit && prevIsNum) parts[parts.length - 1] = prev + val
+    else parts.push(val)
+    parser.pos++
+  }
+  return fn + parts.join(' ') + ')'
+}
 
 // Annotations allowed inside template blocks: Set for O(1) vs O(7) Array.includes
 const _TEMPLATE_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker'])
@@ -860,6 +947,13 @@ class Parser {
         continue
       }
 
+      // COLON prefix: pseudo-element/class selector (:root, :host, :where, etc.)
+      if (pt.type === T.COLON) {
+        const rule = this.parseStyleRule()
+        if (rule) nestedRules.push(rule)
+        continue
+      }
+
       // IDENT: either a direct property (prop: value) or a selector block (body { ... })
       if (pt.type === T.IDENT) {
         const next = this.tokens[this.pos + 1]
@@ -971,6 +1065,30 @@ class Parser {
           children.push(this.parseStyleRule())
           continue
         }
+      }
+
+      // CSS custom property declaration: --name: value
+      if (pt.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.MINUS) {
+        this.pos += 2 // consume --
+        let propName = '--'
+        if (this.tokens[this.pos]?.type === T.IDENT) {
+          propName += this.tokens[this.pos++].value
+          while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.IDENT) {
+            this.pos++
+            propName += '-' + this.tokens[this.pos++].value
+          }
+          while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.NUMBER) {
+            this.pos++
+            propName += '-' + String(this.tokens[this.pos++].value)
+          }
+        }
+        if (this.tokens[this.pos]?.type === T.COLON) {
+          this.pos++
+          const value = this.parseStyleValue()
+          props.push(N.StyleProp(propName, value, pt.line))
+        }
+        this.consumeNewlines()
+        continue
       }
 
       // Property: name: value (name may be hyphenated: align-items, min-height, etc.)
@@ -1088,6 +1206,28 @@ class Parser {
       while (this.tokens[this.pos]?.type !== T.DEDENT && this.tokens[this.pos]?.type !== T.EOF) {
         this.consumeNewlines()
         if (this.tokens[this.pos]?.type === T.DEDENT || this.tokens[this.pos]?.type === T.EOF) break
+        const pt = this.tokens[this.pos]
+        // CSS custom property: --name: value (inline in @dark, @mobile, etc.)
+        if (pt?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.MINUS) {
+          this.pos += 2
+          let propName = '--'
+          if (this.tokens[this.pos]?.type === T.IDENT) {
+            propName += this.tokens[this.pos++].value
+            while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.IDENT) {
+              this.pos++; propName += '-' + this.tokens[this.pos++].value
+            }
+            while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.NUMBER) {
+              this.pos++; propName += '-' + String(this.tokens[this.pos++].value)
+            }
+          }
+          if (this.tokens[this.pos]?.type === T.COLON) {
+            this.pos++
+            const value = this.parseStyleValue()
+            rules.push(N.StyleProp(propName, value, pt.line))
+          }
+          this.consumeNewlines()
+          continue
+        }
         const before = this.pos
         const rule = this.parseStyleRule()
         if (rule) rules.push(rule)
@@ -1107,32 +1247,52 @@ class Parser {
       if (t.type === T.NEWLINE || t.type === T.INDENT || t.type === T.DEDENT ||
           t.type === T.RBRACE || t.type === T.EOF) break
 
-      // HASH token: join with following hex value/ident as a color (#111, #f9fafb)
+      // HASH token: join all adjacent NUMBER/IDENT tokens into one hex color (#111, #818cf8)
       if (t.type === T.HASH) {
         this.pos++
-        const nextTok = this.tokens[this.pos]
-        if (nextTok && nextTok.type !== T.NEWLINE && nextTok.type !== T.DEDENT && nextTok.type !== T.EOF) {
-          parts.push('#' + String(nextTok.value ?? ''))
-          this.pos++
-        } else {
-          parts.push('#')
+        let hex = '#'
+        while (this.tokens[this.pos]) {
+          const nt = this.tokens[this.pos]
+          if (nt.type === T.IDENT || nt.type === T.NUMBER) {
+            hex += String(nt.value ?? '')
+            this.pos++
+          } else break
         }
+        parts.push(hex)
         continue
       }
 
-      // MINUS token: join directly to surrounding tokens (CSS hyphenated names: system-ui, sans-serif)
+      // MINUS token: join to surrounding tokens (hyphenated names, negative numbers)
       if (t.type === T.MINUS) {
         this.pos++
         if (parts.length > 0) {
           const next = this.tokens[this.pos]
           if (next && next.type === T.IDENT) {
+            // hyphenated name: system-ui, linear-gradient, etc.
             parts[parts.length - 1] = parts[parts.length - 1] + '-' + next.value
             this.pos++
+            // After joining (e.g. "linear-gradient"), check if followed by ( → function call
+            if (this.tokens[this.pos]?.type === T.LPAREN) {
+              let fn = parts.pop() + '('
+              this.pos++ // skip (
+              fn = _consumeCssFunctionBody(this.tokens, this, fn)
+              parts.push(fn)
+            }
+          } else if (next && (next.type === T.NUMBER || next.type === T.MINUS)) {
+            // negative value: -0.03em or --custom-prop
+            parts[parts.length - 1] = parts[parts.length - 1] + '-'
           } else {
             parts[parts.length - 1] = parts[parts.length - 1] + '-'
           }
         } else {
-          parts.push('-')
+          // leading minus: negative number at start of value
+          const next = this.tokens[this.pos]
+          if (next && next.type === T.NUMBER) {
+            parts.push('-' + String(next.value))
+            this.pos++
+          } else {
+            parts.push('-')
+          }
         }
         continue
       }
@@ -1142,6 +1302,25 @@ class Parser {
         if (parts.length > 0) parts[parts.length - 1] += ','
         else parts.push(',')
         this.pos++
+        continue
+      }
+
+      // LPAREN not following an ident (e.g. standalone grouping) — attach to previous if possible
+      if (t.type === T.LPAREN) {
+        // Check if the last part ends with ident-like char (for missed function names)
+        let fn = (parts.length > 0 ? parts.pop() : '') + '('
+        this.pos++
+        fn = _consumeCssFunctionBody(this.tokens, this, fn)
+        parts.push(fn)
+        continue
+      }
+
+      // CSS function call: ident( ... ) — consume entire call as one token without spaces
+      if (t.type === T.IDENT && this.tokens[this.pos + 1]?.type === T.LPAREN) {
+        let fn = t.value + '('
+        this.pos += 2 // skip ident and (
+        fn = _consumeCssFunctionBody(this.tokens, this, fn)
+        parts.push(fn)
         continue
       }
 
