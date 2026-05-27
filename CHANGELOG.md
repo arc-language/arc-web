@@ -2,6 +2,33 @@
 
 All notable changes to Arc are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-05-27
+
+### Performance
+
+- **POST echo fast-path** — `@route post "/echo"` bodies that only do `const body = parseBody(request); json(body)` now emit a raw `ArrayBuffer` passthrough at compile time. Zero parse/stringify overhead; measured **+37% throughput** on echo workloads.
+- **JSON-first body parsing** — `_parseBody` now checks `application/json` before `multipart/form-data`, saving one string comparison per JSON API request.
+- **Static route switch** — routes without URL parameters now dispatch via a `switch(_pathname)` block instead of the radix trie walk, eliminating `split('/').filter(Boolean)` on the hot path.
+
+### Added
+
+- **`arc db status`** — shows per-model pending/up-to-date state without applying changes. `△ pending (+col)` / `✓ up to date` per table.
+- **`arc db reset`** — drops all model tables, re-migrates, and auto-runs `seed.arc` if present. Accepts `--no-seed` to skip seeding.
+- **Rust compiler** (`arc-compiler/`) — faster lexer/parser for `.arc` server files. Used automatically when available; falls back to JS parser transparently.
+
+### Improved
+
+- **Visual terminal output** — `arc build`, `arc dev`, `arc build-server`, and `arc db` all now print styled banners with timing, asset sizes, and route tables in TTY. Plain-text fallback for CI (`NO_COLOR`, non-TTY).
+- **Server startup banner** — generated `server.js` now prints `⚡ arc server` with URL, DB type, and compile-time route table in terminal; JSON log in CI/pipe.
+- **`arc serve --port`** — `--port` flag now correctly forwarded as `PORT` env var to the server child process.
+- **Cloudflare emitter** — fixed `_dispatch` receiving full URL object instead of `url.pathname`.
+
+### Docs
+
+- Added full-stack server throughput benchmark results (56,856 GET req/s, 41,178 POST req/s on commodity hardware).
+- Added `arc db status`, `arc db reset`, and `arc build-server --watch` to CLI reference.
+- Fixed Mermaid diagram in README (`@build exec` label was causing GitHub parse error).
+
 ## [0.2.0] — 2026-05-24
 
 Arc becomes a **full-stack language**. The same `.arc` source now compiles to both a Bun HTTP server (`arc build --target bun`) and a Cloudflare Workers edge bundle (`arc build --target cloudflare`). No config files, no boilerplate — routes, models, auth, queues, and email are all first-class language features.

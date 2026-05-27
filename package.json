@@ -1,6 +1,6 @@
 {
   "name": "arc-web",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Arc — a full-stack language for the web. Compiles to optimal HTML/CSS/JS (frontend) and Bun/Cloudflare Workers servers (backend). Zero runtime, zero dependencies.",
   "main": "src/cli.js",
   "bin": {
