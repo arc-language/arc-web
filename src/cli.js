@@ -28,6 +28,13 @@ const { RED, GREEN, YELLOW, CYAN, DIM, RESET, formatError, showSourceContext } =
 const { findArcFiles } = require('./utils/fs')
 const N = require('./ast')
 
+// Stdout-specific colors (build output goes to stdout, errors to stderr)
+const _TTY = process.stdout.isTTY && !process.env.NO_COLOR
+const _OCYAN  = _TTY ? '\x1b[36m' : ''
+const _OGREEN = _TTY ? '\x1b[32m' : ''
+const _ODIM   = _TTY ? '\x1b[2m'  : ''
+const _ORST   = _TTY ? '\x1b[0m'  : ''
+
 // ── Import resolver ────────────────────────────────────────────────────────
 // Reads imported .arc files, extracts their widget/fn/style declarations,
 // and merges them into the importing program's declaration list.
@@ -318,6 +325,7 @@ async function build(projectDir) {
   const filename = path.relative(process.cwd(), entryFile)
 
   const sourceMapBuilder = new SourceMapBuilder()
+  const _t0 = Date.now()
 
   let result
   try {
@@ -380,13 +388,25 @@ async function build(projectDir) {
   const edgeSize = result.edgeFunctions ? Buffer.byteLength(result.edgeFunctions) : 0
   const liveSize = result.liveEdgeFunction ? Buffer.byteLength(result.liveEdgeFunction) : 0
 
-  console.log(`arc: built ${filename}`)
-  console.log(`  HTML  ${fmt(htmlSize)}`)
-  console.log(`  CSS   ${fmt(cssSize)}`)
-  console.log(`  JS    ${jsSize === 0 ? '0 bytes (static)' : fmt(jsSize)}`)
-  if (edgeSize > 0) console.log(`  Edge  ${fmt(edgeSize)} (@server functions)`)
-  if (liveSize > 0) console.log(`  Live  ${fmt(liveSize)} (@live edge renderer)`)
-  console.log(`  → ${path.relative(process.cwd(), distDir)}/`)
+  const _elapsed = Date.now() - _t0
+  if (_TTY) {
+    const _rel = path.relative(process.cwd(), distDir) || 'dist'
+    console.log(`\n  ${_OCYAN}⚡ arc${_ORST}  →  ${_rel}/\n`)
+    console.log(`  ${_ODIM}HTML${_ORST}    ${fmt(htmlSize)}`)
+    console.log(`  ${_ODIM}CSS ${_ORST}    ${fmt(cssSize)}`)
+    console.log(`  ${_ODIM}JS  ${_ORST}    ${jsSize === 0 ? `${_ODIM}0 B  (static)${_ORST}` : fmt(jsSize)}`)
+    if (edgeSize > 0) console.log(`  ${_ODIM}Edge${_ORST}    ${fmt(edgeSize)}  ${_ODIM}(@server)${_ORST}`)
+    if (liveSize > 0) console.log(`  ${_ODIM}Live${_ORST}    ${fmt(liveSize)}  ${_ODIM}(@live)${_ORST}`)
+    console.log(`\n  ${_OGREEN}✓${_ORST}  built in ${_ODIM}${_elapsed}ms${_ORST}\n`)
+  } else {
+    console.log(`arc: built ${filename}`)
+    console.log(`  HTML  ${fmt(htmlSize)}`)
+    console.log(`  CSS   ${fmt(cssSize)}`)
+    console.log(`  JS    ${jsSize === 0 ? '0 bytes (static)' : fmt(jsSize)}`)
+    if (edgeSize > 0) console.log(`  Edge  ${fmt(edgeSize)} (@server functions)`)
+    if (liveSize > 0) console.log(`  Live  ${fmt(liveSize)} (@live edge renderer)`)
+    console.log(`  → ${path.relative(process.cwd(), distDir)}/`)
+  }
 }
 
 // Split a (minified or not) CSS string into top-level rules - selectors and
@@ -1063,7 +1083,13 @@ async function dev(projectDir) {
     process.exit(1)
   })
   server.listen(port, () => {
-    console.log(`arc: dev server → http://localhost:${port}`)
+    if (_TTY) {
+      console.log(`\n  ${_OCYAN}⚡ arc dev${_ORST}\n`)
+      console.log(`  ○  http://localhost:${port}`)
+      console.log(`     ${_ODIM}watching · ${filename}${_ORST}\n`)
+    } else {
+      console.log(`arc: dev server → http://localhost:${port}`)
+    }
   })
 
   const shutdown = () => {
@@ -1080,7 +1106,7 @@ async function dev(projectDir) {
   process.on('SIGTERM', shutdown)
 
   // File watcher with debounce to avoid multiple rebuilds per save
-  console.log('arc: watching for changes...')
+  if (!_TTY) console.log('arc: watching for changes...')
   let rebuildTimer = null
   let building = false
   let rebuildRequested = false
@@ -1095,7 +1121,11 @@ async function dev(projectDir) {
         do {
           building = true
           rebuildRequested = false
-          console.log(`arc: ${changedFile} changed, rebuilding...`)
+          if (_TTY) {
+            console.log(`  ${_OCYAN}↺${_ORST}  ${_ODIM}${changedFile} changed${_ORST}`)
+          } else {
+            console.log(`arc: ${changedFile} changed, rebuilding...`)
+          }
           const t0 = Date.now()
           try {
             _spaFallbackHtml = null  // invalidate SPA fallback cache before rebuild so in-flight requests read fresh files
@@ -1104,7 +1134,11 @@ async function dev(projectDir) {
             for (const client of [...reloadClients]) {
               try { client.write('data: reload\n\n') } catch { reloadClients.delete(client) }
             }
-            console.log(`arc: rebuilt in ${dur}ms → reload sent to ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''}`)
+            if (_TTY) {
+              console.log(`  ${_OGREEN}✓${_ORST}  rebuilt in ${_ODIM}${dur}ms${_ORST} · ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''} notified`)
+            } else {
+              console.log(`arc: rebuilt in ${dur}ms → reload sent to ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''}`)
+            }
           } catch (e) {
             // Read the source of the changed file so formatError can show context.
             // Best-effort - the actual error may come from an import; in that case
@@ -1444,19 +1478,33 @@ async function dbCommand(args) {
 
 function parseServerFlags(args) {
   const flags = {}
-  const flagNames = ['--db', '--target']
-  for (const flag of flagNames) {
+  const valueFlags = ['--db', '--target', '--port']
+  for (const flag of valueFlags) {
     const idx = args.indexOf(flag)
     if (idx !== -1 && args[idx + 1]) flags[flag.slice(2)] = args[idx + 1]
+  }
+  // Boolean flags
+  if (args.includes('--no-rate-limit')) flags.noRateLimit = true
+  if (args.includes('--no-tracing')) flags.noTracing = true
+  if (args.includes('--bun-routes')) flags.bunRoutes = true
+  if (args.includes('--watch')) flags.watch = true
+  // --cors [origin] — optional value, defaults to '*'
+  const corsIdx = args.indexOf('--cors')
+  if (corsIdx !== -1) {
+    const next = args[corsIdx + 1]
+    flags.cors = (next && !next.startsWith('--')) ? next : '*'
   }
   return flags
 }
 
 function isServerFlagValue(args, a) {
-  for (const flag of ['--db', '--target']) {
+  for (const flag of ['--db', '--target', '--port']) {
     const idx = args.indexOf(flag)
     if (idx !== -1 && args[idx + 1] === a) return true
   }
+  // --cors with explicit origin value
+  const corsIdx = args.indexOf('--cors')
+  if (corsIdx !== -1 && args[corsIdx + 1] === a && !a.startsWith('--')) return true
   return false
 }
 
