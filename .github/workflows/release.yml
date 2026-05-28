@@ -15,14 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # Pin actions to commit SHAs (supply-chain security — floating tags like @v4
-      # can be silently moved to a different commit by the action author).
-      # To update: `gh release view --repo actions/checkout` to get the latest SHA.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af  # v4.1.0
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
@@ -71,7 +68,7 @@ jobs:
           echo "body_path=/tmp/release_body.md" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@e7a8d5e5de2eb4ecf1e7ece8ddcc48e0ae9a9d5f  # v2.3.2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: ${{ steps.changelog.outputs.body_path }}
           draft: false
