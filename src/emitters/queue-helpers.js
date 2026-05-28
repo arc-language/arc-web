@@ -44,9 +44,12 @@ const _queue = {
             this._pendingRetries++
             setTimeout(() => { this._pendingRetries--; this.enqueue(fn, args, retries + 1); this._maybeDrain() }, delay)
           } else {
-            console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: fn?.name ?? 'unknown', event: 'dlq', msg: '[arc:queue] job permanently failed after 3 retries — moved to dead letter queue', error: _e?.message ?? String(_e) }))
+            const _jobName = fn?.name ?? 'unknown'
+            console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: _jobName, event: 'dlq', msg: '[arc:queue] job permanently failed after 3 retries — moved to dead letter queue', error: _e?.message ?? String(_e) }))
             if (this._dead.length >= 1000) { this._dead.shift(); console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'dlq_cap_reached', msg: '[arc:queue] DLQ cap reached — oldest entry evicted' })) }
-            this._dead.push({ fn, args, error: _e?.message ?? String(_e), failedAt: new Date().toISOString() })
+            // Store job name + serialized args for inspectability; keep _fn reference for in-process replay
+            let _serializedArgs; try { _serializedArgs = JSON.parse(JSON.stringify(args)) } catch { _serializedArgs = null }
+            this._dead.push({ name: _jobName, args: _serializedArgs, _fn: fn, error: _e?.message ?? String(_e), failedAt: new Date().toISOString() })
           }
         }
       }
@@ -70,7 +73,17 @@ const _queue = {
 const Queue = {
   enqueue: (fn, ...args) => _queue.enqueue(fn, args),
   size: () => _queue._items.length,
-  dead: () => [..._queue._dead],
+  // dead() returns serializable snapshots: { name, args, error, failedAt } — safe to JSON.stringify
+  dead: () => _queue._dead.map(({ name, args, error, failedAt }) => ({ name, args, error, failedAt })),
+  // replayDead() re-enqueues all dead jobs for retry and clears the DLQ.
+  // Only works within the same process — in-process _fn references are gone after restart.
+  replayDead: () => {
+    const jobs = _queue._dead.splice(0)
+    for (const { _fn, args } of jobs) {
+      if (typeof _fn === 'function') _queue.enqueue(_fn, args ?? [])
+    }
+    return jobs.length
+  },
   drain: (timeoutMs = 30000) => new Promise((resolve, reject) => {
     if (_queue._items.length === 0 && !_queue._running && _queue._pendingRetries === 0) return resolve()
     const timer = setTimeout(() => reject(new Error('[arc:queue] drain timed out after ' + timeoutMs + 'ms')), timeoutMs)

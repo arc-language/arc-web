@@ -13,11 +13,11 @@
 class PostProcessor {
   constructor(options = {}) {
     this.options = options
-    this.criticalCssThreshold = options.criticalCssThreshold ?? 14336 // 14KB
   }
 
   // Main entry point: returns { html, css }
   process(html, css) {
+    if (typeof html !== 'string') throw new TypeError(`postProcess() expected html to be a string, got ${typeof html}`)
     let result = this.inlineCriticalCss(html, css)
     result.html = this.addResourceHints(result.html)
     result.html = this.minifyHtml(result.html)
@@ -26,40 +26,24 @@ class PostProcessor {
 
   // ── Critical CSS ──────────────────────────────────────────────────────────
   //
-  // Strategy: inline the @layer base (always needed) + component-specific CSS.
-  // Defer the stylesheet link so full CSS loads non-blocking.
-  //
-  // When CSS is small (<= threshold), just inline all of it: no split needed.
+  // Always inline all CSS into a <style> tag. This guarantees styles apply
+  // instantly with no external file dependency — works over file://, HTTP,
+  // CDN, and any other delivery mechanism without timing or loading issues.
 
   inlineCriticalCss(html, css) {
     if (!css || !css.trim()) return { html, css, cssInlined: false }
 
-    const cssBytes = Buffer.byteLength(css)
-
     // Escape </style> sequences that could break out of inline style tags
     const safeInline = (s) => s.replace(/<\/style>/gi, '<\\/style>')
 
-    // Small CSS: inline everything (minified), no external file needed
-    if (cssBytes <= this.criticalCssThreshold) {
-      const minified = this.minifyCss(css)
-      const inlined = html
-        .replace('<link rel="stylesheet" href="styles.css">', `<style>${safeInline(minified)}</style>`)
-      return { html: inlined, css, cssInlined: true }
+    const minified = this.minifyCss(css)
+    const inlined = html
+      .replace('<link rel="stylesheet" href="styles.css">', `<style data-arc-css>${safeInline(minified)}</style>`)
+    if (inlined === html) {
+      process.stderr.write('[arc] Warning: CSS link tag not found in HTML — styles may not be inlined\n')
+      return { html, css: minified, cssInlined: false }
     }
-
-    // Large CSS: split critical (@layer base + first component layer) from rest
-    const { critical, rest } = this.splitCriticalCss(css)
-
-    const preload = rest.trim()
-      ? `<link rel="preload" href="styles.css" as="style" onload="this.rel='stylesheet'">\n<noscript><link rel="stylesheet" href="styles.css"></noscript>`
-      : ''
-
-    const inlined = html.replace(
-      '<link rel="stylesheet" href="styles.css">',
-      `<style>${safeInline(this.minifyCss(critical))}</style>\n${preload}`
-    )
-
-    return { html: inlined, css, cssInlined: false }
+    return { html: inlined, css: minified, cssInlined: true }
   }
 
   // Conservative CSS minifier - strips comments, collapses whitespace, removes
@@ -83,30 +67,6 @@ class PostProcessor {
     // Restore strings
     s = s.replace(/__S(\d+)__/g, (_, i) => strings[parseInt(i, 10)])
     return s
-  }
-
-  splitCriticalCss(css) {
-    // Critical = @layer base block (always above the fold)
-    // Rest = @layer component and beyond
-    // Use brace counting instead of regex to correctly handle nested rules
-    const marker = '@layer base {'
-    const start = css.indexOf(marker)
-    if (start === -1) return { critical: css, rest: '' }
-
-    let depth = 0
-    let end = -1
-    for (let i = start; i < css.length; i++) {
-      if (css[i] === '{') depth++
-      else if (css[i] === '}') {
-        depth--
-        if (depth === 0) { end = i + 1; break }
-      }
-    }
-    if (end === -1) return { critical: css, rest: '' }
-
-    const critical = css.slice(start, end)
-    const rest = (css.slice(0, start) + css.slice(end)).trim()
-    return { critical, rest }
   }
 
   // ── Resource hints ────────────────────────────────────────────────────────
@@ -147,7 +107,10 @@ class PostProcessor {
       const tag = m[1].toLowerCase()
       const closeTag = `</${tag}>`
       const closeIdx = html.indexOf(closeTag, m.index + m[0].length)
-      if (closeIdx === -1) break  // unclosed tag: stop preserving, let the rest through
+      if (closeIdx === -1) {
+        process.stderr.write(`[arc] Warning: unclosed <${tag}> tag in HTML — minification may produce incorrect output\n`)
+        break
+      }
       const content = html.slice(m.index + m[0].length, closeIdx)
       const idx = preserved.length
       preserved.push(content)

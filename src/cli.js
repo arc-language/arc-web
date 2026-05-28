@@ -23,6 +23,7 @@ const { buildServer: _buildServerImpl } = require('./commands/build-server')
 const { serve: _serveImpl, createFileWatcher } = require('./commands/serve')
 const { dbCommand: _dbCommandImpl, runSeed: _runSeedImpl } = require('./commands/db')
 const { scaffold: _scaffoldImpl, scaffoldAll: _scaffoldAllImpl, scaffoldBlock: _scaffoldBlockImpl, scaffoldBlockInit: _scaffoldBlockInitImpl } = require('./commands/scaffold')
+const { newProject } = require('./new-command')
 const { emit: emitSiteMeta } = require('./emitters/site-meta')
 const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
 const { RED, GREEN, YELLOW, CYAN, DIM, RESET, formatError, showSourceContext } = require('./utils/errors')
@@ -40,7 +41,7 @@ const _ORST   = _TTY ? '\x1b[0m'  : ''
 // Reads imported .arc files, extracts their widget/fn/style declarations,
 // and merges them into the importing program's declaration list.
 
-async function resolveImports(program, projectDir, filename, visited, rootDir) {
+async function resolveImports(program, projectDir, filename, visited, rootDir, depsOut) {
   const topLevelRoot = rootDir ?? path.resolve(projectDir)
   const imports = program.declarations.filter(d => d.type === 'ImportDecl')
   if (imports.length === 0) return program
@@ -78,6 +79,7 @@ async function resolveImports(program, projectDir, filename, visited, rootDir) {
 
     if (visited.has(importPath)) continue
     visited.add(importPath)
+    depsOut?.add(importPath)
 
     let importedSource
     try {
@@ -103,7 +105,8 @@ async function resolveImports(program, projectDir, filename, visited, rootDir) {
       path.dirname(importPath),
       importPath,
       visited,
-      topLevelRoot
+      topLevelRoot,
+      depsOut
     )
 
     // Merge: bring in widget/fn/style declarations that match the import names
@@ -150,6 +153,7 @@ function _resolveImageFormats(program) {
 async function compile(source, filename = '<input>', options = {}) {
   const hash = options.hash ?? hashString(filename).toString(36).slice(0, 4)
   const projectDir = options.projectDir ?? path.dirname(path.resolve(filename))
+  const { depsOut } = options
 
   // 1. Lex
   const lexer = new Lexer(source, filename)
@@ -161,7 +165,7 @@ async function compile(source, filename = '<input>', options = {}) {
 
   // 2b. Resolve imports - read imported .arc files and merge their declarations
   const initialVisited = new Set(filename !== '<input>' ? [path.resolve(filename)] : [])
-  program = await resolveImports(program, projectDir, filename, initialVisited, options.rootDir)
+  program = await resolveImports(program, projectDir, filename, initialVisited, options.rootDir, depsOut)
 
   // 3. Semantic check
   const checker = new Checker(filename)
@@ -359,7 +363,13 @@ async function build(projectDir) {
 
   // Post-process: inline critical CSS, minify HTML, resource hints
   const withAssets = injectAssets(result.html, result.js)
-  const { html: finalHtml, css: finalCss, cssInlined } = postProcess(withAssets, result.css)
+  let finalHtml, finalCss, cssInlined
+  try {
+    ;({ html: finalHtml, css: finalCss, cssInlined } = postProcess(withAssets, result.css))
+  } catch (e) {
+    console.error(`arc: post-processing failed for ${filename}: ${e.message}`)
+    process.exit(1)
+  }
 
   try {
     fs.mkdirSync(distDir, { recursive: true })
@@ -403,7 +413,7 @@ async function build(projectDir) {
 
   // Stats
   const htmlSize = Buffer.byteLength(finalHtml)
-  const cssSize = Buffer.byteLength(result.css)
+  const cssSize = finalCss ? Buffer.byteLength(finalCss) : 0
   const jsSize = Buffer.byteLength(result.js)
   const edgeSize = result.edgeFunctions ? Buffer.byteLength(result.edgeFunctions) : 0
   const liveSize = result.liveEdgeFunction ? Buffer.byteLength(result.liveEdgeFunction) : 0
@@ -484,7 +494,7 @@ function _extractSharedCss(rulesByPage, threshold) {
 // and inline pageCssText as a <style> block. Returns the patched HTML.
 function _patchPageHtml(htmlContent, sharedFilename, pageCssText) {
   const linkTag = sharedFilename ? `<link rel="stylesheet" href="${sharedFilename}">` : ''
-  const pageStyle = pageCssText.trim() ? `<style>${pageCssText.replace(/<\/style>/gi, '<\\/style>')}</style>` : ''
+  const pageStyle = pageCssText.trim() ? `<style data-arc-css>${pageCssText.replace(/<\/style>/gi, '<\\/style>')}</style>` : ''
   return htmlContent.replace(
     '<link rel="stylesheet" href="styles.css">',
     linkTag + pageStyle
@@ -532,39 +542,51 @@ async function _injectPrefetchTags(distDir, compiled) {
 // Each page's HTML references the shared file via <link> + inlines any
 // page-specific rules. Result: browser caches the shared CSS once across all
 // routes; per-page HTML is dramatically smaller.
+// Quick scan: is this .arc source a page (has a `page` declaration)?
+// Partials/imports declare widget/fn/design but never `page`.
+function _isPageFile(source) {
+  return /(?:^|\n)\s*page\s+["']/.test(source.slice(0, 2000))
+}
+
 async function buildSite(projectDir) {
   const absDir = path.resolve(projectDir)
   const distDir = path.join(absDir, 'dist')
 
-  let arcFiles
-  try {
-    arcFiles = fs.readdirSync(absDir).filter(f => f.endsWith('.arc'))
-  } catch (e) {
-    console.error(`arc: cannot read ${absDir}: ${e.message}`); process.exit(1)
-  }
-  if (arcFiles.length === 0) {
+  // Discover all .arc files recursively (skips node_modules, dist, dotfiles)
+  const allArcFiles = findArcFiles(absDir)
+  if (allArcFiles.length === 0) {
     console.error(`arc: no .arc files in ${absDir}`); process.exit(1)
   }
-  if (arcFiles.length === 1) {
-    // Single page: defer to regular build
-    return build(projectDir)
+
+  // Read and filter to page files only — partials (widget/design/fn declarations) are skipped
+  const pageFiles = (await Promise.all(
+    allArcFiles.map(async absPath => {
+      let src
+      try { src = await fs.promises.readFile(absPath, 'utf8') } catch { return null }
+      return _isPageFile(src) ? { absPath, src } : null
+    })
+  )).filter(Boolean)
+
+  if (pageFiles.length === 0) {
+    console.error(`arc: no page declarations found in ${absDir}`); process.exit(1)
+  }
+  if (pageFiles.length === 1) {
+    return build(path.dirname(pageFiles[0].absPath))
   }
 
-  // Compile each .arc into html + raw CSS (pre-post-process). We post-process
-  // ourselves below so the inlined-CSS strategy can be replaced with the
-  // shared-file strategy.
   fs.mkdirSync(distDir, { recursive: true })
-  // Shared pipeline deduplicates image processing across concurrent page builds.
-  // Without sharing, two pages referencing the same image would race to write the same output file.
   const sharedImgPipeline = new ImagePipeline({ srcDir: absDir, outDir: distDir })
   const rootDir = _findProjectRoot(absDir)
-  const compiled = await Promise.all(arcFiles.map(async f => {
-    const source = await fs.promises.readFile(path.join(absDir, f), 'utf8')
+
+  const compiled = await Promise.all(pageFiles.map(async ({ absPath, src }) => {
+    // slug preserves directory structure: "index", "packages/index", "docs/quickstart"
+    const relPath = path.relative(absDir, absPath)
+    const slug = relPath.replace(/\.arc$/, '').replace(/\\/g, '/')
+    const relFilename = relPath.replace(/\\/g, '/')
     let result
     try {
-      result = await compile(source, f, { projectDir: absDir, rootDir, distDir, sharedImgPipeline })
-    } catch (e) { formatError(e, source, f); return null }
-    // Pull page-level meta (canonical, etc.) for sitemap emission
+      result = await compile(src, relFilename, { projectDir: absDir, rootDir, distDir, sharedImgPipeline })
+    } catch (e) { formatError(e, src, relFilename); return null }
     const pageDecl = result.program?.declarations?.find(d => d.type === 'PageDecl')
     const metaResolved = {}
     if (pageDecl?.meta) {
@@ -574,83 +596,73 @@ async function buildSite(projectDir) {
       }
     }
     return {
-      file: f,
-      slug: path.basename(f, '.arc'),
-      meta: metaResolved,
+      file: relFilename, slug, meta: metaResolved,
       html: result.html, css: result.css, js: result.js,
       edgeFunctions: result.edgeFunctions, liveEdgeFunction: result.liveEdgeFunction,
     }
   }))
-  if (compiled.some(r => r === null)) process.exit(1)
 
-  // Compute rule occurrences across all pages.
-  // Rules used by ≥2 pages go into shared.css; rules unique to one page stay
-  // inline. (Used by ALL N pages would be most cacheable, but ≥2 captures more
-  // bytes; the shared file is content-hashed so cacheability isn't affected.)
-  const rulesByPage = compiled.map(c => splitCssRules(c.css))
-  const { pageOnlyRules, filename: sharedFilename, sharedCssMinified } = _extractSharedCss(rulesByPage, 2)
-
-  if (sharedFilename) {
-    fs.writeFileSync(path.join(distDir, sharedFilename), sharedCssMinified)
+  const failed = pageFiles.filter((_, i) => compiled[i] === null)
+  if (failed.length > 0) {
+    console.error(`arc: ${failed.length} of ${pageFiles.length} file${failed.length > 1 ? 's' : ''} failed to compile:`)
+    for (const { absPath } of failed) console.error(`  ✗  ${path.relative(absDir, absPath)}`)
+    process.exit(1)
   }
 
   const pp = new PostProcessor()
 
-  // Emit per-page HTML: replace the existing <link rel="stylesheet" href="styles.css">
-  // (or any inlined <style>) with a link to the shared file plus inline page-specific rules.
   for (let i = 0; i < compiled.length; i++) {
     const c = compiled[i]
-    const baseName = path.basename(c.file, '.arc')
-    const pageCss = pp.minifyCss(pageOnlyRules[i].join('\n'))
-    const withAssets = injectAssets(c.html, c.js)
+    const outPath = path.join(distDir, c.slug + '.html')
+    fs.mkdirSync(path.dirname(outPath), { recursive: true })
 
-    // Start from the raw emitted HTML (still has <link rel="stylesheet" href="styles.css">)
-    // and patch it. We bypass postProcess.inlineCriticalCss to avoid full inlining.
-    let html = _patchPageHtml(withAssets, sharedFilename, pageCss)
-    // Apply HTML minification + resource hints from post-processor
+    const fullCss = pp.minifyCss(c.css)
+    // JS sits beside its HTML: dist/packages/index.js for dist/packages/index.html
+    const jsBasename = path.basename(c.slug) + '.js'
+    const withAssets = injectAssets(c.html, c.js, jsBasename)
+
+    let html = _patchPageHtml(withAssets, null, fullCss)
     html = pp.addResourceHints(html)
     html = pp.minifyHtml(html)
 
-    fs.writeFileSync(path.join(distDir, `${baseName}.html`), html)
-
+    fs.writeFileSync(outPath, html)
     if (c.js?.trim()) {
-      fs.writeFileSync(path.join(distDir, `${baseName}.js`), c.js)
+      fs.writeFileSync(path.join(path.dirname(outPath), jsBasename), c.js)
     }
   }
 
-  // Auto-emit sitemap.xml + robots.txt from collected page metadata.
-  const { sitemap, robots, baseUrl } = emitSiteMeta(compiled.map(c => ({ slug: c.slug, meta: c.meta })))
+  let sitemap, robots
+  try {
+    ;({ sitemap, robots } = emitSiteMeta(compiled.map(c => ({ slug: c.slug, meta: c.meta }))))
+  } catch (e) {
+    console.warn(`arc: warning: sitemap/robots generation failed: ${e.message}`)
+  }
   if (sitemap) fs.writeFileSync(path.join(distDir, 'sitemap.xml'), sitemap)
   if (robots) fs.writeFileSync(path.join(distDir, 'robots.txt'), robots)
 
-  // Auto-emit _headers (Cloudflare Pages / Netlify compatible). When this is
-  // emitted, the per-page CSP meta tag becomes redundant - strip it from HTML.
-  const headersText = emitHeadersManifest({ sharedCssFilename: sharedFilename })
+  const headersText = emitHeadersManifest({ sharedCssFilename: null })
   fs.writeFileSync(path.join(distDir, '_headers'), headersText)
 
-  // I2 post-pass: inject <link rel="prefetch"> for every same-site link target
-  // + <meta name="view-transition" content="same-origin"> for instant SPA-feel
-  // cross-page navigation. Also strip the now-redundant CSP meta tag.
-  await _injectPrefetchTags(distDir, compiled)
+  try {
+    await _injectPrefetchTags(distDir, compiled)
+  } catch (e) {
+    console.warn(`arc: warning: prefetch/view-transition injection failed: ${e.message}`)
+  }
 
-  // Stats summary
-  const htmlBytes = compiled.reduce((s, c, i) => {
-    const p = path.join(distDir, path.basename(c.file, '.arc') + '.html')
+  const htmlBytes = compiled.reduce((s, c) => {
+    const p = path.join(distDir, c.slug + '.html')
     return s + (fs.existsSync(p) ? fs.statSync(p).size : 0)
   }, 0)
-  const sharedBytes = sharedFilename ? fs.statSync(path.join(distDir, sharedFilename)).size : 0
-
   console.log(`arc: built site (${compiled.length} pages)`)
   console.log(`  HTML  ${fmt(htmlBytes)} total (${compiled.length} files)`)
-  if (sharedFilename) console.log(`  CSS   ${fmt(sharedBytes)} shared (${sharedFilename})`)
   if (sitemap) console.log(`  SEO   sitemap.xml (${compiled.filter(c => c.meta.canonical).length} urls) + robots.txt`)
   console.log(`  → ${path.relative(process.cwd(), distDir)}/`)
 }
 
-function injectAssets(html, js) {
+function injectAssets(html, js, jsFilename = 'app.js') {
   // Add <script> tag before </body> only if there's JS
   if (!js.trim()) return html
-  return html.replace(/<\/body>/i, '<script src="app.js" defer></script>\n</body>')
+  return html.replace(/<\/body>/i, `<script src="${jsFilename}" defer></script>\n</body>`)
 }
 
 function fmt(bytes) {
@@ -713,824 +725,6 @@ async function check(files) {
   if (errorCount > 0) process.exit(1)
 }
 
-// ── New command ────────────────────────────────────────────────────────────
-
-function newProject(name, template = 'default') {
-  const dir = path.resolve(name)
-
-  if (fs.existsSync(dir)) {
-    const existing = fs.readdirSync(dir)
-    if (existing.length > 0) {
-      console.error(`arc: "${name}" already exists and is not empty`)
-      process.exit(1)
-    }
-  }
-
-  fs.mkdirSync(dir, { recursive: true })
-
-  const safeName = name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
-
-  const TEMPLATES = {
-    default: {
-      'index.arc': `page "${name}"
-  heading "Welcome to ${name}"
-  text "Edit index.arc to get started."
-
-  design
-    body
-      font: system-ui, sans-serif
-      m: 0
-      p: 32px
-    h1
-      fg: #111827
-      size: 2rem
-`,
-      'package.json': JSON.stringify({
-        name: safeName,
-        version: '0.0.1',
-        private: true,
-        scripts: {
-          build: 'arc build .',
-          dev: 'arc dev .',
-          check: 'arc check index.arc',
-        },
-      }, null, 2) + '\n',
-      '.gitignore': 'dist/\nnode_modules/\n',
-    },
-
-    counter: {
-      'index.arc': `page "Counter"
-  @state let count = 0
-
-  col gap="24px" align="center"
-    heading "Counter"
-    text class="count" "{count}"
-    row gap="12px"
-      button on:click={ count -= 1 } "−"
-      button on:click={ count += 1 } "+"
-      button on:click={ count = 0 } "Reset"
-
-  design
-    body
-      font: system-ui, sans-serif
-      display: flex
-      align-items: center
-      justify-content: center
-      min-h: 100vh
-      m: 0
-      bg: #f9fafb
-    .count
-      size: 4rem
-      weight: 700
-      fg: #111
-      text-align: center
-    button
-      p: 10px 24px
-      bg: #111
-      fg: white
-      border: none
-      radius: 8px
-      size: 1rem
-      cursor: pointer
-`,
-      '.gitignore': 'dist/\nnode_modules/\n',
-    },
-
-    blog: {
-      'index.arc': `page "My Blog"
-  @build const posts = [
-    { title: "Hello, Arc!", date: "2026-01-01", body: "My first Arc post." },
-    { title: "Zero JS", date: "2026-01-15", body: "This page has no JavaScript." }
-  ]
-
-  col gap="32px"
-    heading "My Blog"
-    for post in posts
-      card
-        heading size=2 "{post.title}"
-        text class="date" "{post.date}"
-        text "{post.body}"
-
-  design
-    body
-      font: system-ui, sans-serif
-      max-w: 640px
-      m: 0 auto
-      p: 32px 16px
-    .date
-      fg: #6b7280
-      size: 14px
-`,
-      '.gitignore': 'dist/\nnode_modules/\n',
-    },
-
-    api: {
-      'server/schemas/post.arc': `model Post
-  @id let id = autoincrement()
-  let title: String
-  let body: String
-  let published: Bool = false
-  let createdAt: DateTime = now()
-`,
-      'server/routes/posts.arc': `@route get "/posts" -> Response
-  json(db.posts.findMany())
-
-@route get "/posts/:id" -> Response
-  const post = db.posts.find(params.id)
-  match post
-    None    -> json({ error: "not found" }, 404)
-    Some(p) -> json(p)
-
-@route post "/posts" -> Response
-  const body = parseBody(request)
-  const post = db.posts.create(body)
-  NotifySubscribers(post.id)
-  json(post, 201)
-
-@route del "/posts/:id" -> Response
-  db.posts.delete(params.id)
-  json({ ok: true })
-
-@route get "/health" -> Response
-  json({ status: "ok" })
-`,
-      'server/jobs/notify.arc': `job NotifySubscribers(postId: Int)
-  console.log("notifying subscribers for post", postId)
-  email.send({ to: "subscribers@example.com", subject: "New post", text: "A new post was published" })
-`,
-      'package.json': JSON.stringify({
-        name: safeName,
-        version: '0.0.1',
-        private: true,
-        scripts: {
-          dev: 'arc serve .',
-          build: 'arc build-server .',
-          migrate: 'arc db migrate .',
-          start: 'bun dist/server.js',
-        },
-      }, null, 2) + '\n',
-      'README.md': `# ${name}
-
-A backend API built with [Arc](https://arc-lang.dev).
-
-## Getting started
-
-\`\`\`bash
-arc db migrate   # create the database tables
-arc serve .      # start the server on http://localhost:3000
-\`\`\`
-
-## API
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /posts | List all posts |
-| GET | /posts/:id | Get a post by id |
-| POST | /posts | Create a post |
-| DELETE | /posts/:id | Delete a post |
-| GET | /health | Health check |
-`,
-      '.gitignore': 'dist/\nnode_modules/\napp.db\n',
-    },
-
-    cms: {
-      'server/schemas/user.arc': `model User
-  @id let id          = autoincrement()
-  @unique let email   : String
-  let name            : String?
-  let avatarUrl       : String?
-  let oauthProvider   : String
-  let oauthId         : String
-  let role            : String = "editor"
-  let createdAt       : DateTime = now()
-`,
-      'server/routes/auth.arc': `@route get "/auth/github" -> Response
-  redirect(oauth.github.authUrl())
-
-@route get "/auth/github/callback" -> Response
-  const profile = oauth.github.exchange(params.code)
-  const existing = db.users.findWhere({ email: profile.email })
-  const isFirst = db.users.count() == 0
-  const role = isFirst || profile.email == env("ADMIN_EMAIL") ? "admin" : "editor"
-  const user = match existing
-    None    -> db.users.create({ email: profile.email, name: profile.name, avatarUrl: profile.avatarUrl, oauthProvider: "github", oauthId: profile.id, role })
-    Some(u) -> u
-  session.set("userId", user.id)
-  redirect("/admin")
-
-@route get "/auth/google" -> Response
-  redirect(oauth.google.authUrl())
-
-@route get "/auth/google/callback" -> Response
-  const profile = oauth.google.exchange(params.code)
-  const existing = db.users.findWhere({ email: profile.email })
-  const isFirst = db.users.count() == 0
-  const role = isFirst || profile.email == env("ADMIN_EMAIL") ? "admin" : "editor"
-  const user = match existing
-    None    -> db.users.create({ email: profile.email, name: profile.name, avatarUrl: profile.avatarUrl, oauthProvider: "google", oauthId: profile.id, role })
-    Some(u) -> u
-  session.set("userId", user.id)
-  redirect("/admin")
-
-@route get "/auth/logout" -> Response
-  session.clear()
-  redirect("/admin/login")
-`,
-      'server/admin/routes/users.arc': `@route @auth(admin) get "/admin/users" -> Response
-  const limit = +(params.limit ?? 20)
-  const offset = +(params.offset ?? 0)
-  json({ users: db.users.findMany({ limit, offset }), total: db.users.count() })
-
-@route @auth(admin) get "/admin/users/:id" -> Response
-  const item = db.users.find(params.id)
-  match item
-    None    -> json({ error: "not found" }, 404)
-    Some(x) -> json(x)
-
-@route @auth(admin) patch "/admin/users/:id" -> Response
-  const body = parseBody(request)
-  json(db.users.update(params.id, body))
-
-@route @auth(admin) del "/admin/users/:id" -> Response
-  db.users.delete(params.id)
-  json({ ok: true })
-`,
-      'server/seed.arc': `# First admin is bootstrapped via OAuth — no seed needed
-# Uncomment to create a test user for local dev:
-# db.users.create({ email: "dev@example.com", name: "Dev User", oauthProvider: "dev", oauthId: "1", role: "admin" })
-`,
-      'admin/login.arc': `page "Sign In — Admin"
-
-  col class="login-page" align="center" justify="center"
-    col class="login-card" gap="28px" align="stretch"
-      col gap="6px" align="center"
-        text class="login-logo" "◈"
-        text class="login-title" "Admin"
-        text class="login-sub" "Sign in to continue"
-
-      col gap="10px"
-        link href="/auth/github"
-          button class="btn-github" "Sign in with GitHub"
-        link href="/auth/google"
-          button class="btn-google" "Sign in with Google"
-
-  design
-    :root
-      --bg: #ffffff
-      --bg-2: #f5f5f5
-      --bg-3: #efefef
-      --fg: #0a0a0a
-      --fg-2: #525252
-      --fg-3: #a3a3a3
-      --border: #e5e5e5
-      --invert-bg: #0a0a0a
-      --invert-fg: #ffffff
-      @dark
-        --bg: #0d0d0d
-        --bg-2: #161616
-        --bg-3: #1f1f1f
-        --fg: #f0f0f0
-        --fg-2: rgba(255,255,255,0.55)
-        --fg-3: rgba(255,255,255,0.28)
-        --border: rgba(255,255,255,0.08)
-        --invert-bg: #ffffff
-        --invert-fg: #0a0a0a
-    body
-      background-color: var(--bg)
-      color: var(--fg)
-      font: system-ui, -apple-system, sans-serif
-      m: 0
-    .login-page
-      min-height: 100vh
-      background-color: var(--bg)
-    .login-card
-      w: 340px
-      background-color: var(--bg-2)
-      border: 1px solid var(--border)
-      radius: 18px
-      p: 36px 32px
-      box-shadow: 0 2px 12px rgba(0,0,0,0.06)
-      @dark
-        box-shadow: 0 2px 12px rgba(0,0,0,0.45)
-    .login-logo
-      size: 28px
-      weight: 700
-      color: var(--fg)
-    .login-title
-      size: 20px
-      weight: 700
-      letter-spacing: -0.02em
-      color: var(--fg)
-    .login-sub
-      size: 14px
-      color: var(--fg-3)
-    .btn-github
-      w: 100%
-      p: 12px 20px
-      background-color: var(--invert-bg)
-      color: var(--invert-fg)
-      border: none
-      radius: 10px
-      size: 14px
-      weight: 600
-      cursor: pointer
-      text-align: center
-    .btn-google
-      w: 100%
-      p: 12px 20px
-      background-color: var(--bg-3)
-      color: var(--fg)
-      border: 1px solid var(--border)
-      radius: 10px
-      size: 14px
-      weight: 500
-      cursor: pointer
-      text-align: center
-    .btn-google:hover
-      background-color: var(--bg-3)
-      border-color: var(--fg-3)
-`,
-      'admin/index.arc': `page "Dashboard — Admin"
-
-  @server fn getDashboardStats() -> Any
-    return { users: db.users.count() }
-
-  @live const stats = getDashboardStats()
-
-  row class="app-layout"
-    col class="sidebar"
-      col class="sidebar-header"
-        text class="logo-mark" "◈"
-        text class="logo-text" "Admin"
-      col class="sidebar-nav"
-        link href="/admin" class="nav-item nav-active" "Dashboard"
-        link href="/admin/users" class="nav-item" "Users"
-        link href="/admin/blocks" class="nav-item" "Blocks"
-      col class="sidebar-footer"
-        link href="/auth/logout" class="nav-signout" "Sign out"
-
-    col class="main-area"
-      row class="topbar" align="center" p="0 24px"
-        text class="page-title" "Dashboard"
-
-      col class="page-content" p="24px" gap="24px"
-        row gap="16px"
-          col class="stat-card"
-            text class="stat-value" "{stats.users}"
-            text class="stat-label" "Users"
-
-        text class="hint" "Use arc scaffold <Model> to generate admin pages for your models."
-
-  design
-    :root
-      --bg: #ffffff
-      --bg-2: #f5f5f5
-      --bg-3: #efefef
-      --fg: #0a0a0a
-      --fg-2: #525252
-      --fg-3: #a3a3a3
-      --border: #e5e5e5
-      --invert-bg: #0a0a0a
-      --invert-fg: #ffffff
-      @dark
-        --bg: #0d0d0d
-        --bg-2: #161616
-        --bg-3: #1f1f1f
-        --fg: #f0f0f0
-        --fg-2: rgba(255,255,255,0.55)
-        --fg-3: rgba(255,255,255,0.28)
-        --border: rgba(255,255,255,0.08)
-        --invert-bg: #ffffff
-        --invert-fg: #0a0a0a
-    body
-      background-color: var(--bg)
-      color: var(--fg)
-      font: system-ui, -apple-system, sans-serif
-      m: 0
-      size: 14px
-    .app-layout
-      height: 100vh
-      background-color: var(--bg)
-    .sidebar
-      width: 220px
-      background-color: var(--bg-2)
-      border-right: 1px solid var(--border)
-      display: flex
-      flex-direction: column
-      flex-shrink: 0
-    .sidebar-header
-      display: flex
-      flex-direction: row
-      align-items: center
-      gap: 10px
-      p: 20px 16px 16px
-      border-bottom: 1px solid var(--border)
-    .logo-mark
-      size: 18px
-      weight: 700
-      color: var(--fg)
-    .logo-text
-      size: 14px
-      weight: 700
-      letter-spacing: -0.01em
-      color: var(--fg)
-    .sidebar-nav
-      display: flex
-      flex-direction: column
-      gap: 2px
-      p: 12px 8px
-      flex: 1
-    .nav-item
-      display: block
-      p: 8px 12px
-      radius: 8px
-      size: 13px
-      weight: 500
-      color: var(--fg-2)
-      text-decoration: none
-      transition: all 0.1s
-    .nav-item:hover
-      background-color: var(--bg-3)
-      color: var(--fg)
-    .nav-active
-      background-color: var(--bg-3)
-      color: var(--fg)
-      weight: 600
-    .sidebar-footer
-      p: 12px 8px 16px
-      border-top: 1px solid var(--border)
-    .nav-signout
-      display: block
-      p: 7px 12px
-      size: 12px
-      color: var(--fg-3)
-      text-decoration: none
-      radius: 7px
-    .nav-signout:hover
-      color: var(--fg-2)
-      background-color: var(--bg-3)
-    .main-area
-      flex: 1
-      display: flex
-      flex-direction: column
-      overflow: auto
-    .topbar
-      height: 52px
-      background-color: var(--bg-2)
-      border-bottom: 1px solid var(--border)
-      flex-shrink: 0
-    .page-title
-      size: 15px
-      weight: 600
-      letter-spacing: -0.01em
-    .page-content
-      flex: 1
-    .stat-card
-      p: 20px 24px
-      background-color: var(--bg-2)
-      border: 1px solid var(--border)
-      radius: 14px
-      min-w: 140px
-      box-shadow: 0 1px 3px rgba(0,0,0,0.04)
-    .stat-value
-      size: 28px
-      weight: 700
-      letter-spacing: -0.02em
-      color: var(--fg)
-    .stat-label
-      size: 11px
-      weight: 600
-      text-transform: uppercase
-      letter-spacing: 0.07em
-      color: var(--fg-3)
-      mt: 4px
-    .hint
-      size: 13px
-      color: var(--fg-3)
-`,
-      'admin/users.arc': `page "Users — Admin"
-
-  @server fn listUsers() -> Any
-    return { items: db.users.findMany({ limit: 50 }), total: db.users.count() }
-
-  @live const data = listUsers()
-
-  row class="app-layout"
-    col class="sidebar"
-      col class="sidebar-header"
-        text class="logo-mark" "◈"
-        text class="logo-text" "Admin"
-      col class="sidebar-nav"
-        link href="/admin" class="nav-item" "Dashboard"
-        link href="/admin/users" class="nav-item nav-active" "Users"
-        link href="/admin/blocks" class="nav-item" "Blocks"
-      col class="sidebar-footer"
-        link href="/auth/logout" class="nav-signout" "Sign out"
-
-    col class="main-area"
-      row class="topbar" justify="space-between" align="center" p="0 24px"
-        text class="page-title" "Users"
-
-      col class="page-content" p="24px"
-        col class="card"
-          table class="data-table"
-            thead
-              tr
-                th "ID"
-                th "Email"
-                th "Name"
-                th "Role"
-                th ""
-            for item in data.items
-              tr class="data-row"
-                td class="cell-mono" "#{item.id}"
-                td "{item.email}"
-                td "{item.name}"
-                td class="cell-role" "{item.role}"
-                td class="cell-actions"
-                  link href="/admin/users/{item.id}/edit"
-                    button class="btn-ghost" "Edit"
-
-  design
-    :root
-      --bg: #ffffff
-      --bg-2: #f5f5f5
-      --bg-3: #efefef
-      --fg: #0a0a0a
-      --fg-2: #525252
-      --fg-3: #a3a3a3
-      --border: #e5e5e5
-      --invert-bg: #0a0a0a
-      --invert-fg: #ffffff
-      @dark
-        --bg: #0d0d0d
-        --bg-2: #161616
-        --bg-3: #1f1f1f
-        --fg: #f0f0f0
-        --fg-2: rgba(255,255,255,0.55)
-        --fg-3: rgba(255,255,255,0.28)
-        --border: rgba(255,255,255,0.08)
-        --invert-bg: #ffffff
-        --invert-fg: #0a0a0a
-    body
-      background-color: var(--bg)
-      color: var(--fg)
-      font: system-ui, -apple-system, sans-serif
-      m: 0
-      size: 14px
-    .app-layout
-      height: 100vh
-      background-color: var(--bg)
-    .sidebar
-      width: 220px
-      background-color: var(--bg-2)
-      border-right: 1px solid var(--border)
-      display: flex
-      flex-direction: column
-      flex-shrink: 0
-    .sidebar-header
-      display: flex
-      flex-direction: row
-      align-items: center
-      gap: 10px
-      p: 20px 16px 16px
-      border-bottom: 1px solid var(--border)
-    .logo-mark
-      size: 18px
-      weight: 700
-    .logo-text
-      size: 14px
-      weight: 700
-      letter-spacing: -0.01em
-    .sidebar-nav
-      display: flex
-      flex-direction: column
-      gap: 2px
-      p: 12px 8px
-      flex: 1
-    .nav-item
-      display: block
-      p: 8px 12px
-      radius: 8px
-      size: 13px
-      weight: 500
-      color: var(--fg-2)
-      text-decoration: none
-      transition: all 0.1s
-    .nav-item:hover
-      background-color: var(--bg-3)
-      color: var(--fg)
-    .nav-active
-      background-color: var(--bg-3)
-      color: var(--fg)
-      weight: 600
-    .sidebar-footer
-      p: 12px 8px 16px
-      border-top: 1px solid var(--border)
-    .nav-signout
-      display: block
-      p: 7px 12px
-      size: 12px
-      color: var(--fg-3)
-      text-decoration: none
-      radius: 7px
-    .nav-signout:hover
-      color: var(--fg-2)
-      background-color: var(--bg-3)
-    .main-area
-      flex: 1
-      display: flex
-      flex-direction: column
-      overflow: auto
-    .topbar
-      height: 52px
-      background-color: var(--bg-2)
-      border-bottom: 1px solid var(--border)
-      flex-shrink: 0
-    .page-title
-      size: 15px
-      weight: 600
-      letter-spacing: -0.01em
-    .page-content
-      flex: 1
-    .card
-      background-color: var(--bg-2)
-      border: 1px solid var(--border)
-      radius: 14px
-      overflow: hidden
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05)
-      @dark
-        box-shadow: 0 1px 3px rgba(0,0,0,0.35)
-    .data-table
-      w: 100%
-      border-collapse: collapse
-    thead th
-      p: 10px 16px
-      size: 11px
-      weight: 600
-      text-transform: uppercase
-      letter-spacing: 0.07em
-      color: var(--fg-3)
-      text-align: left
-      border-bottom: 1px solid var(--border)
-    .data-row
-      border-bottom: 1px solid var(--border)
-      transition: background-color 0.1s
-    .data-row:last-child
-      border-bottom: none
-    .data-row:hover
-      background-color: var(--bg-3)
-    td
-      p: 11px 16px
-      color: var(--fg)
-    .cell-mono
-      color: var(--fg-3)
-      size: 12px
-      font-family: ui-monospace, "SF Mono", monospace
-    .cell-role
-      size: 12px
-      color: var(--fg-2)
-      text-transform: capitalize
-    .cell-actions
-      text-align: right
-    .btn-ghost
-      p: 5px 11px
-      background-color: transparent
-      color: var(--fg-2)
-      border: 1px solid var(--border)
-      radius: 7px
-      size: 12px
-      weight: 500
-      cursor: pointer
-    .btn-ghost:hover
-      background-color: var(--bg-3)
-      color: var(--fg)
-`,
-      'server/schemas/pageblock.arc': `model PageBlock
-  @id let id       = autoincrement()
-  let page         : String
-  let type         : String
-  let order        : Int = 0
-  let visible      : Bool = true
-  let data         : String = "{}"
-  let updatedAt    : DateTime = now()
-
-model DraftToken
-  @id let id       = autoincrement()
-  let token        : String
-  let expiresAt    : DateTime
-`,
-      'server/admin/routes/blocks.arc': `# Block CRUD + draft token routes
-
-@route @auth(admin,editor) get "/admin/blocks" -> Response
-  const page = params.page ?? "home"
-  json({ blocks: db.pageblocks.findMany({ where: { page }, orderBy: { order: "asc" } }) })
-
-@route @auth(admin,editor) post "/admin/blocks" -> Response
-  const body = parseBody(request)
-  const maxOrder = db.pageblocks.count({ where: { page: body.page } })
-  json(db.pageblocks.create({ ...body, order: maxOrder }), 201)
-
-@route @auth(admin,editor) patch "/admin/blocks/:id" -> Response
-  const body = parseBody(request)
-  const block = db.pageblocks.find(params.id)
-  match block
-    None    -> json({ error: "not found" }, 404)
-    Some(b) ->
-      const merged = JSON.parse(b.data)
-      for key, val in body.data
-        merged[key] = val
-      json(db.pageblocks.update(params.id, { data: JSON.stringify(merged), updatedAt: now() }))
-
-@route @auth(admin,editor) patch "/admin/blocks/:id/reorder" -> Response
-  const body = parseBody(request)
-  const block = db.pageblocks.find(params.id)
-  match block
-    None    -> json({ error: "not found" }, 404)
-    Some(b) ->
-      const dir = body.direction
-      const neighbor = dir == "up"
-        ? db.pageblocks.findFirst({ where: { page: b.page, order: { lt: b.order } }, orderBy: { order: "desc" } })
-        : db.pageblocks.findFirst({ where: { page: b.page, order: { gt: b.order } }, orderBy: { order: "asc" } })
-      match neighbor
-        None    -> json({ ok: false })
-        Some(n) ->
-          db.pageblocks.update(params.id, { order: n.order })
-          db.pageblocks.update(n.id, { order: b.order })
-          json({ ok: true })
-
-@route @auth(admin) del "/admin/blocks/:id" -> Response
-  db.pageblocks.delete(params.id)
-  json({ ok: true })
-
-@route @auth(admin,editor) get "/admin/api/block-types" -> Response
-  json(loadBlockTypes())
-
-@route @auth(admin,editor) post "/admin/api/draft-token" -> Response
-  const raw = crypto.randomBytes(32).toString("hex")
-  const expires = new Date(Date.now() + 8 * 3600 * 1000)
-  db.drafttokens.create({ token: raw, expiresAt: expires })
-  json({ token: raw })
-
-@route get "/admin/api/draft" -> Response
-  const token = params.token ?? ""
-  const row = db.drafttokens.findFirst({ where: { token } })
-  match row
-    None    -> json({ valid: false })
-    Some(t) -> json({ valid: new Date(t.expiresAt) > new Date() })
-
-@route @auth(admin,editor) post "/admin/api/publish" -> Response
-  json({ ok: true, publishedAt: now() })
-`,
-      'server/block-types.json': '{}',
-      'arc.config.json': JSON.stringify({
-        name: safeName,
-        auth: {
-          providers: ['github', 'google'],
-          sessionSecret: 'REPLACE_WITH_STRONG_SECRET',
-        },
-        db: { dialect: 'sqlite', url: 'app.db' },
-      }, null, 2) + '\n',
-      'package.json': JSON.stringify({
-        name: safeName,
-        version: '0.0.1',
-        private: true,
-        scripts: {
-          dev: 'arc serve .',
-          build: 'arc build-server . && arc build-site admin/',
-          migrate: 'arc db migrate .',
-          start: 'bun dist/server.js',
-        },
-      }, null, 2) + '\n',
-      '.gitignore': 'dist/\nnode_modules/\napp.db\n',
-    },
-  }
-
-  const files = TEMPLATES[template] ?? TEMPLATES.default
-  if (!TEMPLATES[template] && template !== 'default') {
-    console.error(`arc: unknown template "${template}". Available: ${Object.keys(TEMPLATES).join(', ')}`)
-    process.exit(1)
-  }
-
-  for (const [file, content] of Object.entries(files)) {
-    const outPath = path.join(dir, file)
-    fs.mkdirSync(path.dirname(outPath), { recursive: true })
-    fs.writeFileSync(outPath, content)
-  }
-
-  const templateLabel = template !== 'default' ? ` (${template})` : ''
-  console.log(`\n  ${GREEN}✓${RESET}  Created ${name}/${templateLabel}`)
-  console.log('')
-  for (const f of Object.keys(files)) {
-    console.log(`     ${DIM}${f}${RESET}`)
-  }
-  console.log('')
-  console.log('  Next steps:')
-  console.log(`    ${CYAN}cd ${name}${RESET}`)
-  console.log(`    ${CYAN}arc dev${RESET}`)
-  console.log('')
-}
-
 // ── Dev server ────────────────────────────────────────────────────────────
 // Serves dist/ over HTTP with:
 //   - Automatic browser reload via Server-Sent Events
@@ -1540,6 +734,29 @@ model DraftToken
 // Protocol: HTTP only (not HTTPS). Dev server is localhost-only; CORS and cookie
 // security headers are relaxed to avoid needing self-signed certs during development.
 // Production targets (arc build --target bun/cloudflare) emit HTTPS-safe headers.
+//
+// SSE endpoints:
+//   GET /_arc/reload?page=<pathname>
+//     Registers client for page-targeted reload events. The client script
+//     passes location.pathname so only affected pages get reloaded.
+//     Events:
+//       message (data: "reload")  — full page reload required (HTML/JS changed)
+//       css     (data: <cssText>) — CSS-only change, hot-swapped into <style data-arc-css>
+//
+//   GET /_arc/health
+//     Returns JSON: { status: "ok", pages: <n>, clients: <n> }
+//     Used to verify the dev server is running before opening the browser.
+//
+// SPA fallback:
+//   Unknown paths that don't match a dist/ file fall back to dist/index.html
+//   when the built site contains exactly one page (SPA mode). The fallback HTML
+//   has the reload script injected the same as regular pages.
+//
+// Rebuild concurrency:
+//   The watcher fires _rebuildAffected(changedPath) on every .arc file change.
+//   A do-while loop drains rapid successive changes: if a new change arrives
+//   while a rebuild is running, the loop immediately starts another rebuild
+//   after the current one finishes (never queuing more than one pending rebuild).
 
 const http = require('http')
 const _LOCALHOST_RE = /^https?:\/\/localhost(:\d+)?$/
@@ -1560,22 +777,28 @@ let _spaFallbackHtml = null
 let _spaFallbackDistDir = null
 const RELOAD_SCRIPT = `<script>
 (function(){
-  const es = new EventSource('/_arc/reload');
+  const _p = location.pathname.replace(/\\/+$/, '') || '/';
+  const es = new EventSource('/_arc/reload?page=' + encodeURIComponent(_p));
   es.onmessage = () => location.reload();
+  es.addEventListener('css', e => {
+    const s = document.querySelector('style[data-arc-css]');
+    if (s) { s.textContent = e.data; return; }
+    location.reload();
+  });
   es.onerror = () => setTimeout(() => location.reload(), 500);
 })()
 </script>`
 
 // H1 / H3: HTTP request handler for the dev server (module-scope helper)
 function _createDevRequestHandler(distDir, reloadClients) {
-  return function _handleDevRequest(req, res) {
+  return async function _handleDevRequest(req, res) {
     if (req.url === '/_arc/health') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       res.end(JSON.stringify({ status: 'ok', mode: 'dev', uptime: process.uptime(), pid: process.pid, memory: process.memoryUsage().rss }))
       return
     }
 
-    if (req.url === '/_arc/reload') {
+    if (req.url?.startsWith('/_arc/reload')) {
       const origin = req.headers.origin ?? ''
       const acao = _LOCALHOST_RE.test(origin) ? origin : 'http://localhost'
       res.writeHead(200, {
@@ -1585,9 +808,13 @@ function _createDevRequestHandler(distDir, reloadClients) {
         'Access-Control-Allow-Origin': acao,
       })
       res.write('retry: 1000\n\n')
-      reloadClients.add(res)
-      req.on('close', () => reloadClients.delete(res))
-      res.on('error', () => reloadClients.delete(res))
+      let page = '/'
+      try { page = new URL(req.url, 'http://x').searchParams.get('page') || '/' } catch {}
+      if (!reloadClients.has(page)) reloadClients.set(page, new Set())
+      const _clients = reloadClients.get(page)
+      _clients.add(res)
+      req.on('close', () => _clients.delete(res))
+      res.on('error', () => _clients.delete(res))
       return
     }
 
@@ -1614,22 +841,38 @@ function _createDevRequestHandler(distDir, reloadClients) {
     }
     if (urlPath === '/' || urlPath === '') urlPath = '/index.html'
 
-    const filePath = path.resolve(distDir, urlPath.replace(/^\//, ''))
+    let filePath = path.resolve(distDir, urlPath.replace(/^\//, ''))
     if (!filePath.startsWith(distDir + path.sep) && filePath !== distDir) {
       res.writeHead(403)
       res.end('Forbidden')
       return
     }
+
+    // Clean-URL routing for multi-page sites (no extension in URL):
+    //   /packages/arc-animations → dist/packages/arc-animations.html  (non-index page)
+    //   /packages               → dist/packages/index.html            (directory index)
+    if (!path.extname(filePath)) {
+      const htmlCandidate  = filePath + '.html'
+      const indexCandidate = path.join(filePath, 'index.html')
+      if (htmlCandidate.startsWith(distDir + path.sep) && fs.existsSync(htmlCandidate)) {
+        filePath = htmlCandidate
+      } else if (indexCandidate.startsWith(distDir + path.sep) && fs.existsSync(indexCandidate)) {
+        filePath = indexCandidate
+      }
+    }
+
     const ext = path.extname(filePath)
 
     try {
-      let content = fs.readFileSync(filePath)
+      let content = await fs.promises.readFile(filePath)
       const mime = _MIME_TYPES[ext] ?? 'application/octet-stream'
 
-      // Inject reload script into HTML
+      // Inject reload script into HTML; strip CSP meta so inline script is allowed in dev
       if (ext === '.html') {
         content = Buffer.from(
-          content.toString().replace(/<\/body>/i, `${RELOAD_SCRIPT}\n</body>`)
+          content.toString()
+            .replace(_CSP_META_RE, '')
+            .replace(/<\/body>/i, `${RELOAD_SCRIPT}\n</body>`)
         )
       }
 
@@ -1641,15 +884,25 @@ function _createDevRequestHandler(distDir, reloadClients) {
       })
       res.end(content)
     } catch (e) {
-      // Only fall back to SPA index.html for missing files, not for read errors
-      if (e.code !== 'ENOENT') {
-        res.writeHead(500)
-        res.end('Internal error')
+      // Only fall back to SPA index.html for missing files, not for other read errors
+      if (e.code !== 'ENOENT' && e.code !== 'EISDIR') {
+        const msg = `${e.code ?? 'ERROR'}: ${e.message}`
+        console.error(`arc: dev: ${req.method} ${req.url} — ${msg}`)
+        res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(`<!doctype html><html><head><title>500 — arc dev</title>
+<style>body{font:14px/1.6 system-ui,sans-serif;max-width:600px;margin:60px auto;padding:0 16px;color:#111}
+h1{font-size:1.5rem;color:#c00}code{background:#f3f3f3;padding:2px 6px;border-radius:4px;font-size:13px}
+pre{background:#f3f3f3;padding:16px;border-radius:8px;overflow:auto;font-size:13px}</style></head>
+<body><h1>500 — Server Error</h1>
+<p><code>${msg.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</code></p>
+<p>File: <code>${filePath.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</code></p>
+<p>Check the terminal for details, then run <code>arc build-site .</code> to rebuild.</p>
+</body></html>`)
         return
       }
       try {
         if (_spaFallbackDistDir !== distDir || _spaFallbackHtml === null) {
-          _spaFallbackHtml = fs.readFileSync(path.join(distDir, 'index.html')).toString()
+          _spaFallbackHtml = (await fs.promises.readFile(path.join(distDir, 'index.html'))).toString()
           _spaFallbackDistDir = distDir
         }
         const html = _spaFallbackHtml.replace(/<\/body>/i, `${RELOAD_SCRIPT}\n</body>`)
@@ -1693,18 +946,147 @@ async function dev(projectDir) {
     console.error(`arc: dev: uncaught exception: ${e?.stack ?? e?.message ?? e}`)
   })
 
-  await build(projectDir)
-
   const absDir = path.resolve(projectDir)
   const distDir = path.join(absDir, 'dist')
+
+  const isMultiPage = findArcFiles(absDir).filter(f => {
+    try { return _isPageFile(fs.readFileSync(f, 'utf8')) } catch { return false }
+  }).length > 1
+  const _rebuild = () => isMultiPage ? buildSite(projectDir) : build(projectDir)
+
+  // ── HMR state ─────────────────────────────────────────────────────────────
+  // _depMap:   absFilePath → Set<slug>  — which pages import a given file
+  // _slugFile: slug → absSourcePath    — reverse lookup for partial rebuilds
+  // _prevHtml: slug → last finalHtml   — used to detect CSS-only vs structural change
+  const _depMap   = new Map()
+  const _slugFile = new Map()
+  const _prevHtml = new Map()
+
+  // Scan import deps for one page file and populate _depMap + _slugFile.
+  // Lightweight: lex/parse/resolveImports only, no emit.
+  async function _scanPageDeps(absPath) {
+    const relPath = path.relative(absDir, absPath)
+    const slug = relPath.replace(/\.arc$/, '').replace(/\\/g, '/')
+    _slugFile.set(slug, absPath)
+    try {
+      const src = fs.readFileSync(absPath, 'utf8')
+      const lexer = new Lexer(src, absPath)
+      const tokens = lexer.tokenize()
+      const parser = new Parser(tokens, absPath)
+      const program = parser.parse()
+      const depsOut = new Set()
+      await resolveImports(program, absDir, relPath, new Set([absPath]), absDir, depsOut)
+      for (const dep of depsOut) {
+        if (!_depMap.has(dep)) _depMap.set(dep, new Set())
+        _depMap.get(dep).add(slug)
+      }
+    } catch { /* ignore scan errors — full rebuild is the fallback */ }
+  }
+
+  // Populate _depMap, _slugFile, _prevHtml from the just-written dist files.
+  async function _initHmrState() {
+    _depMap.clear(); _slugFile.clear(); _prevHtml.clear()
+    const pageFiles = findArcFiles(absDir).filter(f => {
+      try { return _isPageFile(fs.readFileSync(f, 'utf8')) } catch { return false }
+    })
+    await Promise.all(pageFiles.map(f => _scanPageDeps(f)))
+    for (const [slug] of _slugFile) {
+      const outPath = path.join(distDir, slug + '.html')
+      try { _prevHtml.set(slug, fs.readFileSync(outPath, 'utf8')) } catch {}
+    }
+  }
+
+  // SSE helpers — operate on the reloadClients Map
+  function _broadcastReload(pagePath) {
+    const targets = pagePath
+      ? (reloadClients.get(pagePath) ?? new Set())
+      : [...reloadClients.values()].flatMap(s => [...s])
+    for (const r of targets) { try { r.write('data: reload\n\n') } catch { /* stale client */ } }
+  }
+  function _broadcastCss(pagePath, css) {
+    const targets = reloadClients.get(pagePath) ?? new Set()
+    for (const r of targets) { try { r.write(`event: css\ndata: ${css}\n\n`) } catch { /* stale */ } }
+  }
+  function _totalClients() {
+    return [...reloadClients.values()].reduce((s, c) => s + c.size, 0)
+  }
+
+  // Compile and write a subset of pages without running a full buildSite().
+  // Used for partial rebuilds when only some pages are affected by a change.
+  async function _devRebuildPages(slugs) {
+    const rootDir = _findProjectRoot(absDir)
+    const sharedImgPipeline = new ImagePipeline({ srcDir: absDir, outDir: distDir })
+    const pp = new PostProcessor()
+
+    for (const slug of slugs) {
+      const absPath = _slugFile.get(slug)
+      if (!absPath) continue
+      let src; try { src = fs.readFileSync(absPath, 'utf8') } catch { continue }
+      const relPath = path.relative(absDir, absPath)
+      const relFilename = relPath.replace(/\\/g, '/')
+      const depsOut = new Set()
+      let result
+      try {
+        result = await compile(src, relFilename, { projectDir: absDir, rootDir, distDir, sharedImgPipeline, depsOut })
+      } catch (e) {
+        formatError(e, src, relFilename)
+        continue
+      }
+      const fullCss = pp.minifyCss(result.css)
+      const jsBasename = path.basename(slug) + '.js'
+      const withAssets = injectAssets(result.html, result.js, jsBasename)
+      let html = _patchPageHtml(withAssets, null, fullCss)
+      html = pp.addResourceHints(html)
+      html = pp.minifyHtml(html)
+      // Strip CSP meta — _injectPrefetchTags removes it from buildSite dist files,
+      // so _prevHtml loaded via _initHmrState won't have it. Keep both paths consistent.
+      html = html.replace(_CSP_META_RE, '')
+
+      const outPath = path.join(distDir, slug + '.html')
+      fs.mkdirSync(path.dirname(outPath), { recursive: true })
+      fs.writeFileSync(outPath, html)
+      if (result.js?.trim()) fs.writeFileSync(path.join(path.dirname(outPath), jsBasename), result.js)
+
+      // Update dep map for this slug only
+      for (const slugSet of _depMap.values()) slugSet.delete(slug)
+      for (const dep of depsOut) {
+        if (!_depMap.has(dep)) _depMap.set(dep, new Set())
+        _depMap.get(dep).add(slug)
+      }
+
+      const pagePath = slug === 'index' ? '/' : slug.endsWith('/index') ? '/' + slug.slice(0, -6) : '/' + slug
+      const oldHtml = _prevHtml.get(slug) ?? ''
+      _prevHtml.set(slug, html)
+      // Strip dynamic/non-visual content before structural comparison:
+      // - <style data-arc-css> content (CSS changes handled separately)
+      // - <link rel="prefetch"> tags (added by buildSite but not _devRebuildPages)
+      // - <meta name="view-transition"> (same)
+      // - CSP meta (stripped above, but normalize() is a safety net for _prevHtml loaded externally)
+      const normalize = h => h
+        .replace(_CSP_META_RE, '')
+        .replace(/(<style data-arc-css>)[\s\S]*?(<\/style>)/g, '$1$2')
+        .replace(/<link rel="prefetch"[^>]*>/g, '')
+        .replace(/<meta name="view-transition"[^>]*>/g, '')
+      const getInlineCss = h => (h.match(/<style data-arc-css>([\s\S]*?)<\/style>/) ?? [])[1] ?? ''
+      if (oldHtml && normalize(html) === normalize(oldHtml) && getInlineCss(html) !== getInlineCss(oldHtml)) {
+        _broadcastCss(pagePath, getInlineCss(html))
+      } else if (normalize(html) !== normalize(oldHtml)) {
+        _broadcastReload(pagePath)
+      }
+    }
+  }
+
+  // Initial build + HMR state init
+  await _rebuild()
+  await _initHmrState()
+
   const rawPort = parseInt(process.env.PORT ?? '3000')
   const port = (Number.isInteger(rawPort) && rawPort > 0 && rawPort < 65536) ? rawPort : 3000
   if (rawPort !== port) console.warn(`arc: invalid PORT value, using 3000`)
 
-  // SSE clients waiting for reload signal
-  const reloadClients = new Set()
+  // SSE clients — Map<pagePath, Set<res>> for per-page targeting
+  const reloadClients = new Map()
 
-  // HTTP server: serves dist/ and handles /_arc/reload SSE
   const server = http.createServer(_createDevRequestHandler(distDir, reloadClients))
 
   server.on('error', e => {
@@ -1719,30 +1101,28 @@ async function dev(projectDir) {
     if (_TTY) {
       console.log(`\n  ${_OCYAN}⚡ arc dev${_ORST}\n`)
       console.log(`  ○  http://localhost:${port}`)
-      console.log(`     ${_ODIM}watching · ${filename}${_ORST}\n`)
+      console.log(`     ${_ODIM}watching · ${path.relative(process.cwd(), absDir) || '.'}${_ORST}\n`)
     } else {
       console.log(`arc: dev server → http://localhost:${port}`)
     }
   })
 
   const shutdown = () => {
-    // End SSE clients first so they don't hold the socket open and block close().
-    for (const client of [...reloadClients]) {
-      try { client.end() } catch { /* intentionally ignored - client may already be closed */ }
+    for (const clients of reloadClients.values()) {
+      for (const client of clients) { try { client.end() } catch {} }
     }
     reloadClients.clear()
     server.close(() => process.exit(0))
-    // Hard fallback in case close() never resolves (stale connections, etc.)
     setTimeout(() => process.exit(0), 500).unref()
   }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
 
-  // File watcher with debounce to avoid multiple rebuilds per save
   if (!_TTY) console.log('arc: watching for changes...')
   let rebuildTimer = null
   let building = false
   let rebuildRequested = false
+
   _startWatcher(absDir, (changedFile) => {
     if (!changedFile || !changedFile.endsWith('.arc')) return
     if (changedFile.includes('dist' + path.sep) || changedFile.includes('dist/')) return
@@ -1761,21 +1141,42 @@ async function dev(projectDir) {
           }
           const t0 = Date.now()
           try {
-            _spaFallbackHtml = null  // invalidate SPA fallback cache before rebuild so in-flight requests read fresh files
-            await build(projectDir)
-            const dur = Date.now() - t0
-            for (const client of [...reloadClients]) {
-              try { client.write('data: reload\n\n') } catch { reloadClients.delete(client) }
+            // Determine which pages are affected by the changed file
+            const changedAbsPath = path.resolve(absDir, changedFile)
+            const affected = new Set()
+            if (isMultiPage && _slugFile.size > 0) {
+              for (const [slug, absPath] of _slugFile) {
+                if (absPath === changedAbsPath) affected.add(slug)
+              }
+              for (const slug of (_depMap.get(changedAbsPath) ?? [])) affected.add(slug)
             }
-            if (_TTY) {
-              console.log(`  ${_OGREEN}✓${_ORST}  rebuilt in ${_ODIM}${dur}ms${_ORST} · ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''} notified`)
+
+            if (isMultiPage && affected.size > 0) {
+              // Partial rebuild — only recompile affected pages
+              await _devRebuildPages(affected)
+              const dur = Date.now() - t0
+              const n = _totalClients()
+              if (_TTY) {
+                console.log(`  ${_OGREEN}✓${_ORST}  rebuilt ${affected.size} page${affected.size !== 1 ? 's' : ''} in ${_ODIM}${dur}ms${_ORST} · ${n} browser${n !== 1 ? 's' : ''} notified`)
+              } else {
+                console.log(`arc: rebuilt ${affected.size} page${affected.size !== 1 ? 's' : ''} in ${dur}ms → ${n} browser${n !== 1 ? 's' : ''} notified`)
+              }
             } else {
-              console.log(`arc: rebuilt in ${dur}ms → reload sent to ${reloadClients.size} browser${reloadClients.size !== 1 ? 's' : ''}`)
+              // Full rebuild (single-page, or unknown file, or multi-page first run)
+              _spaFallbackHtml = null
+              await _rebuild()
+              await _initHmrState()
+              // Notify all clients after full rebuild
+              const dur = Date.now() - t0
+              const n = _totalClients()
+              _broadcastReload(null)
+              if (_TTY) {
+                console.log(`  ${_OGREEN}✓${_ORST}  rebuilt in ${_ODIM}${dur}ms${_ORST} · ${n} browser${n !== 1 ? 's' : ''} notified`)
+              } else {
+                console.log(`arc: rebuilt in ${dur}ms → reload sent to ${n} browser${n !== 1 ? 's' : ''}`)
+              }
             }
           } catch (e) {
-            // Read the source of the changed file so formatError can show context.
-            // Best-effort - the actual error may come from an import; in that case
-            // we lose the snippet but still get the error message.
             let src = null
             try { src = fs.readFileSync(path.join(absDir, changedFile), 'utf8') } catch {}
             try { formatError(e, src, changedFile) } catch (e2) { console.error(e2) }

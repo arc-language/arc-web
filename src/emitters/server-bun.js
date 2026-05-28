@@ -191,6 +191,11 @@ const _db = {
     const selectCols = colList ? `id, ${colList}` : 'id'
 
     const fieldNames = JSON.stringify(fields.map(f => f.name))
+    const requiredFieldNames = JSON.stringify(
+      fields
+        .filter(f => !(f.typeAnnotation?.nullable === true || (f.typeAnnotation?.name ?? '').endsWith('?') || f.optional === true || f.init != null))
+        .map(f => f.name)
+    )
     return `
 // Schema: ${schema.name}
 _db.run(\`CREATE TABLE IF NOT EXISTS ${lc} (${colDefs})\`)
@@ -202,6 +207,7 @@ ${colList ? `const _q_${lc}_update = _db.query('UPDATE ${lc} SET ${updates} WHER
 const _q_${lc}_delete = _db.query('DELETE FROM ${lc} WHERE id = ?1')
 const _q_${lc}_count = _db.query('SELECT COUNT(*) as count FROM ${lc}')
 const _${lc}_fields = ${fieldNames}
+const _${lc}_required = ${requiredFieldNames}
 
 Object.assign(globalThis.db ?? (globalThis.db = {}), {
   ${lc}: {
@@ -228,7 +234,7 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
       return _rs[0] ?? null
     },
     find: (id) => _q_${lc}_find.get(id) ?? null,
-    ${colList ? `create: (data) => { const _d = _pick(data, _${lc}_fields); return _q_${lc}_create.get(${fields.map(f => `_d.${f.name}`).join(', ')}) },` : ''}
+    ${colList ? `create: (data) => { const _d = _pick(data, _${lc}_fields); const _miss = _${lc}_required.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${lc}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _q_${lc}_create.get(${fields.map(f => `_d.${f.name}`).join(', ')}) },` : ''}
     ${colList ? `update: (id, data) => { const _d = _pick(data, _${lc}_fields); return _q_${lc}_update.get(${fields.map(f => `_d.${f.name}`).join(', ')}, id) },` : ''}
     delete: (id) => (_q_${lc}_delete.run(id), true),
     count: () => _q_${lc}_count.get()?.count ?? 0,
@@ -250,7 +256,12 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
       const updates = fields.map((f, i) => `${f.name} = $${i + 1}`).join(', ')
       const selectCols = colList ? `id, ${colList}` : 'id'
       const fieldNames = JSON.stringify(fields.map(f => f.name))
-      return `  ${lc}: (() => { const _flds = ${fieldNames}; return {
+      const requiredFieldNames = JSON.stringify(
+        fields
+          .filter(f => !(f.typeAnnotation?.nullable === true || (f.typeAnnotation?.name ?? '').endsWith('?') || f.optional === true || f.init != null))
+          .map(f => f.name)
+      )
+      return `  ${lc}: (() => { const _flds = ${fieldNames}; const _req = ${requiredFieldNames}; return {
     findMany: async (opts = {}) => {
       const _w = opts?.where
       if (!_w || !Object.keys(_w).length) return _pool.query('SELECT ${selectCols} FROM ${lc} LIMIT $1 OFFSET $2', [Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows)
@@ -274,7 +285,7 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
       return _rs[0] ?? null
     },
     find: async (id) => _pool.query('SELECT ${selectCols} FROM ${lc} WHERE id = $1', [id]).then(r => r.rows[0] ?? null),
-    ${colList ? `create: async (data) => { const _d = _pick(data, _flds); return _pool.query('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}]).then(r => r.rows[0]) },` : ''}
+    ${colList ? `create: async (data) => { const _d = _pick(data, _flds); const _miss = _req.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${lc}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _pool.query('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}]).then(r => r.rows[0]) },` : ''}
     ${colList ? `update: async (id, data) => { const _d = _pick(data, _flds); return _pool.query('UPDATE ${lc} SET ${updates} WHERE id = $${fields.length + 1} RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}, id]).then(r => r.rows[0]) },` : ''}
     delete: async (id) => { await _pool.query('DELETE FROM ${lc} WHERE id = $1', [id]); return true },
     count: async () => _pool.query('SELECT COUNT(*) as count FROM ${lc}').then(r => +r.rows[0].count),
@@ -527,6 +538,7 @@ async function ${name}(req, params) {
   } catch (_e) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
     if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
+    if (_e?.status === 422) return _json({ error: _e.message ?? 'Unprocessable entity' }, 422)
     if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
     ${traceLog}
     return _json({ error: 'Internal server error' }, 500)

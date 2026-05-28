@@ -4,6 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const https = require('https')
 const http = require('http')
+const dns = require('dns').promises
 
 const _httpAgent = new http.Agent({ keepAlive: true })
 const _httpsAgent = new https.Agent({ keepAlive: true })
@@ -11,6 +12,18 @@ const _httpsAgent = new https.Agent({ keepAlive: true })
 // Evaluates @build expressions at compile time.
 // Supports: literals, arrays, objects, fetch(), file reads, array methods.
 // Safety: no eval(), no arbitrary code: constrained interpreter only.
+//
+// Threat model:
+//   @build runs Arc source code at compile time inside the compiler process.
+//   It must not allow: SSRF (blocked by _isBlockedHost + DNS rebinding note),
+//   arbitrary FS access (blocked by _SENSITIVE_FILE_RE + path containment to projectDir),
+//   prototype pollution (blocked by ALLOWED_OBJ_METHODS allowlist + __proto__/constructor guards),
+//   or infinite loops (blocked by step counter MAX_STEPS).
+//
+// Known limitations:
+//   - DNS rebinding: hostname check is pre-connection; egress firewall rules are the primary defense.
+//   - Only synchronous-looking expressions are supported — no async/await in @build expressions.
+//   - Object methods are restricted to ALLOWED_OBJ_METHODS; calling unlisted methods throws.
 
 // Explicit allowlist for object method dispatch: prevents calling dangerous prototype methods
 const ALLOWED_OBJ_METHODS = new Set([
@@ -355,7 +368,7 @@ class BuildExecutor {
 
   // ── I/O helpers ─────────────────────────────────────────────────────────────
 
-  doFetch(url) {
+  async doFetch(url) {
     // Validate URL to prevent SSRF
     let parsed
     try { parsed = new URL(url) } catch { throw new Error(`@build fetch: invalid URL: ${url}`) }
@@ -365,12 +378,25 @@ class BuildExecutor {
     // URL.hostname for IPv6 includes brackets (e.g. "[::1]"): strip them for consistent checks
     const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
     if (_isBlockedHost(hostname)) throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
-    // DNS rebinding note: this check runs pre-connection against the URL hostname. An attacker-controlled
-    // DNS server can return a public IP here, then switch to a private IP when the TCP connection resolves.
-    // The primary defense against DNS rebinding is network-level egress filtering (firewall rules blocking
-    // private RFC-1918 ranges from outbound connections). This blocklist provides defense-in-depth only.
+    // DNS pre-resolution: resolve hostname once and verify the resolved IP is not internal.
+    // This is defense-in-depth against DNS rebinding — an attacker-controlled domain could
+    // pass the hostname check above but rebind to an internal IP at TCP connect time.
+    // Network-level egress filtering remains the primary defense.
+    if (hostname !== 'localhost' && !/^\d+\.\d+\.\d+\.\d+$/.test(hostname) && !hostname.includes(':')) {
+      try {
+        const addrs = await dns.lookup(hostname, { all: true })
+        for (const { address } of addrs) {
+          if (_isBlockedHost(address)) {
+            throw new Error(`@build fetch: resolved IP blocked (internal/private address): ${hostname} → ${address}`)
+          }
+        }
+      } catch (e) {
+        if (e.message.startsWith('@build fetch:')) throw e
+        // DNS lookup failed — let the request attempt fail naturally with a clear error
+      }
+    }
 
-    return new Promise((resolve, reject) => {
+    const _attempt = (attempt) => new Promise((resolve, reject) => {
       // settled must be hoisted to executor scope: error/timeout handlers fire
       // before the response callback when connect-phase failures happen.
       let settled = false
@@ -380,12 +406,13 @@ class BuildExecutor {
         // Reject redirects explicitly: following them could bypass the SSRF blocklist
         if (res.statusCode >= 300 && res.statusCode < 400) {
           res.resume()
-          if (!settled) { settled = true; reject(new Error(`@build fetch: redirects not allowed (${res.statusCode}): ${url}`)) }
+          if (!settled) { settled = true; reject(Object.assign(new Error(`@build fetch: redirects not allowed (${res.statusCode}): ${url}`), { _noRetry: true })) }
           return
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
           res.resume()
-          if (!settled) { settled = true; reject(new Error(`@build fetch: HTTP ${res.statusCode} from ${url}`)) }
+          const retryable = res.statusCode === 408 || res.statusCode === 429 || res.statusCode >= 500
+          if (!settled) { settled = true; reject(Object.assign(new Error(`@build fetch: HTTP ${res.statusCode} from ${url}`), { _noRetry: !retryable })) }
           return
         }
         const chunks = []
@@ -394,7 +421,7 @@ class BuildExecutor {
         res.on('data', c => {
           totalBytes += c.length
           if (totalBytes > MAX_BYTES) {
-            if (!settled) { settled = true; req.destroy(); res.destroy(); reject(new Error(`@build fetch: response too large (max 10MB): ${url}`)) }
+            if (!settled) { settled = true; req.destroy(); res.destroy(); reject(Object.assign(new Error(`@build fetch: response too large (max 10MB): ${url}`), { _noRetry: true })) }
             return
           }
           chunks.push(c)
@@ -415,6 +442,17 @@ class BuildExecutor {
         if (!settled) { settled = true; req.destroy(); reject(new Error(`@build fetch: timeout after 10s: ${url}`)) }
       })
     })
+
+    const MAX_ATTEMPTS = 3
+    let lastErr
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      try { return await _attempt(i) } catch (e) {
+        lastErr = e
+        if (e._noRetry || i === MAX_ATTEMPTS - 1) throw e
+        await new Promise(r => setTimeout(r, 500 * Math.pow(2, i)))
+      }
+    }
+    throw lastErr
   }
 
   // Sensitive filename patterns that @build readFile must never expose

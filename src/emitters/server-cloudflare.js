@@ -240,6 +240,7 @@ async function ${name}(req, params, env) {
   } catch (_e) {
     if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
     if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
+    if (_e?.status === 422) return _json({ error: _e.message ?? 'Unprocessable entity' }, 422)
     if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, method: '${route.method}', path: '${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))
     return _json({ error: 'Internal server error' }, 500)
@@ -283,6 +284,11 @@ function _makeEmail(env) {
         }).join('\n')}\n}`
       : 'const _jobRegistry = {}'
 
+    // Per-job expected argument counts for queue message validation
+    const jobArgCounts = jobs.length > 0
+      ? `const _jobArgCounts = {\n${jobs.map(j => `  '${j.name}': ${(j.params ?? []).length},`).join('\n')}\n}`
+      : 'const _jobArgCounts = {}'
+
     const queueHandler = jobs.length > 0 ? `
   async queue(batch, env, ctx) {
     for (const msg of batch.messages) {
@@ -290,6 +296,12 @@ function _makeEmail(env) {
       const args = Array.isArray(_rawArgs) ? _rawArgs : []
       const fn = _jobRegistry[job]
       if (fn) {
+        const _expectedArgCount = _jobArgCounts[job] ?? -1
+        if (_expectedArgCount !== -1 && args.length !== _expectedArgCount) {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'invalid_args', msg: \`expected \${_expectedArgCount} args, got \${args.length}\` }))
+          try { msg.ack() } catch (_e) {}
+          continue
+        }
         try { await fn(...args, env) } catch (e) {
           console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: e?.message ?? String(e) }))
           try {
@@ -308,6 +320,7 @@ function _makeEmail(env) {
 
     return `
 ${jobRegistry}
+${jobArgCounts}
 
 export default {
   async fetch(req, env, ctx) {
