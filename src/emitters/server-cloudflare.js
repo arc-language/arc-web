@@ -34,7 +34,7 @@ class CloudflareEmitter {
     const routes = program.declarations.filter(d => d.type === 'RouteDecl')
     const schemas = program.declarations.filter(d => d.type === 'ModelDecl')
     const jobs = program.declarations.filter(d => d.type === 'JobDecl')
-    const hasAuth = routes.some(r => r.annotations?.includes('@auth'))
+    const hasAuth = routes.some(r => r.annotations?.some(a => a === '@auth' || a.startsWith('@auth(')))
 
     if (routes.length === 0 && schemas.length === 0) return { worker: '', schema: '' }
 
@@ -165,14 +165,20 @@ ${blocks.join('\n')}
     const placeholders = fields.map((_, i) => `?${i + 1}`).join(', ')
     const updates = fields.map((f, i) => `${f.name} = ?${i + 1}`).join(', ')
     const fieldNames = JSON.stringify(fields.map(f => f.name))
+    const requiredFieldNames = JSON.stringify(
+      fields
+        .filter(f => !(f.typeAnnotation?.nullable === true || (f.typeAnnotation?.name ?? '').endsWith('?') || f.optional === true || f.init != null))
+        .map(f => f.name)
+    )
     const fieldArgs = fields.map(f => `_d.${f.name}`)
 
     return `
   const _${lc}_flds = ${fieldNames}
+  const _${lc}_req = ${requiredFieldNames}
   const ${lc} = {
     findMany: async (opts = {}) => (await D1.prepare('SELECT ${selectCols} FROM ${lc} LIMIT ?1 OFFSET ?2').bind(Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0).all()).results,
     find: async (id) => D1.prepare('SELECT ${selectCols} FROM ${lc} WHERE id = ?1').bind(id).first(),
-    ${colList ? `create: async (data) => { const _d = _pick(data, _${lc}_flds); return D1.prepare('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *').bind(${fieldArgs.join(', ')}).first() },` : ''}
+    ${colList ? `create: async (data) => { const _d = _pick(data, _${lc}_flds); const _miss = _${lc}_req.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${lc}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return D1.prepare('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *').bind(${fieldArgs.join(', ')}).first() },` : ''}
     ${colList ? `update: async (id, data) => { const _d = _pick(data, _${lc}_flds); return D1.prepare('UPDATE ${lc} SET ${updates} WHERE id = ?${fields.length + 1} RETURNING *').bind(${fieldArgs.join(', ')}, id).first() },` : ''}
     delete: async (id) => (await D1.prepare('DELETE FROM ${lc} WHERE id = ?1').bind(id).run(), true),
     count: async () => (await D1.prepare('SELECT COUNT(*) as count FROM ${lc}').first())?.count ?? 0,
@@ -218,16 +224,27 @@ async function _job_${job.name}(${params}${params ? ', ' : ''}env) {
   emitRouteHandler(route, schemas) {
     const name = routeHandlerName(route)
     const pathParams = (route.params ?? []).map(p => `const ${p} = params['${p}']`).join('\n    ')
-    const requiresAuth = route.annotations?.includes('@auth')
+    const authAnnotation = route.annotations?.find(a => a === '@auth' || a.startsWith('@auth('))
+    const requiresAuth = !!authAnnotation
+    let authRole = null
+    if (authAnnotation) {
+      const roleMatch = authAnnotation.match(/^@auth\(([^)]+)\)$/)
+      if (roleMatch) authRole = roleMatch[1].trim()
+    }
     const hasDb = schemas.length > 0
 
     const body = route.body?.type === 'BlockStatement'
       ? emitRouteBody(route.body.body, this.jsEmitter)
       : ''
 
-    const authGuard = requiresAuth
-      ? `const _sess = await auth.session(req); if (!_sess) return _json({ error: 'Unauthorized' }, 401);\n    const session = _sess;`
-      : ''
+    let authGuard = ''
+    if (requiresAuth) {
+      authGuard = `const _sess = await auth.session(req); if (!_sess) return _json({ error: 'Unauthorized' }, 401);\n    const session = _sess;`
+      if (authRole) {
+        const roles = authRole.split(',').map(r => r.trim()).filter(Boolean)
+        authGuard += `\n    if (!${JSON.stringify(roles)}.includes(session.role)) return _json({ error: 'Forbidden' }, 403);`
+      }
+    }
 
     return `
 // Route: ${route.method} ${route.path}${requiresAuth ? ' [auth]' : ''}

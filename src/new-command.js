@@ -2,6 +2,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const { GREEN, CYAN, DIM, RESET } = require('./utils/errors')
 
 // ── New command ────────────────────────────────────────────────────────────
 // Scaffolds a new Arc project from a template.
@@ -780,7 +781,7 @@ model DraftToken
         name: safeName,
         auth: {
           providers: ['github', 'google'],
-          sessionSecret: 'REPLACE_WITH_STRONG_SECRET',
+          sessionSecret: require('crypto').randomBytes(32).toString('hex'),
         },
         db: { dialect: 'sqlite', url: 'app.db' },
       }, null, 2) + '\n',

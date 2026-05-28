@@ -813,8 +813,9 @@ function _createDevRequestHandler(distDir, reloadClients) {
       if (!reloadClients.has(page)) reloadClients.set(page, new Set())
       const _clients = reloadClients.get(page)
       _clients.add(res)
-      req.on('close', () => _clients.delete(res))
-      res.on('error', () => _clients.delete(res))
+      const _cleanup = () => { _clients.delete(res); if (_clients.size === 0) reloadClients.delete(page) }
+      req.on('close', _cleanup)
+      res.on('error', _cleanup)
       return
     }
 
@@ -998,14 +999,21 @@ async function dev(projectDir) {
 
   // SSE helpers — operate on the reloadClients Map
   function _broadcastReload(pagePath) {
-    const targets = pagePath
-      ? (reloadClients.get(pagePath) ?? new Set())
-      : [...reloadClients.values()].flatMap(s => [...s])
-    for (const r of targets) { try { r.write('data: reload\n\n') } catch { /* stale client */ } }
+    if (pagePath) {
+      const clients = reloadClients.get(pagePath)
+      if (!clients) return
+      for (const r of clients) { try { r.write('data: reload\n\n') } catch { clients.delete(r) } }
+    } else {
+      for (const [page, clients] of reloadClients) {
+        for (const r of clients) { try { r.write('data: reload\n\n') } catch { clients.delete(r) } }
+        if (clients.size === 0) reloadClients.delete(page)
+      }
+    }
   }
   function _broadcastCss(pagePath, css) {
-    const targets = reloadClients.get(pagePath) ?? new Set()
-    for (const r of targets) { try { r.write(`event: css\ndata: ${css}\n\n`) } catch { /* stale */ } }
+    const clients = reloadClients.get(pagePath)
+    if (!clients) return
+    for (const r of clients) { try { r.write(`event: css\ndata: ${css}\n\n`) } catch { clients.delete(r) } }
   }
   function _totalClients() {
     return [...reloadClients.values()].reduce((s, c) => s + c.size, 0)
@@ -1021,7 +1029,7 @@ async function dev(projectDir) {
     for (const slug of slugs) {
       const absPath = _slugFile.get(slug)
       if (!absPath) continue
-      let src; try { src = fs.readFileSync(absPath, 'utf8') } catch { continue }
+      let src; try { src = await fs.promises.readFile(absPath, 'utf8') } catch { continue }
       const relPath = path.relative(absDir, absPath)
       const relFilename = relPath.replace(/\\/g, '/')
       const depsOut = new Set()
@@ -1131,8 +1139,8 @@ async function dev(projectDir) {
     rebuildTimer = setTimeout(async () => {
       if (building) { rebuildRequested = true; return }
       try {
+        building = true
         do {
-          building = true
           rebuildRequested = false
           if (_TTY) {
             console.log(`  ${_OCYAN}↺${_ORST}  ${_ODIM}${changedFile} changed${_ORST}`)

@@ -516,7 +516,10 @@ async function ${name}(req, params) {
     let authGuard = ''
     if (requiresAuth) {
       authGuard = `const _sess = await auth.session(req); if (!_sess) return _json({ error: 'Unauthorized' }, 401);\n    const session = _sess;`
-      if (authRole) authGuard += `\n    if (session.role !== ${JSON.stringify(authRole)}) return _json({ error: 'Forbidden' }, 403);`
+      if (authRole) {
+        const roles = authRole.split(',').map(r => r.trim()).filter(Boolean)
+        authGuard += `\n    if (!${JSON.stringify(roles)}.includes(session.role)) return _json({ error: 'Forbidden' }, 403);`
+      }
     }
 
     // Item 5: only emit aliases that are actually referenced in the route body

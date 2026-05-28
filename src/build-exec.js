@@ -67,11 +67,11 @@ function _isBlockedIpv6(h) {
     // fe80::/10 link-local covers fe80–febf; startsWith('fe8') + startsWith('fe9') + 'fea' + 'feb'
     h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb') ||
     h.startsWith('::ffff:10.') || h.startsWith('::ffff:127.') ||
-    h.startsWith('::ffff:192.168.') ||
+    h.startsWith('::ffff:169.254.') || h.startsWith('::ffff:192.168.') ||
     /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(h) ||
     // IPv4-translated form (::ffff:0:x.x.x.x)
     h.startsWith('::ffff:0:10.') || h.startsWith('::ffff:0:127.') ||
-    h.startsWith('::ffff:0:192.168.') ||
+    h.startsWith('::ffff:0:169.254.') || h.startsWith('::ffff:0:192.168.') ||
     /^::ffff:0:172\.(1[6-9]|2\d|3[01])\./.test(h)
 }
 
@@ -392,7 +392,8 @@ class BuildExecutor {
         }
       } catch (e) {
         if (e.message.startsWith('@build fetch:')) throw e
-        // DNS lookup failed — let the request attempt fail naturally with a clear error
+        // DNS lookup failed — warn and let the HTTP request fail naturally
+        console.warn(`arc: @build fetch: DNS pre-check failed for ${hostname} (${e.code ?? e.message}) — proceeding with request`)
       }
     }
 
@@ -437,9 +438,16 @@ class BuildExecutor {
             resolve(body)
           }
         })
-      }).on('error', e => { if (!settled) { settled = true; reject(e) } })
+      }).on('error', e => {
+        if (!settled) {
+          settled = true
+          // ECONNREFUSED/ENOTFOUND mean the server is definitively unreachable — don't retry
+          const _noRetry = e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'EADDRNOTAVAIL'
+          reject(_noRetry ? Object.assign(e, { _noRetry: true }) : e)
+        }
+      })
       req.setTimeout(10000, () => {
-        if (!settled) { settled = true; req.destroy(); reject(new Error(`@build fetch: timeout after 10s: ${url}`)) }
+        if (!settled) { settled = true; req.destroy(); reject(Object.assign(new Error(`@build fetch: timeout after 10s: ${url}`), { _noRetry: true })) }
       })
     })
 
