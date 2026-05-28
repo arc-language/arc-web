@@ -299,6 +299,19 @@ class HtmlEmitter {
         resolvedAttrs[k] = v
       }
     }
+    // Apply param defaults for any param not explicitly passed
+    for (const param of (widgetDecl.params ?? [])) {
+      if (param.name && !Object.prototype.hasOwnProperty.call(resolvedAttrs, param.name) && param.defaultValue != null) {
+        const dv = param.defaultValue
+        if (dv.type === 'Literal') {
+          resolvedAttrs[param.name] = dv.value
+        } else if (this.isStaticExpr(dv)) {
+          resolvedAttrs[param.name] = this.evalStaticExpr(dv)
+        } else {
+          resolvedAttrs[param.name] = this.emitExpr(dv)
+        }
+      }
+    }
     this.currentAttrs = resolvedAttrs
     this.slotChildren = slotChildren ?? []
     const result = this.emitChildren(widgetDecl.body)
@@ -346,7 +359,8 @@ class HtmlEmitter {
   }
 
   emitElement(node) {
-    const { tag, classes = [], attrs = {}, children = [] } = node
+    const { tag, classes: _classes = [], attrs = {}, children = [] } = node
+    let classes = _classes
     let { id } = node
 
     // Widget invocation: inline the widget body with bound attrs
@@ -386,6 +400,20 @@ class HtmlEmitter {
     const { staticAttrs, id: collectedId } = this._collectBindings(node)
     if (collectedId && !id) id = collectedId
 
+    // Merge class="" attr into the classes list so we emit a single class attribute.
+    // class="nav" ends up in attrs.class (separate from node.classes which uses .dot syntax).
+    // Without this merge, emitElement emits two class attributes and browsers take the first,
+    // so user-defined CSS selectors like .nav_hash never apply.
+    const rawClassAttr = staticAttrs.class
+    if (rawClassAttr !== undefined) {
+      delete staticAttrs.class
+      const classStr = (rawClassAttr && typeof rawClassAttr === 'object' && rawClassAttr.type)
+        ? (this.isStaticExpr(rawClassAttr) ? String(this.evalStaticExpr(rawClassAttr) ?? '') : '')
+        : String(rawClassAttr ?? '')
+      const extraClasses = classStr.split(/\s+/).filter(Boolean)
+      if (extraClasses.length > 0) classes = [...classes, ...extraClasses]
+    }
+
     let htmlTag = ELEMENT_MAP[tag] ?? tag
 
     // heading size=N → <hN>. Strip size so it doesn't render as an invalid HTML attr.
@@ -401,9 +429,14 @@ class HtmlEmitter {
     }
 
     // Skip allocations for elements with no layout or user classes (majority of elements)
+    // Base structural classes (arc-row, arc-col, etc.) are defined globally without hash — don't scope them.
+    // User-defined classes get the component hash to prevent cross-component CSS leakage.
     const baseClasses = ELEMENT_CLASSES[tag]
     const scopedClasses = (baseClasses != null || classes.length > 0)
-      ? [...(baseClasses ?? []), ...classes].map(c => `${c}_${this.componentHash}`)
+      ? [
+          ...(baseClasses ?? []),
+          ...classes.map(c => c.startsWith('!') ? c.slice(1) : `${c}_${this.componentHash}`)
+        ]
       : []
 
     const attrStr = this.buildAttrs(id, scopedClasses, staticAttrs, node)
@@ -472,6 +505,34 @@ class HtmlEmitter {
 
     if (classes.length > 0) {
       parts.push(`class="${classes.map(c => this.escape(c)).join(' ')}"`)
+    }
+
+    // Arc layout attributes on flex containers → inline CSS style properties.
+    // These never render as valid HTML attributes so must be intercepted here.
+    const _FLEX_TAGS = new Set(['row', 'col', 'stack', 'wrap', 'center'])
+    if (_FLEX_TAGS.has(node.tag)) {
+      const styleParts = []
+      const _resolveVal = (v) => (v && typeof v === 'object' && v.type)
+        ? (this.isStaticExpr(v) ? String(this.evalStaticExpr(v) ?? '') : '')
+        : String(v ?? '')
+      if (attrs.align !== undefined) {
+        styleParts.push(`align-items:${_resolveVal(attrs.align)}`)
+        delete attrs.align
+      }
+      if (attrs.justify !== undefined) {
+        styleParts.push(`justify-content:${_resolveVal(attrs.justify)}`)
+        delete attrs.justify
+      }
+      if (attrs.gap !== undefined) {
+        styleParts.push(`gap:${_resolveVal(attrs.gap)}`)
+        delete attrs.gap
+      }
+      if (styleParts.length > 0) {
+        const existing = attrs.style ? _resolveVal(attrs.style) : ''
+        const merged = existing ? existing + ';' + styleParts.join(';') : styleParts.join(';')
+        parts.push(`style="${this.escape(merged)}"`)
+        delete attrs.style
+      }
     }
 
     for (const [key, rawValue] of Object.entries(attrs)) {
@@ -932,8 +993,9 @@ class HtmlEmitter {
     if (expr.type === 'Literal') return true
     if (expr.type === 'AtProperty') return Object.prototype.hasOwnProperty.call(this.currentAttrs, expr.name)
     if (expr.type === 'Identifier') {
-      // Known @build variable → static
-      return Object.prototype.hasOwnProperty.call(this.buildContext, expr.name)
+      // Known @build variable or widget prop → static
+      return Object.prototype.hasOwnProperty.call(this.buildContext, expr.name) ||
+             Object.prototype.hasOwnProperty.call(this.currentAttrs, expr.name)
     }
     if (expr.type === 'MemberExpr' && !expr.computed) {
       return this.isStaticExpr(expr.object)
@@ -943,6 +1005,12 @@ class HtmlEmitter {
     }
     if (expr.type === 'TemplateLiteral') {
       return expr.parts.every(p => this.isStaticExpr(p))
+    }
+    if (expr.type === 'TernaryExpr') {
+      return this.isStaticExpr(expr.condition) && this.isStaticExpr(expr.consequent) && this.isStaticExpr(expr.alternate)
+    }
+    if (expr.type === 'ArrayLiteral') {
+      return expr.elements.every(e => this.isStaticExpr(e))
     }
     return false
   }
@@ -954,8 +1022,10 @@ class HtmlEmitter {
     if (expr.type === 'AtProperty' && Object.prototype.hasOwnProperty.call(this.currentAttrs, expr.name)) {
       return this.currentAttrs[expr.name]
     }
-    if (expr.type === 'Identifier' && Object.prototype.hasOwnProperty.call(this.buildContext, expr.name)) {
-      return this.buildContext[expr.name]
+    if (expr.type === 'Identifier') {
+      if (Object.prototype.hasOwnProperty.call(this.buildContext, expr.name)) return this.buildContext[expr.name]
+      if (Object.prototype.hasOwnProperty.call(this.currentAttrs, expr.name)) return this.currentAttrs[expr.name]
+      return undefined
     }
     if (expr.type === 'MemberExpr' && !expr.computed) {
       const obj = this.evalStaticExpr(expr.object)
@@ -976,17 +1046,35 @@ class HtmlEmitter {
       if (parts.every(p => p !== undefined)) return parts.join('')
       return undefined
     }
+    if (expr.type === 'TernaryExpr') {
+      const cond = this.evalStaticExpr(expr.condition)
+      if (cond === undefined) return undefined
+      return cond ? this.evalStaticExpr(expr.consequent) : this.evalStaticExpr(expr.alternate)
+    }
+    if (expr.type === 'ArrayLiteral') {
+      return expr.elements.map(e => this.evalStaticExpr(e))
+    }
     return undefined
   }
 
   applyOp(op, l, r) {
     switch (op) {
-      case '+': return l + r
-      case '-': return l - r
-      case '*': return l * r
-      case '/': return l / r
-      case '%': return l % r
-      default:  return undefined
+      case '+':   return l + r
+      case '-':   return l - r
+      case '*':   return l * r
+      case '/':   return l / r
+      case '%':   return l % r
+      case '==':  return l == r  // eslint-disable-line eqeqeq
+      case '!=':  return l != r  // eslint-disable-line eqeqeq
+      case '===': return l === r
+      case '!==': return l !== r
+      case '<':   return l < r
+      case '>':   return l > r
+      case '<=':  return l <= r
+      case '>=':  return l >= r
+      case '&&':  return l && r
+      case '||':  return l || r
+      default:    return undefined
     }
   }
 
