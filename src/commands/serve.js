@@ -8,14 +8,16 @@ const { findArcFiles } = require('../utils/fs')
 
 function createFileWatcher(absDir, onChange) {
   const watched = new Set()
+  const fsWatchers = []
 
   function watchDir(dir) {
     if (!fs.existsSync(dir)) return
     try {
-      fs.watch(dir, { recursive: true }, (event, filename) => {
+      const w = fs.watch(dir, { recursive: true }, (event, filename) => {
         if (!filename?.endsWith('.arc')) return
         onChange(filename)
       })
+      fsWatchers.push(w)
       watched.add(dir)
     } catch {
       for (const f of findArcFiles(dir)) {
@@ -29,6 +31,16 @@ function createFileWatcher(absDir, onChange) {
   }
 
   watchDir(absDir)
+
+  // Return the watched Set (backward-compat) with a .close() method for cleanup.
+  watched.close = function () {
+    for (const w of fsWatchers) w.close()
+    if (!fsWatchers.length) {
+      for (const f of watched) fs.unwatchFile(f)
+    }
+    watched.clear()
+    fsWatchers.length = 0
+  }
   return watched
 }
 
