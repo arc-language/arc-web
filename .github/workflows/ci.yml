@@ -15,8 +15,8 @@ jobs:
       matrix:
         node: [20, 22]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
       # Arc is a zero-dependency project — no install or audit needed.
@@ -38,6 +38,18 @@ jobs:
             test -s "$ex/dist/index.html"
             grep -q '<!DOCTYPE html>' "$ex/dist/index.html"
           done
+
+      - name: Build-server smoke test
+        if: matrix.node == 22
+        run: |
+          mkdir -p /tmp/buildserver-smoke/server
+          cat > /tmp/buildserver-smoke/server/index.arc <<'EOF'
+          server
+            GET /hello
+              text "hello"
+          EOF
+          node src/cli.js build-server /tmp/buildserver-smoke
+          test -s /tmp/buildserver-smoke/dist/server.js
 
       - name: Build-site smoke test (multi-page command)
         if: matrix.node == 22

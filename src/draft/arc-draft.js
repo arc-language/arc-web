@@ -213,18 +213,24 @@ body { padding-top: 44px !important; }`;
     overlay.style.display = 'block';
   }
 
+  function _escHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   function buildFieldHtml(f, value) {
     const escaped = value.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const safeName  = _escHtml(f.name);
+    const safeLabel = _escHtml(f.label || f.name);
     if (f.type === 'Bool') {
       return `<div class="arc-field">
-        <label><input type="checkbox" data-fname="${f.name}"${value ? ' checked' : ''}> ${f.label || f.name}</label>
+        <label><input type="checkbox" data-fname="${safeName}"${value ? ' checked' : ''}> ${safeLabel}</label>
       </div>`;
     }
     const tag = f.type === 'Text' ? 'textarea' : 'input';
     const attrs = tag === 'input' ? `type="text" value="${escaped}"` : '';
     return `<div class="arc-field">
-      <label>${f.label || f.name}</label>
-      <${tag} data-fname="${f.name}" ${attrs}>${tag === 'textarea' ? escaped : ''}</${tag}>
+      <label>${safeLabel}</label>
+      <${tag} data-fname="${safeName}" ${attrs}>${tag === 'textarea' ? escaped : ''}</${tag}>
     </div>`;
   }
 
@@ -352,8 +358,19 @@ body { padding-top: 44px !important; }`;
       const nav = document.createElement('div');
       nav.className = 'arc-block-nav';
       nav.style.cssText = 'position:absolute;top:4px;right:4px;display:none;gap:2px;z-index:10;';
-      nav.innerHTML = `<button onclick="arcMoveBlock(this,'up')" style="background:#18181b;color:#fff;border:none;border-radius:4px;padding:2px 6px;cursor:pointer;font-size:11px;">↑</button>
-        <button onclick="arcMoveBlock(this,'down')" style="background:#18181b;color:#fff;border:none;border-radius:4px;padding:2px 6px;cursor:pointer;font-size:11px;">↓</button>`;
+      const btnStyle = 'background:#18181b;color:#fff;border:none;border-radius:4px;padding:2px 6px;cursor:pointer;font-size:11px;';
+      const upBtn = document.createElement('button');
+      upBtn.textContent = '↑';
+      upBtn.style.cssText = btnStyle;
+      upBtn.setAttribute('aria-label', 'Move block up');
+      upBtn.addEventListener('click', () => arcMoveBlock(upBtn, 'up'));
+      const downBtn = document.createElement('button');
+      downBtn.textContent = '↓';
+      downBtn.style.cssText = btnStyle;
+      downBtn.setAttribute('aria-label', 'Move block down');
+      downBtn.addEventListener('click', () => arcMoveBlock(downBtn, 'down'));
+      nav.appendChild(upBtn);
+      nav.appendChild(downBtn);
       const pos = getComputedStyle(el).position;
       if (pos === 'static') el.style.position = 'relative';
       el.appendChild(nav);
@@ -362,7 +379,7 @@ body { padding-top: 44px !important; }`;
     });
   }
 
-  window.arcMoveBlock = async function (btn, dir) {
+  async function arcMoveBlock(btn, dir) {
     const block = btn.closest('[data-block-id]');
     const id = block.dataset.blockId;
     const sibling = dir === 'up' ? block.previousElementSibling : block.nextElementSibling;

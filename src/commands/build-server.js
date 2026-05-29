@@ -129,7 +129,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     process.exit(1)
   }
 
-  // Detect middleware.arc — compiled separately, emitted as _middleware(req, pathname)
+  // Detect middleware.arc - compiled separately, emitted as _middleware(req, pathname)
   const middlewareFile = arcFiles.find(f => path.basename(f) === 'middleware.arc')
   const routeFiles = arcFiles.filter(f => path.basename(f) !== 'middleware.arc')
 
@@ -273,30 +273,35 @@ async function buildServer(projectDir, opts = {}, flags = {}, hooks = {}) {
       fs.watch(dir, { recursive: true }, (_, filename) => {
         if (!filename?.endsWith('.arc')) return
         clearTimeout(debounceTimer)
-        debounceTimer = setTimeout(async () => {
-          if (building) { rebuildRequested = true; return }
-          do {
-            building = true
-            rebuildRequested = false
-            if (_C) {
-              console.log(`  ${_SCYAN}↺${_SRST}  ${_SDIM}${filename} changed${_SRST}`)
-            } else {
-              console.log(`arc: ${filename} changed, rebuilding...`)
-            }
-            const t0 = Date.now()
-            try {
-              await buildServerOnce(projectDir, opts, flags, hooks)
+        debounceTimer = setTimeout(() => {
+          ;(async () => {
+            if (building) { rebuildRequested = true; return }
+            do {
+              building = true
+              rebuildRequested = false
               if (_C) {
-                console.log(`  ${_SGREEN}✓${_SRST}  rebuilt in ${_SDIM}${Date.now() - t0}ms${_SRST}`)
+                console.log(`  ${_SCYAN}↺${_SRST}  ${_SDIM}${filename} changed${_SRST}`)
               } else {
-                console.log(`arc: rebuilt in ${Date.now() - t0}ms`)
+                console.log(`arc: ${filename} changed, rebuilding...`)
               }
-            } catch (e) {
-              console.error(`arc: rebuild failed: ${e?.message ?? String(e)}`)
-            } finally {
-              building = false
-            }
-          } while (rebuildRequested)
+              const t0 = Date.now()
+              try {
+                await buildServerOnce(projectDir, opts, flags, hooks)
+                if (_C) {
+                  console.log(`  ${_SGREEN}✓${_SRST}  rebuilt in ${_SDIM}${Date.now() - t0}ms${_SRST}`)
+                } else {
+                  console.log(`arc: rebuilt in ${Date.now() - t0}ms`)
+                }
+              } catch (e) {
+                console.error(`arc: rebuild failed: ${e?.message ?? String(e)}`)
+              } finally {
+                building = false
+              }
+            } while (rebuildRequested)
+          })().catch(e => {
+            building = false
+            console.error(`arc: watch handler fatal: ${e?.message ?? String(e)}`)
+          })
         }, 50)
       })
     } catch {

@@ -324,10 +324,10 @@ class CssEmitter {
       if (m) baseCSS = m[1].trim()
     }
 
-    // Emit forced-colors fix for any selectors that used gradient-text (WCAG 1.4.3 — high contrast)
+    // Emit forced-colors fix for any selectors that used gradient-text (WCAG 1.4.3 - high contrast)
     const forcedColorsCSS = this.gradientTextSelectors.length > 0
       ? `@media (forced-colors: active) {\n${this.gradientTextSelectors.map(s =>
-          `  ${s} { color: CanvasText; background: none; -webkit-background-clip: unset; background-clip: unset; }`
+          `  ${s} { color: CanvasText; background-image: none; -webkit-background-clip: unset; background-clip: unset; }`
         ).join('\n')}\n}`
       : ''
 

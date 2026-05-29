@@ -45,6 +45,11 @@ const _LOCALE_NEW_TAB = { en: '(opens in new tab)', fr: '(ouvre dans un nouvel o
 const _LOCALE_CLOSE_DIALOG = { en: 'Close dialog', fr: 'Fermer la boîte de dialogue', es: 'Cerrar diálogo', de: 'Dialog schließen', pt: 'Fechar diálogo', ja: 'ダイアログを閉じる', zh: '关闭对话框', ar: 'إغلاق مربع الحوار' }
 const _LOCALE_SKIP_LINK = { en: 'Skip to main content', fr: 'Aller au contenu principal', es: 'Ir al contenido principal', de: 'Zum Hauptinhalt springen', pt: 'Ir para o conteúdo principal', ja: 'メインコンテンツへスキップ', zh: '跳到主要内容', ar: 'تخطى إلى المحتوى الرئيسي' }
 const _LOCALE_DETAILS = { en: 'Details', fr: 'Détails', es: 'Detalles', de: 'Details', pt: 'Detalhes', ja: '詳細', zh: '详情', ar: 'تفاصيل' }
+const _LOCALE_SLIDER_PREV = { en: 'Previous slide', fr: 'Diapositive précédente', es: 'Diapositiva anterior', de: 'Vorherige Folie', pt: 'Slide anterior', ja: '前のスライド', zh: '上一张幻灯片', ar: 'الشريحة السابقة' }
+const _LOCALE_SLIDER_NEXT = { en: 'Next slide', fr: 'Diapositive suivante', es: 'Diapositiva suivante', de: 'Nächste Folie', pt: 'Próximo slide', ja: '次のスライド', zh: '下一张幻灯片', ar: 'الشريحة التالية' }
+const _LOCALE_SLIDE_NAV = { en: 'Slide navigation', fr: 'Navigation entre diapositives', es: 'Navegación entre diapositivas', de: 'Foliennavigation', pt: 'Navegação de slides', ja: 'スライドナビゲーション', zh: '幻灯片导航', ar: 'التنقل بين الشرائح' }
+const _LOCALE_SLIDE_GO = { en: (n) => `Go to slide ${n}`, fr: (n) => `Aller à la diapositive ${n}`, es: (n) => `Ir a la diapositiva ${n}`, de: (n) => `Zu Folie ${n}`, pt: (n) => `Ir para o slide ${n}`, ja: (n) => `スライド${n}へ`, zh: (n) => `转到第${n}张`, ar: (n) => `انتقل إلى الشريحة ${n}` }
+const _LOCALE_SLIDE_OF = { en: (n, t) => `${n} of ${t}`, fr: (n, t) => `${n} sur ${t}`, es: (n, t) => `${n} de ${t}`, de: (n, t) => `${n} von ${t}`, pt: (n, t) => `${n} de ${t}`, ja: (n, t) => `${n}/${t}`, zh: (n, t) => `第${n}张，共${t}张`, ar: (n, t) => `${n} من ${t}` }
 
 // BCP 47-aware locale lookup: tries full tag (zh-TW) then primary subtag (zh) then 'en'
 function _localize(map, lang) {
@@ -298,11 +303,16 @@ class HtmlEmitter {
   }
 
   _ogLocale() {
-    const l = (this._currentLang ?? 'en').replace('-', '_')
-    if (l.includes('_')) return l
-    // Map primary language subtags to their canonical OG locale — fallback doubles the subtag
+    const raw = this._currentLang ?? 'en'
+    // BCP 47 tags may be "lang", "lang-region", or "lang-Script-region" - strip script subtags
+    const parts = raw.split('-')
+    const lang = parts[0]
+    // Region is the first 2-char uppercase segment (skip 4-char script subtags like 'Hant', 'Latn')
+    const region = parts.slice(1).find(p => p.length === 2)
+    if (region) return `${lang}_${region.toUpperCase()}`
+    // Map primary language subtags to their canonical OG locale
     const _OG_LOCALE_MAP = { en: 'en_US', fr: 'fr_FR', de: 'de_DE', es: 'es_ES', pt: 'pt_BR', ja: 'ja_JP', zh: 'zh_CN', ar: 'ar_SA', nl: 'nl_NL', it: 'it_IT', ko: 'ko_KR', ru: 'ru_RU', pl: 'pl_PL', sv: 'sv_SE', da: 'da_DK', fi: 'fi_FI', nb: 'nb_NO' }
-    return _OG_LOCALE_MAP[l] ?? `${l}_${l.toUpperCase()}`
+    return _OG_LOCALE_MAP[lang] ?? `${lang}_${lang.toUpperCase()}`
   }
 
   emitWidget(node) {
@@ -641,7 +651,7 @@ class HtmlEmitter {
       parts.push(`onclick="${_action}"`)
       const tag = node?.tag ?? ''
       parts.push(`aria-controls="${this.escape(String(value))}"`)
-      // Only inject aria-label for icon-only close triggers — if element has visible text, use that instead
+      // Only inject aria-label for icon-only close triggers - if element has visible text, use that instead
       const hasVisibleText = (node?.children ?? []).some(c => c.type === 'TextNode' && c.text?.trim())
       if (!hasVisibleText && !node?.attrs?.['aria-label']) {
         parts.push(`aria-label="${this.escape(_localize(_LOCALE_CLOSE_DIALOG, this._currentLang))}"`)
@@ -1026,19 +1036,23 @@ class HtmlEmitter {
     const trackId  = `arc-t-${uid}`
     const snapAlign = center ? 'center' : 'start'
 
+    const lang = this._currentLang
+    const slideOfFn = _LOCALE_SLIDE_OF[lang] ?? _LOCALE_SLIDE_OF[(lang ?? 'en').split('-')[0]] ?? _LOCALE_SLIDE_OF.en
+    const slideGoFn = _LOCALE_SLIDE_GO[lang] ?? _LOCALE_SLIDE_GO[(lang ?? 'en').split('-')[0]] ?? _LOCALE_SLIDE_GO.en
+
     const slidesHtml = children.map((child, i) =>
-      `<div class="arc-slide_${uid}" role="group" aria-roledescription="slide" aria-label="${i + 1} of ${count}">${this.emitNode(child)}</div>`
+      `<div class="arc-slide_${uid}" role="group" aria-roledescription="slide" aria-label="${this.escape(slideOfFn(i + 1, count))}">${this.emitNode(child)}</div>`
     ).join('\n')
 
     const navHtml = (showNav && count > 1) ? [
-      `<button class="arc-slider-prev_${uid}" aria-label="Previous slide" onclick="var t=document.getElementById('${trackId}');if(t)t.scrollBy({left:-t.offsetWidth/${items},behavior:'smooth'})">&#8592;</button>`,
-      `<button class="arc-slider-next_${uid}" aria-label="Next slide" onclick="var t=document.getElementById('${trackId}');if(t)t.scrollBy({left:t.offsetWidth/${items},behavior:'smooth'})">&#8594;</button>`,
+      `<button class="arc-slider-prev_${uid}" aria-label="${this.escape(_localize(_LOCALE_SLIDER_PREV, lang))}" onclick="var t=document.getElementById('${trackId}');if(t)t.scrollBy({left:-t.offsetWidth/${items},behavior:'smooth'})">&#8592;</button>`,
+      `<button class="arc-slider-next_${uid}" aria-label="${this.escape(_localize(_LOCALE_SLIDER_NEXT, lang))}" onclick="var t=document.getElementById('${trackId}');if(t)t.scrollBy({left:t.offsetWidth/${items},behavior:'smooth'})">&#8594;</button>`,
     ].join('\n') : ''
 
     const dotsHtml = (showDots && count > 1) ? [
-      `<div class="arc-slider-dots_${uid}" role="group" aria-label="Slide navigation">`,
+      `<div class="arc-slider-dots_${uid}" role="group" aria-label="${this.escape(_localize(_LOCALE_SLIDE_NAV, lang))}">`,
       ...children.map((_, i) =>
-        `<button class="arc-slider-dot_${uid}" aria-label="Go to slide ${i + 1}" aria-current="${i === 0 ? 'true' : 'false'}"></button>`
+        `<button class="arc-slider-dot_${uid}" aria-label="${this.escape(slideGoFn(i + 1))}" aria-current="${i === 0 ? 'true' : 'false'}"></button>`
       ),
       `</div>`,
     ].join('\n') : ''

@@ -280,13 +280,17 @@ async function cmsInit(projectDir, opts = {}) {
   const _arcUiDest = path.join(absDir, 'public', 'arc-ui', 'arc-ui.css')
   if (_arcUiSrc && !fs.existsSync(_arcUiDest)) {
     fs.mkdirSync(path.dirname(_arcUiDest), { recursive: true })
-    // Inline imports - arc-ui's index.css uses @import; resolve them so the file is self-contained.
+    // Inline imports - arc-ui's index.css uses @import; resolve them recursively so the file is self-contained.
+    const _inlineSeen = new Set()
     const _inline = src => {
-      const dir = path.dirname(src)
-      const txt = fs.readFileSync(src, 'utf8')
+      const abs = path.resolve(src)
+      if (_inlineSeen.has(abs)) return ''
+      _inlineSeen.add(abs)
+      const dir = path.dirname(abs)
+      const txt = fs.readFileSync(abs, 'utf8')
       return txt.replace(/@import\s+["']([^"']+)["'];?/g, (_, rel) => {
         const sub = path.resolve(dir, rel)
-        return fs.existsSync(sub) ? fs.readFileSync(sub, 'utf8') : ''
+        return fs.existsSync(sub) ? _inline(sub) : ''
       })
     }
     fs.writeFileSync(_arcUiDest, _inline(_arcUiSrc))

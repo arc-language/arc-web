@@ -35,6 +35,10 @@ function _parseFieldsArg(fieldsStr) {
     const optional = part.endsWith('?')
     const clean = optional ? part.slice(0, -1) : part
     const [name, type = 'String'] = clean.split(':')
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+      console.error(`arc scaffold: invalid field name "${name}" — use letters, numbers, underscores`)
+      process.exit(1)
+    }
     return { name, type, optional }
   })
 }
@@ -914,6 +918,11 @@ async function scaffoldBlock(type, projectDir, opts = {}) {
     }
     throw e
   }
+  // Release lock on unexpected exit (SIGINT/SIGTERM or unhandled error)
+  const _lockRelease = () => { if (!lockAcquired) return; lockAcquired = false; try { fs.unlinkSync(lockFile) } catch {} }
+  process.once('exit', _lockRelease)
+  process.once('SIGINT', () => { _lockRelease(); process.exit(130) })
+  process.once('SIGTERM', () => { _lockRelease(); process.exit(143) })
   let registry
   try {
     registry = JSON.parse(fs.readFileSync(typesFile, 'utf8'))
@@ -931,17 +940,29 @@ async function scaffoldBlock(type, projectDir, opts = {}) {
     label: type.charAt(0).toUpperCase() + type.slice(1).replace(/([A-Z])/g, ' $1').trim(),
     fields: fields.map(f => ({ name: f.name, type: f.type, label: f.name.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()), ...(f.optional ? { optional: true } : {}) }))
   }
-  fs.writeFileSync(typesFile, JSON.stringify(registry, null, 2))
+  try {
+    fs.writeFileSync(typesFile, JSON.stringify(registry, null, 2))
+  } catch (e) {
+    lockAcquired = false
+    fs.unlinkSync(lockFile)
+    console.error(`arc scaffold block: failed to write ${path.relative(process.cwd(), typesFile)}: ${e.message}`)
+    process.exit(1)
+  }
+  lockAcquired = false
   fs.unlinkSync(lockFile)
 
   const editorFile = path.join(absDir, 'admin', 'blocks', `${typeKey}.arc`)
   const widgetFile = path.join(absDir, 'site', 'blocks', `${typeKey}.arc`)
 
-  fs.mkdirSync(path.dirname(editorFile), { recursive: true })
-  fs.mkdirSync(path.dirname(widgetFile), { recursive: true })
-
-  fs.writeFileSync(editorFile, generateBlockEditorPage(typeKey, fields))
-  fs.writeFileSync(widgetFile, generateBlockWidget(typeKey, fields))
+  try {
+    fs.mkdirSync(path.dirname(editorFile), { recursive: true })
+    fs.mkdirSync(path.dirname(widgetFile), { recursive: true })
+    fs.writeFileSync(editorFile, generateBlockEditorPage(typeKey, fields))
+    fs.writeFileSync(widgetFile, generateBlockWidget(typeKey, fields))
+  } catch (e) {
+    console.error(`arc scaffold block: failed to write generated files: ${e.message}`)
+    process.exit(1)
+  }
 
   if (_C) {
     console.log(`\n  ${_CYAN}⚡ arc scaffold block${_RST} ${type}\n`)

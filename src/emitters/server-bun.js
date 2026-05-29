@@ -194,8 +194,26 @@ const _fs = require('fs')
 const _DIST_DIR = _path.dirname(require.main?.filename ?? __filename)
 const _MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.json': 'application/json' }
 const _UPLOAD_MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml', '.pdf': 'application/pdf' }
-// SVG/PDF are user-uploaded content — force download to prevent script execution in browser origin
+// SVG/PDF are user-uploaded content - force download to prevent script execution in browser origin
 const _ATTACHMENT_EXTS = new Set(['.svg', '.pdf'])
+// Pre-populate known static file paths at startup to avoid existsSync() on every request.
+// Built lazily on first request so the process starts fast even with many dist files.
+let _staticFiles = null
+function _getStaticFiles() {
+  if (_staticFiles) return _staticFiles
+  _staticFiles = new Set()
+  try {
+    const _walkDir = (dir) => {
+      for (const entry of _fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = _path.join(dir, entry.name)
+        if (entry.isDirectory()) _walkDir(full)
+        else _staticFiles.add(full)
+      }
+    }
+    _walkDir(_DIST_DIR)
+  } catch (_e) { /* dist may not exist yet - ENOENT is expected at first build */ }
+  return _staticFiles
+}
 async function _serveStatic(req, pathname) {
   // Protect /admin/* paths before dispatch - applies to all HTTP methods so that
   // non-GET requests to unmatched admin paths can't bypass the auth check via 404/405.
@@ -206,7 +224,7 @@ async function _serveStatic(req, pathname) {
   // Serve user-uploaded media from public/uploads/ with safe headers
   if (req.method === 'GET' && pathname.startsWith('/uploads/')) {
     const _uf = _path.join(process.cwd(), 'public', pathname)
-    if (_fs.existsSync(_uf)) {
+    if (_getStaticFiles().has(_uf)) {
       const _uext = _path.extname(_uf).toLowerCase()
       const _headers = { 'Content-Type': _UPLOAD_MIME[_uext] ?? 'application/octet-stream' }
       if (_ATTACHMENT_EXTS.has(_uext)) _headers['Content-Disposition'] = 'attachment'
@@ -217,9 +235,10 @@ async function _serveStatic(req, pathname) {
   const _r = _dispatch(req, pathname)
   if (!(_r instanceof Response) || _r.status !== 404) return _r
   // Try dist/path.html then dist/path/index.html
+  const _sf = _getStaticFiles()
   for (const _try of [pathname.replace(/\\/$/, '') + '.html', pathname.replace(/\\/$/, '') + '/index.html']) {
     const _fp = _path.join(_DIST_DIR, _try)
-    if (_fs.existsSync(_fp)) {
+    if (_sf.has(_fp)) {
       const _ext = _path.extname(_fp)
       return new Response(Bun.file(_fp), { headers: { 'Content-Type': _MIME[_ext] ?? 'text/plain' } })
     }
@@ -260,9 +279,9 @@ function _checkRateLimit(req) {
     ? (xff.split(',').map(s => s.trim()).reverse().find(i => !_TRUSTED_PROXIES.has(i)) ?? xff.split(',')[0].trim())
     : 'unknown'
   const now = Date.now()
-  const window = 60000
+  const _windowMs = 60000
   let entry = _rlMap.get(ip)
-  if (!entry || now > entry.resetAt) entry = { count: 0, resetAt: now + window }
+  if (!entry || now > entry.resetAt) entry = { count: 0, resetAt: now + _windowMs }
   entry.count++
   _rlMap.set(ip, entry)
   if (entry.count > 60) return _json({ error: 'Too many requests' }, 429, { 'Retry-After': String(Math.ceil((entry.resetAt - now) / 1000)) })
@@ -509,17 +528,25 @@ async function _job_${job.name}(${params}) {
   }
 
   // Collect all Identifier names referenced anywhere in an AST node array.
+  // Uses a targeted structural walk (known child-bearing keys) rather than
+  // Object.values() to avoid allocating value arrays for every node.
   _collectRefs(nodes) {
     const refs = new Set()
     function walk(node) {
       if (!node || typeof node !== 'object') return
-      if (Array.isArray(node)) { node.forEach(walk); return }
-      if (node.type === 'Identifier') refs.add(node.name)
-      for (const v of Object.values(node)) {
-        if (v && typeof v === 'object') walk(v)
-      }
+      if (Array.isArray(node)) { for (const n of node) walk(n); return }
+      if (node.type === 'Identifier') { refs.add(node.name); return }
+      walk(node.body)
+      walk(node.left); walk(node.right)
+      walk(node.test); walk(node.consequent); walk(node.alternate)
+      walk(node.callee); walk(node.arguments)
+      walk(node.object); walk(node.property)
+      walk(node.elements); walk(node.properties)
+      walk(node.value); walk(node.init)
+      walk(node.expression); walk(node.declarations)
+      walk(node.argument); walk(node.params)
     }
-    nodes.forEach(walk)
+    for (const n of nodes) walk(n)
     return refs
   }
 
