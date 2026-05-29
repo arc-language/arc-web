@@ -2,7 +2,7 @@
 
 const path = require('path')
 const fs = require('fs')
-const { spawnSync } = require('child_process')
+const { execFile } = require('child_process')
 const { Lexer } = require('../lexer')
 const { Parser } = require('../parser')
 const N = require('../ast')
@@ -11,13 +11,23 @@ const N = require('../ast')
 const _RUST_BIN = path.join(__dirname, '../../arc-compiler/target/release/arc-compiler')
 const _rustAvailable = fs.existsSync(_RUST_BIN)
 
-function parseArcFile(file, src, formatError) {
+async function parseArcFile(file, src, formatError) {
   // Try Rust compiler first (faster, handles all backend syntax)
   if (_rustAvailable) {
     try {
-      const r = spawnSync(_RUST_BIN, [file], { encoding: 'utf8', timeout: 10000 })
-      if (r.status === 0 && r.stdout) {
-        const ast = JSON.parse(r.stdout)
+      const stdout = await new Promise((resolve, reject) => {
+        execFile(_RUST_BIN, [file], { encoding: 'utf8', timeout: 10000 }, (err, stdout, stderr) => {
+          if (err) {
+            if (stderr && process.env.ARC_DEBUG) console.debug(`[arc] Rust parser failed, falling back to JS: ${stderr.trim()}`)
+            reject(err)
+          } else {
+            if (stderr) console.warn(`arc: warning: rust compiler stderr: ${stderr.trim()}`)
+            resolve(stdout)
+          }
+        })
+      })
+      if (stdout) {
+        const ast = JSON.parse(stdout)
         // Rust compiler bug: @auth(role) annotations cause method:"(" in RouteDecl.
         // Fall through to JS parser if any route has a non-alpha method.
         const hasBrokenRoute = ast.declarations?.some(
@@ -33,11 +43,17 @@ function parseArcFile(file, src, formatError) {
   const lexer = new Lexer(src, file)
   let tokens
   try { tokens = lexer.tokenize() }
-  catch (e) { if (formatError) formatError(e, src, file); else console.error(e.message); process.exit(1) }
+  catch (e) {
+    if (formatError) formatError(e, src, file); else console.error(e.message)
+    throw Object.assign(new Error(`arc: parse error in ${file}`), { _formatted: true })
+  }
   const parser = new Parser(tokens, file)
   let program
   try { program = parser.parse() }
-  catch (e) { if (formatError) formatError(e, src, file); else console.error(e.message); process.exit(1) }
+  catch (e) {
+    if (formatError) formatError(e, src, file); else console.error(e.message)
+    throw Object.assign(new Error(`arc: parse error in ${file}`), { _formatted: true })
+  }
   return program
 }
 const { BunServerEmitter } = require('../emitters/server-bun')
@@ -125,7 +141,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     try { src = await fs.promises.readFile(file, 'utf8') }
     catch (e) { console.error(`arc: cannot read ${file}: ${e.message}`); process.exit(1) }
 
-    const program = parseArcFile(file, src, formatError)
+    const program = await parseArcFile(file, src, formatError)
 
     // Attach route path derived from [param] filename segments to RouteGroupDecl/RouteDecl
     // so dynamic filenames like users/[id].arc get their path context.
@@ -144,13 +160,14 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     let src
     try { src = await fs.promises.readFile(middlewareFile, 'utf8') }
     catch (e) { console.error(`arc: cannot read ${middlewareFile}: ${e.message}`); process.exit(1) }
-    const program = parseArcFile(middlewareFile, src, formatError)
+    const program = await parseArcFile(middlewareFile, src, formatError)
     middlewareDecls = program.declarations
   }
 
   const mergedProgram = N.Program([], allDeclarations, 0)
   const target = flags.target ?? 'bun'
-  fs.mkdirSync(distDir, { recursive: true })
+  try { fs.mkdirSync(distDir, { recursive: true }) }
+  catch (e) { console.error(`arc: cannot create dist directory: ${e.message}`); process.exit(1) }
 
   if (target === 'cloudflare') {
     const emitter = new CloudflareEmitter({ hash: 'arc' })
@@ -162,12 +179,12 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     }
 
     const workerFile = path.join(distDir, 'worker.js')
-    fs.writeFileSync(workerFile, worker)
+    await fs.promises.writeFile(workerFile, worker)
     console.log(`arc: worker built → ${path.relative(process.cwd(), workerFile)} (${fmt(Buffer.byteLength(worker))})`)
 
     if (schema) {
       const schemaFile = path.join(distDir, 'schema.sql')
-      fs.writeFileSync(schemaFile, schema)
+      await fs.promises.writeFile(schemaFile, schema)
       console.log(`arc: schema  written → ${path.relative(process.cwd(), schemaFile)}`)
     }
 
@@ -175,7 +192,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     const wranglerPath = path.join(absDir, 'wrangler.toml')
     if (!fs.existsSync(wranglerPath)) {
       const toml = generateWranglerToml(mergedProgram, { name: projectName })
-      fs.writeFileSync(wranglerPath, toml)
+      await fs.promises.writeFile(wranglerPath, toml)
       console.log(`arc: wrangler.toml written → ${path.relative(process.cwd(), wranglerPath)}`)
     }
 
@@ -207,7 +224,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   }
 
   const outFile = path.join(distDir, 'server.js')
-  fs.writeFileSync(outFile, serverJs)
+  await fs.promises.writeFile(outFile, serverJs)
 
   const size = Buffer.byteLength(serverJs)
   const _elapsed = Date.now() - _t0

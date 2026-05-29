@@ -554,7 +554,8 @@ page "T"
     div "B"`
       const { html } = await compile(src)
       assert.match(html, /arc-slider-dots_[a-z0-9_]+/)
-      assert.ok(html.includes('role="tab"'), `Expected dot role="tab" in:\n${html}`)
+      assert.ok(html.includes('role="group"'), `Expected dots wrapper role="group" in:\n${html}`)
+      assert.ok(html.includes('aria-label="Go to slide 1"'), `Expected dot aria-label in:\n${html}`)
       assert.ok(html.includes('aria-current="true"'), `Expected first dot active in:\n${html}`)
     })
 

@@ -290,6 +290,7 @@ class CssEmitter {
   constructor(options = {}) {
     this.hash = options.hash ?? 'arc'
     this.usedKeyframes = new Set()
+    this.gradientTextSelectors = []
     this.output = []
     this.baseStyles = options.includeBase !== false
   }
@@ -323,10 +324,18 @@ class CssEmitter {
       if (m) baseCSS = m[1].trim()
     }
 
+    // Emit forced-colors fix for any selectors that used gradient-text (WCAG 1.4.3 — high contrast)
+    const forcedColorsCSS = this.gradientTextSelectors.length > 0
+      ? `@media (forced-colors: active) {\n${this.gradientTextSelectors.map(s =>
+          `  ${s} { color: CanvasText; background: none; -webkit-background-clip: unset; background-clip: unset; }`
+        ).join('\n')}\n}`
+      : ''
+
     return [
       baseCSS,
       keyframeCSS,
       rules.length > 0 ? `@layer component {\n${rules.join('\n')}\n}` : '',
+      forcedColorsCSS,
     ].filter(Boolean).join('\n\n')
   }
 
@@ -418,6 +427,11 @@ class CssEmitter {
     }).filter(Boolean)
 
     if (declarations.length === 0 && nestedRules.length === 0) return ''
+
+    // Track selectors that use gradient-text so we can emit a forced-colors fix
+    if (declarations.some(d => d.startsWith('color: transparent') || d === 'color: transparent')) {
+      this.gradientTextSelectors.push(scopedSelector)
+    }
 
     const declBlock = declarations.length > 0
       ? `${scopedSelector} {\n  ${declarations.join(';\n  ')};\n}`

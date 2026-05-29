@@ -299,7 +299,10 @@ class HtmlEmitter {
 
   _ogLocale() {
     const l = (this._currentLang ?? 'en').replace('-', '_')
-    return l.includes('_') ? l : `${l}_${l.toUpperCase()}`
+    if (l.includes('_')) return l
+    // Map primary language subtags to their canonical OG locale — fallback doubles the subtag
+    const _OG_LOCALE_MAP = { en: 'en_US', fr: 'fr_FR', de: 'de_DE', es: 'es_ES', pt: 'pt_BR', ja: 'ja_JP', zh: 'zh_CN', ar: 'ar_SA', nl: 'nl_NL', it: 'it_IT', ko: 'ko_KR', ru: 'ru_RU', pl: 'pl_PL', sv: 'sv_SE', da: 'da_DK', fi: 'fi_FI', nb: 'nb_NO' }
+    return _OG_LOCALE_MAP[l] ?? `${l}_${l.toUpperCase()}`
   }
 
   emitWidget(node) {
@@ -638,8 +641,11 @@ class HtmlEmitter {
       parts.push(`onclick="${_action}"`)
       const tag = node?.tag ?? ''
       parts.push(`aria-controls="${this.escape(String(value))}"`)
-      // All close triggers get an aria-label so icon-only buttons have an accessible name
-      parts.push(`aria-label="${this.escape(_localize(_LOCALE_CLOSE_DIALOG, this._currentLang))}"`)
+      // Only inject aria-label for icon-only close triggers — if element has visible text, use that instead
+      const hasVisibleText = (node?.children ?? []).some(c => c.type === 'TextNode' && c.text?.trim())
+      if (!hasVisibleText && !node?.attrs?.['aria-label']) {
+        parts.push(`aria-label="${this.escape(_localize(_LOCALE_CLOSE_DIALOG, this._currentLang))}"`)
+      }
       if (!_INTERACTIVE_TAGS.has(tag)) {
         parts.push('tabindex="0"')
         parts.push('role="button"')
@@ -1006,7 +1012,8 @@ class HtmlEmitter {
     }
 
     const autoplay    = getAttr('autoplay', false)
-    const timeout     = Math.max(500, Number(getAttr('timeout', 4000)))
+    const rawTimeout  = Number(getAttr('timeout', 4000))
+    const timeout     = Number.isFinite(rawTimeout) ? Math.max(500, rawTimeout) : 4000
     const items       = Math.max(1, Number(getAttr('items', 1)))
     const showNav     = getAttr('nav', true) !== false && getAttr('nav', true) !== 'false'
     const showDots    = getAttr('dots', true) !== false && getAttr('dots', true) !== 'false'
@@ -1029,9 +1036,9 @@ class HtmlEmitter {
     ].join('\n') : ''
 
     const dotsHtml = (showDots && count > 1) ? [
-      `<div class="arc-slider-dots_${uid}" role="tablist">`,
+      `<div class="arc-slider-dots_${uid}" role="group" aria-label="Slide navigation">`,
       ...children.map((_, i) =>
-        `<button class="arc-slider-dot_${uid}" role="tab" aria-label="Slide ${i + 1}" aria-current="${i === 0 ? 'true' : 'false'}"></button>`
+        `<button class="arc-slider-dot_${uid}" aria-label="Go to slide ${i + 1}" aria-current="${i === 0 ? 'true' : 'false'}"></button>`
       ),
       `</div>`,
     ].join('\n') : ''

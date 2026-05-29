@@ -20,7 +20,7 @@ const _SRC_SERVER  = path.join(_PKG_ROOT, 'src', 'server')
 // Reads block-types.json and emits one admin/blocks/{type}.arc per type, each
 // with explicit @state vars for every field in the schema. Arrays and selects
 // are flattened to textarea fallback for v1 to keep generated code simple.
-function _esc(s) { return String(s).replace(/"/g, '\\"') }
+function _esc(s) { return String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') }
 
 function generateTypeEditor(typeKey, schema) {
   const label = schema.label ?? typeKey
@@ -96,12 +96,16 @@ page "Edit ${label} block - Admin"
 ${stateLines}${arrayState ? '\n' + arrayState : ''}
 
   @server fn save(blockId: String, p: String, v: Bool, ${fieldFnArgs}) -> Any
+    if !session || (session.role != "admin" && session.role != "editor")
+      return { error: "forbidden" }
     const data = JSON.stringify({ ${dataObj} })
     db.pageblocks.update(blockId, { page: p, visible: v, data: data })
     db.auditlogs.create({ actorId: session.userId, action: "update", entityType: "PageBlock", entityId: blockId, after: data })
     return { ok: true }
 
   @server fn deleteBlock(blockId: String) -> Any
+    if !session || (session.role != "admin" && session.role != "editor")
+      return { error: "forbidden" }
     db.pageblocks.delete(blockId)
     db.auditlogs.create({ actorId: session.userId, action: "delete", entityType: "PageBlock", entityId: blockId })
     return { ok: true }
@@ -169,7 +173,7 @@ ${formRows || '          text class="cms-hint" "No simple fields defined."'}${ar
 `
 }
 
-function generateAllBlockEditors(absDir, log) {
+function generateAllBlockEditors(absDir, log, force) {
   const schemaFile = path.join(absDir, 'server', 'block-types.json')
   if (!fs.existsSync(schemaFile)) return
   let schema
@@ -182,10 +186,15 @@ function generateAllBlockEditors(absDir, log) {
   }
   const blocksDir = path.join(absDir, 'admin', 'blocks')
   for (const [typeKey, typeSchema] of Object.entries(schema)) {
+    if (!/^[a-z][a-z0-9_-]*$/.test(typeKey)) {
+      log.warnings = log.warnings ?? []
+      log.warnings.push(`skipping invalid block type key: "${typeKey}"`)
+      continue
+    }
     const typeDir = path.join(blocksDir, typeKey)
     fs.mkdirSync(typeDir, { recursive: true })
     const dest = path.join(typeDir, '[id].arc')
-    if (fs.existsSync(dest)) {
+    if (fs.existsSync(dest) && !force) {
       log.skipped.push(dest)
       continue
     }
@@ -194,16 +203,16 @@ function generateAllBlockEditors(absDir, log) {
   }
 }
 
-function _copyDir(src, dest, log) {
+function _copyDir(src, dest, log, force) {
   if (!fs.existsSync(src)) return
   fs.mkdirSync(dest, { recursive: true })
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     const s = path.join(src, entry.name)
     const d = path.join(dest, entry.name)
     if (entry.isDirectory()) {
-      _copyDir(s, d, log)
+      _copyDir(s, d, log, force)
     } else {
-      if (fs.existsSync(d)) {
+      if (fs.existsSync(d) && !force) {
         log.skipped.push(d)
         continue
       }
@@ -216,6 +225,7 @@ function _copyDir(src, dest, log) {
 async function cmsInit(projectDir, opts = {}) {
   const absDir = path.resolve(projectDir || '.')
   const _t0 = Date.now()
+  const force = !!opts.force
 
   if (!fs.existsSync(absDir)) {
     console.error(`${_RED}arc cms init: directory not found: ${absDir}${_RST}`)
@@ -225,10 +235,10 @@ async function cmsInit(projectDir, opts = {}) {
   const log = { created: [], skipped: [] }
 
   // 1. Copy widgets → <project>/site/cms/
-  _copyDir(_SRC_WIDGETS, path.join(absDir, 'site', 'cms'), log)
+  _copyDir(_SRC_WIDGETS, path.join(absDir, 'site', 'cms'), log, force)
 
   // 2. Copy admin pages → <project>/admin/
-  _copyDir(_SRC_PAGES, path.join(absDir, 'admin'), log)
+  _copyDir(_SRC_PAGES, path.join(absDir, 'admin'), log, force)
 
   // 3. Copy schema (block-types.json + cms.config.arc template)
   const schemaDest = path.join(absDir, 'server')
@@ -236,7 +246,7 @@ async function cmsInit(projectDir, opts = {}) {
   for (const file of ['block-types.json']) {
     const s = path.join(_SRC_SCHEMA, file)
     const d = path.join(schemaDest, file)
-    if (fs.existsSync(s) && !fs.existsSync(d)) {
+    if (fs.existsSync(s) && (!fs.existsSync(d) || force)) {
       fs.copyFileSync(s, d)
       log.created.push(d)
     } else if (fs.existsSync(d)) {
@@ -245,7 +255,7 @@ async function cmsInit(projectDir, opts = {}) {
   }
   const cfgTemplate = path.join(_SRC_SCHEMA, 'cms.config.arc.template')
   const cfgDest     = path.join(absDir, 'cms.config.arc')
-  if (fs.existsSync(cfgTemplate) && !fs.existsSync(cfgDest)) {
+  if (fs.existsSync(cfgTemplate) && (!fs.existsSync(cfgDest) || force)) {
     fs.copyFileSync(cfgTemplate, cfgDest)
     log.created.push(cfgDest)
   } else if (fs.existsSync(cfgDest)) {
@@ -254,10 +264,10 @@ async function cmsInit(projectDir, opts = {}) {
 
   // 4. Copy server helpers
   const serverDest = path.join(absDir, 'server', 'cms')
-  _copyDir(_SRC_SERVER, serverDest, log)
+  _copyDir(_SRC_SERVER, serverDest, log, force)
 
   // 4b. Generate per-type block editors from block-types.json
-  generateAllBlockEditors(absDir, log)
+  generateAllBlockEditors(absDir, log, force)
 
   // 5. Ensure arc-ui CSS is available at public/arc-ui/arc-ui.css.
   // Prefer node_modules; fall back to a sibling checkout (dev environments).
@@ -285,7 +295,7 @@ async function cmsInit(projectDir, opts = {}) {
     const _jsSrc = path.join(path.dirname(_arcUiSrc), 'js')
     const _jsDest = path.join(path.dirname(_arcUiDest), 'js')
     if (fs.existsSync(_jsSrc)) {
-      _copyDir(_jsSrc, _jsDest, log)
+      _copyDir(_jsSrc, _jsDest, log, force)
     }
   } else if (fs.existsSync(_arcUiDest)) {
     log.skipped.push(_arcUiDest)

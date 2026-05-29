@@ -125,6 +125,11 @@ class Checker {
       case 'RouteDecl':
         this.checkRouteDecl(decl, declared)
         break
+      case 'RouteGroupDecl':
+        for (const route of decl.routes ?? []) {
+          this.checkRouteDecl(route, declared)
+        }
+        break
     }
   }
 
@@ -169,7 +174,7 @@ class Checker {
       scope.set('Queue', 'Queue')
       scope.set('email', 'Email')
       // @auth routes also have session in scope
-      if (decl.annotations?.includes('@auth')) scope.set('session', 'Session')
+      if (decl.annotations?.find(a => typeof a === 'string' && (a === '@auth' || a.startsWith('@auth(')))) scope.set('session', 'Session')
       // Path param variables
       for (const p of decl.params ?? []) {
         scope.set(p, 'String')
@@ -210,6 +215,18 @@ class Checker {
     for (const p of decl.params ?? []) {
       const pname = p.name ?? p
       if (pname) localScope.set(pname, 'Param')
+    }
+    // @server fn bodies have access to the same server-side helpers as route handlers
+    if (decl.type === 'ServerFn') {
+      localScope.set('db', 'DB')
+      localScope.set('session', 'Session')
+      localScope.set('env', 'Fn')
+      localScope.set('oauth', 'OAuth')
+      localScope.set('auth', 'Auth')
+      localScope.set('email', 'Email')
+      localScope.set('Queue', 'Queue')
+      localScope.set('crypto', 'Crypto')
+      localScope.set('now', 'Fn')
     }
     if (decl.body) this.checkBody(decl.body, localScope, { inServer: decl.type === 'ServerFn' })
   }
@@ -300,6 +317,12 @@ class Checker {
         if (node.name) declared.set(node.name, 'VarDecl')
         break
       case 'TextNode':
+        break
+      case 'RawNode':
+        // @raw html is emitted verbatim — warn if the value is not a string literal
+        if (node.html && typeof node.html === 'object' && node.html.type !== 'Literal') {
+          this.warn('@raw html value is not a string literal — ensure this content is trusted and never contains user input', node)
+        }
         break
     }
   }
@@ -581,6 +604,7 @@ const GLOBALS = new Set([
   'Map', 'Set', 'WeakMap', 'WeakSet', 'RegExp', 'Function',
   'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURI',
   'decodeURI', 'encodeURIComponent', 'decodeURIComponent',
+  'require', 'module', 'exports', '__dirname', '__filename', 'process', 'Buffer', 'crypto',
   'fetch', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
   'requestAnimationFrame', 'cancelAnimationFrame',
   'document', 'window', 'location', 'history', 'navigator',

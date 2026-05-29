@@ -300,6 +300,10 @@ const _db = {
 
   // ── Schema helpers ────────────────────────────────────────────────────────────
 
+  _isRequiredField(f) {
+    return !(f.typeAnnotation?.nullable === true || (f.typeAnnotation?.name ?? '').endsWith('?') || f.optional === true || f.init != null)
+  }
+
   emitModelHelpers(schema) {
     const name = schema.name
     if (!_SAFE_IDENT.test(name)) throw new Error(`Arc codegen: unsafe schema name: ${JSON.stringify(name)}`)
@@ -314,11 +318,7 @@ const _db = {
     const selectCols = colList ? `id, ${colList}` : 'id'
 
     const fieldNames = JSON.stringify(fields.map(f => f.name))
-    const requiredFieldNames = JSON.stringify(
-      fields
-        .filter(f => !(f.typeAnnotation?.nullable === true || (f.typeAnnotation?.name ?? '').endsWith('?') || f.optional === true || f.init != null))
-        .map(f => f.name)
-    )
+    const requiredFieldNames = JSON.stringify(fields.filter(f => this._isRequiredField(f)).map(f => f.name))
     return `
 // Schema: ${schema.name}
 _db.run(\`CREATE TABLE IF NOT EXISTS ${lc} (${colDefs})\`)
@@ -383,24 +383,20 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
       const updates = fields.map((f, i) => `${f.name} = $${i + 1}`).join(', ')
       const selectCols = colList ? `id, ${colList}` : 'id'
       const fieldNames = JSON.stringify(fields.map(f => f.name))
-      const requiredFieldNames = JSON.stringify(
-        fields
-          .filter(f => !(f.typeAnnotation?.nullable === true || (f.typeAnnotation?.name ?? '').endsWith('?') || f.optional === true || f.init != null))
-          .map(f => f.name)
-      )
+      const requiredFieldNames = JSON.stringify(fields.filter(f => this._isRequiredField(f)).map(f => f.name))
       return `  ${lc}: (() => { const _flds = ${fieldNames}; const _req = ${requiredFieldNames}; return {
     findMany: async (opts = {}) => {
       const _w = opts?.where
       if (!_w || !Object.keys(_w).length) return _pool.query('SELECT ${selectCols} FROM ${lc} LIMIT $1 OFFSET $2', [Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows)
       const _fs = new Set(_flds); const _ks = Object.keys(_w)
-      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${lc}.findMany: unknown field: \${k}\`); return \`\${k} = $\${i+1}\` })
+      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${lc}.findMany: unknown field: \${k}\`); return \`"\${k}" = $\${i+1}\` })
       return _pool.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')} LIMIT $\${_ks.length+1} OFFSET $\${_ks.length+2}\`, [...Object.values(_w), Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows)
     },
     findFirst: async (opts = {}) => {
       const _w = opts?.where
       if (!_w || !Object.keys(_w).length) return _pool.query('SELECT ${selectCols} FROM ${lc} LIMIT 1 OFFSET 0').then(r => r.rows[0] ?? null)
       const _fs = new Set(_flds); const _ks = Object.keys(_w)
-      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${lc}.findFirst: unknown field: \${k}\`); return \`\${k} = $\${i+1}\` })
+      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${lc}.findFirst: unknown field: \${k}\`); return \`"\${k}" = $\${i+1}\` })
       return _pool.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')} LIMIT 1\`, Object.values(_w)).then(r => r.rows[0] ?? null)
     },
     findUnique: async (opts = {}) => {
