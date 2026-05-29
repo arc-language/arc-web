@@ -1,10 +1,11 @@
 {
-  "name": "arc-web",
+  "name": "@arc-lang/arc",
   "version": "0.2.1",
   "description": "Arc — a full-stack language for the web. Compiles to optimal HTML/CSS/JS (frontend) and Bun/Cloudflare Workers servers (backend). Zero runtime, zero dependencies.",
   "main": "src/cli.js",
   "bin": {
-    "arc": "src/cli.js"
+    "arc": "src/cli.js",
+    "create-arc-web": "src/create-arc-web.js"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -62,12 +63,15 @@
   "license": "MIT",
   "publishConfig": {
     "access": "public",
-    "provenance": true
+    "provenance": false
   },
   "sideEffects": false,
   "optionalDependencies": {
-    "sharp": "^0.34.5",
     "better-sqlite3": "^9.0.0",
-    "pg": "^8.0.0"
+    "pg": "^8.0.0",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
   }
 }

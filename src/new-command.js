@@ -2,30 +2,57 @@
 
 const fs = require('fs')
 const path = require('path')
-const { GREEN, CYAN, DIM, RESET } = require('./utils/errors')
+const { execSync, spawn } = require('child_process')
+const readline = require('readline')
+const { RED, GREEN, CYAN, DIM, RESET } = require('./utils/errors')
 
-// ── New command ────────────────────────────────────────────────────────────
-// Scaffolds a new Arc project from a template.
-// Templates: 'default' (static site), 'app' (fullstack Bun), 'cms' (content management),
-//            'admin' (admin dashboard), 'saas' (SaaS starter)
+// ── Validation ─────────────────────────────────────────────────────────────
 
-function newProject(name, template = 'default') {
-  const dir = path.resolve(name)
+const VALID_TEMPLATES = ['default', 'counter', 'blog', 'api', 'cms']
 
-  if (fs.existsSync(dir)) {
-    const existing = fs.readdirSync(dir)
-    if (existing.length > 0) {
-      console.error(`arc: "${name}" already exists and is not empty`)
-      process.exit(1)
-    }
+function validateName(name) {
+  if (!name || name.trim().length === 0) return 'Project name cannot be empty'
+  if (/\s/.test(name)) return 'Project name cannot contain spaces'
+  if (name.startsWith('.') || name.startsWith('-')) return 'Project name cannot start with . or -'
+  if (name.length > 214) return 'Project name is too long'
+  const sanitized = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')
+  if (!sanitized) return 'Project name contains no valid characters (a-z, 0-9, hyphens)'
+  return null
+}
+
+// ── Package manager detection ───────────────────────────────────────────────
+
+function detectAvailablePMs() {
+  const found = []
+  for (const pm of ['bun', 'pnpm', 'yarn', 'npm']) {
+    try { execSync(`${pm} --version`, { stdio: 'ignore' }); found.push(pm) } catch {}
   }
+  return found.length > 0 ? found : ['npm']
+}
 
-  fs.mkdirSync(dir, { recursive: true })
+function detectPackageManager() {
+  return detectAvailablePMs()[0]
+}
 
+const ALLOWED_PMS = new Set(['bun', 'npm', 'pnpm', 'yarn'])
+
+async function installDeps(dir, pm) {
+  if (!ALLOWED_PMS.has(pm)) throw new Error(`Unknown package manager: "${pm}". Use bun, npm, pnpm, or yarn.`)
+  return new Promise((resolve, reject) => {
+    const child = spawn(pm, ['install'], { cwd: dir, stdio: 'inherit' })
+    child.on('close', code => code === 0 ? resolve() : reject(new Error(`${pm} install failed`)))
+    child.on('error', reject)
+  })
+}
+
+// ── Lazy template factory ──────────────────────────────────────────────────
+// Only the selected template is instantiated — O(1) space for unchosen templates.
+
+function getTemplate(name, template, pm = 'bun') {
   const safeName = name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
 
-  const TEMPLATES = {
-    default: {
+  const TEMPLATE_MAP = {
+    default: () => ({
       'index.arc': `page "${name}"
   heading "Welcome to ${name}"
   text "Edit index.arc to get started."
@@ -50,9 +77,9 @@ function newProject(name, template = 'default') {
         },
       }, null, 2) + '\n',
       '.gitignore': 'dist/\nnode_modules/\n',
-    },
+    }),
 
-    counter: {
+    counter: () => ({
       'index.arc': `page "Counter"
   @state let count = 0
 
@@ -87,10 +114,19 @@ function newProject(name, template = 'default') {
       size: 1rem
       cursor: pointer
 `,
+      'package.json': JSON.stringify({
+        name: safeName,
+        version: '0.0.1',
+        private: true,
+        scripts: {
+          build: 'arc build .',
+          dev: 'arc dev .',
+        },
+      }, null, 2) + '\n',
       '.gitignore': 'dist/\nnode_modules/\n',
-    },
+    }),
 
-    blog: {
+    blog: () => ({
       'index.arc': `page "My Blog"
   @build const posts = [
     { title: "Hello, Arc!", date: "2026-01-01", body: "My first Arc post." },
@@ -115,10 +151,19 @@ function newProject(name, template = 'default') {
       fg: #6b7280
       size: 14px
 `,
+      'package.json': JSON.stringify({
+        name: safeName,
+        version: '0.0.1',
+        private: true,
+        scripts: {
+          build: 'arc build .',
+          dev: 'arc dev .',
+        },
+      }, null, 2) + '\n',
       '.gitignore': 'dist/\nnode_modules/\n',
-    },
+    }),
 
-    api: {
+    api: () => ({
       'server/schemas/post.arc': `model Post
   @id let id = autoincrement()
   let title: String
@@ -160,7 +205,7 @@ function newProject(name, template = 'default') {
           dev: 'arc serve .',
           build: 'arc build-server .',
           migrate: 'arc db migrate .',
-          start: 'bun dist/server.js',
+          start: pm === 'bun' ? 'bun dist/server.js' : 'node dist/server.js',
         },
       }, null, 2) + '\n',
       'README.md': `# ${name}
@@ -185,9 +230,9 @@ arc serve .      # start the server on http://localhost:3000
 | GET | /health | Health check |
 `,
       '.gitignore': 'dist/\nnode_modules/\napp.db\n',
-    },
+    }),
 
-    cms: {
+    cms: () => ({
       'server/schemas/user.arc': `model User
   @id let id          = autoincrement()
   @unique let email   : String
@@ -793,36 +838,192 @@ model DraftToken
           dev: 'arc serve .',
           build: 'arc build-server . && arc build-site admin/',
           migrate: 'arc db migrate .',
-          start: 'bun dist/server.js',
+          start: pm === 'bun' ? 'bun dist/server.js' : 'node dist/server.js',
         },
       }, null, 2) + '\n',
-      '.gitignore': 'dist/\nnode_modules/\napp.db\n',
-    },
+      '.gitignore': 'dist/\nnode_modules/\napp.db\narc.config.json\n',
+    }),
   }
 
-  const files = TEMPLATES[template] ?? TEMPLATES.default
-  if (!TEMPLATES[template] && template !== 'default') {
-    console.error(`arc: unknown template "${template}". Available: ${Object.keys(TEMPLATES).join(', ')}`)
-    process.exit(1)
+  const factory = TEMPLATE_MAP[template] ?? TEMPLATE_MAP.default
+  return factory()
+}
+
+// ── Core project creator ───────────────────────────────────────────────────
+// File writes are synchronous so callers without await still see files written.
+// Returns a Promise only when opts.install is requested.
+
+function newProject(name, template = 'default', opts = {}) {
+  const nameErr = validateName(name)
+  if (nameErr) throw new Error(nameErr)
+
+  if (!VALID_TEMPLATES.includes(template)) {
+    throw new Error(`Unknown template "${template}". Available: ${VALID_TEMPLATES.join(', ')}`)
   }
 
-  for (const [file, content] of Object.entries(files)) {
-    const outPath = path.join(dir, file)
-    fs.mkdirSync(path.dirname(outPath), { recursive: true })
-    fs.writeFileSync(outPath, content)
+  const dir = path.resolve(name)
+  if (fs.existsSync(dir)) {
+    const existing = fs.readdirSync(dir)
+    if (existing.length > 0) {
+      throw new Error(`"${name}" already exists and is not empty`)
+    }
+  }
+
+  const pm = opts.pm ?? 'npm'
+
+  fs.mkdirSync(dir, { recursive: true })
+
+  const files = getTemplate(name, template, pm)
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(dir, rel)
+    fs.mkdirSync(path.dirname(abs), { recursive: true })
+    fs.writeFileSync(abs, content, 'utf8')
   }
 
   const templateLabel = template !== 'default' ? ` (${template})` : ''
-  console.log(`\n  ${GREEN}✓${RESET}  Created ${name}/${templateLabel}`)
+  const count = Object.keys(files).length
+  console.log(`\n  ${GREEN}✓${RESET}  Created ${name}/${templateLabel} — ${count} file${count !== 1 ? 's' : ''}`)
   console.log('')
   for (const f of Object.keys(files)) {
     console.log(`     ${DIM}${f}${RESET}`)
   }
   console.log('')
+
+  if (opts.install) {
+    console.log(`  Installing dependencies with ${pm}...`)
+    console.log('')
+    return installDeps(dir, pm).then(() => {
+      console.log('')
+      console.log('  Next steps:')
+      console.log(`    ${CYAN}cd ${name}${RESET}`)
+      console.log(`    ${CYAN}arc dev${RESET}`)
+      console.log('')
+    })
+  }
+
   console.log('  Next steps:')
   console.log(`    ${CYAN}cd ${name}${RESET}`)
+  console.log(`    ${CYAN}${pm} install${RESET}`)
   console.log(`    ${CYAN}arc dev${RESET}`)
   console.log('')
 }
 
-module.exports = { newProject }
+// ── Interactive wizard ─────────────────────────────────────────────────────
+
+async function promptText(label, defaultVal = '') {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  const hint = defaultVal ? ` ${DIM}(${defaultVal})${RESET}` : ''
+  return new Promise(resolve => {
+    let answered = false
+    rl.question(`\n${CYAN}◆${RESET} ${label}${hint}: `, answer => {
+      answered = true
+      rl.close()
+      resolve(answer.trim() || defaultVal)
+    })
+    rl.on('close', () => { if (!answered) resolve(defaultVal) })
+  })
+}
+
+async function promptSelect(label, options) {
+  if (!process.stdin.isTTY) return options[0].value
+
+  let idx = 0
+
+  const renderOptions = () => {
+    process.stdout.write(`[${options.length}A`)
+    for (let i = 0; i < options.length; i++) {
+      const bullet = i === idx ? `${CYAN}●${RESET}` : `${DIM}○${RESET}`
+      process.stdout.write(`[2K\r  ${bullet} ${options[i].label}\n`)
+    }
+  }
+
+  process.stdout.write(`\n${CYAN}◆${RESET} ${label}\n`)
+  for (let i = 0; i < options.length; i++) {
+    const bullet = i === idx ? `${CYAN}●${RESET}` : `${DIM}○${RESET}`
+    process.stdout.write(`  ${bullet} ${options[i].label}\n`)
+  }
+
+  return new Promise(resolve => {
+    process.stdin.setRawMode(true)
+    process.stdin.resume()
+    process.stdin.setEncoding('utf8')
+
+    const cleanup = (val) => {
+      process.stdin.setRawMode(false)
+      process.stdin.pause()
+      process.stdin.removeListener('data', onData)
+      process.stdin.removeListener('end', onEnd)
+      resolve(val)
+    }
+
+    const onEnd = () => cleanup(options[idx].value)
+
+    const onData = (key) => {
+      if (key === '[A' && idx > 0) { idx--; renderOptions() }
+      else if (key === '[B' && idx < options.length - 1) { idx++; renderOptions() }
+      else if (key === '\r') {
+        process.stdout.write('\n')
+        cleanup(options[idx].value)
+      }
+      else if (key === '') process.exit(0)
+    }
+
+    process.stdin.on('data', onData)
+    process.stdin.on('end', onEnd)
+  })
+}
+
+async function runWizard(presets = {}) {
+  const pkg = require('../package.json')
+  console.log(`\n  ${CYAN}Arc${RESET}  create-arc-web v${pkg.version}\n`)
+
+  // Step 1: project name
+  let name = presets.name
+  if (!name) {
+    name = await promptText('Project name', 'my-app')
+    let nameErr = validateName(name)
+    while (nameErr) {
+      console.error(`  ${RED}✗${RESET} ${nameErr}`)
+      name = await promptText('Project name', 'my-app')
+      nameErr = validateName(name)
+    }
+  }
+
+  // Step 2: template
+  let template = presets.template
+  if (!template) {
+    template = await promptSelect('Template', [
+      { label: 'Static site', value: 'default' },
+      { label: 'Interactive counter  (@state)', value: 'counter' },
+      { label: 'Blog  (@build data, zero JS)', value: 'blog' },
+      { label: 'Full-stack API  (@server + db)', value: 'api' },
+      { label: 'CMS + auth  (@live + OAuth)', value: 'cms' },
+    ])
+  }
+
+  // Step 3: package manager — detected one floats to the top
+  let pm = presets.pm
+  if (!pm) {
+    const available = detectAvailablePMs()
+    const all = ['bun', 'npm', 'pnpm', 'yarn']
+    const ordered = [...new Set([...available, ...all])]
+    const pmOptions = ordered.map(p => ({
+      label: available.includes(p) ? p : `${p}  ${DIM}(not installed)${RESET}`,
+      value: p,
+    }))
+    pm = await promptSelect('Package manager', pmOptions)
+  }
+
+  // Step 4: install?
+  let doInstall = presets.install
+  if (doInstall === undefined) {
+    doInstall = await promptSelect('Install dependencies now?', [
+      { label: `Yes — run ${pm} install`, value: true },
+      { label: 'No — I\'ll install later', value: false },
+    ])
+  }
+
+  await newProject(name, template, { pm, install: doInstall })
+}
+
+module.exports = { newProject, detectPackageManager, runWizard }

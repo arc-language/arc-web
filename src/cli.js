@@ -41,6 +41,8 @@ const _ORST   = _TTY ? '\x1b[0m'  : ''
 // Reads imported .arc files, extracts their widget/fn/style declarations,
 // and merges them into the importing program's declaration list.
 
+// visited: Map<importPath, importedProgram> — caches parsed+resolved programs.
+// Prevents re-parsing and infinite recursion, but still processes named exports on repeat imports.
 async function resolveImports(program, projectDir, filename, visited, rootDir, depsOut) {
   const topLevelRoot = rootDir ?? path.resolve(projectDir)
   const imports = program.declarations.filter(d => d.type === 'ImportDecl')
@@ -77,37 +79,47 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
       continue
     }
 
-    if (visited.has(importPath)) continue
-    visited.add(importPath)
-    depsOut?.add(importPath)
-
-    let importedSource
-    try {
-      importedSource = await fs.promises.readFile(importPath, 'utf8')
-    } catch (e) {
-      console.warn(`arc: warning: could not read import ${src}: ${e.message}`)
-      continue
-    }
-    const lexer = new Lexer(importedSource, importPath)
-    const tokens = lexer.tokenize()
-    const parser = new Parser(tokens, importPath)
+    // Use cached program if already parsed; null means currently resolving (circular).
     let importedProgram
-    try {
-      importedProgram = parser.parse()
-    } catch (e) {
-      console.warn(`arc: warning: syntax error in import ${src}: ${e.message}`)
-      continue
-    }
+    if (visited.has(importPath)) {
+      importedProgram = visited.get(importPath)
+      if (!importedProgram) continue  // circular import in progress — skip
+    } else {
+      // Mark as in-progress (null) before recursing to catch circular imports
+      visited.set(importPath, null)
+      depsOut?.add(importPath)
 
-    // Recursively resolve imports in the imported file (pass topLevelRoot to keep containment anchored)
-    importedProgram = await resolveImports(
-      importedProgram,
-      path.dirname(importPath),
-      importPath,
-      visited,
-      topLevelRoot,
-      depsOut
-    )
+      let importedSource
+      try {
+        importedSource = await fs.promises.readFile(importPath, 'utf8')
+      } catch (e) {
+        console.warn(`arc: warning: could not read import ${src}: ${e.message}`)
+        visited.delete(importPath)
+        continue
+      }
+      const lexer = new Lexer(importedSource, importPath)
+      const tokens = lexer.tokenize()
+      const parser = new Parser(tokens, importPath)
+      try {
+        importedProgram = parser.parse()
+      } catch (e) {
+        console.warn(`arc: warning: syntax error in import ${src}: ${e.message}`)
+        visited.delete(importPath)
+        continue
+      }
+
+      // Recursively resolve imports in the imported file (pass topLevelRoot to keep containment anchored)
+      importedProgram = await resolveImports(
+        importedProgram,
+        path.dirname(importPath),
+        importPath,
+        visited,
+        topLevelRoot,
+        depsOut
+      )
+      // Cache the resolved program for subsequent imports of the same file
+      visited.set(importPath, importedProgram)
+    }
 
     // Merge: bring in widget/fn/style declarations that match the import names
     const wantedNames = new Set([
@@ -125,11 +137,18 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
     for (const decl of importedProgram.declarations) {
       // Always include widgets and top-level fns that were imported by name
       if (decl.type === 'WidgetDecl' && (wantedNames.size === 0 || wantedNames.has(decl.name))) {
-        merged.push(decl)
+        // Deduplicate: skip if same-named widget already merged (e.g. same file imported twice)
+        if (!merged.some(d => d.type === 'WidgetDecl' && d.name === decl.name)) {
+          merged.push(decl)
+        }
       } else if (decl.type === 'FnDecl' && (wantedNames.has(decl.name) || importingWidget)) {
-        merged.push(decl)
+        if (!merged.some(d => d.type === 'FnDecl' && d.name === decl.name)) {
+          merged.push(decl)
+        }
       } else if (decl.type === 'StateDecl' && (wantedNames.has(decl.name) || importingWidget)) {
-        merged.push(decl)
+        if (!merged.some(d => d.type === 'StateDecl' && d.name === decl.name)) {
+          merged.push(decl)
+        }
       } else if (decl.type === 'DesignBlock') {
         // Always merge design blocks (they define CSS tokens/globals, no name to match)
         merged.push(decl)
@@ -235,7 +254,7 @@ async function compile(source, filename = '<input>', options = {}) {
   let program = parser.parse()
 
   // 2b. Resolve imports - read imported .arc files and merge their declarations
-  const initialVisited = new Set(filename !== '<input>' ? [path.resolve(filename)] : [])
+  const initialVisited = new Map(filename !== '<input>' ? [[path.resolve(filename), null]] : [])
   program = await resolveImports(program, projectDir, filename, initialVisited, options.rootDir, depsOut)
 
   // 3. Semantic check
@@ -1082,7 +1101,7 @@ async function dev(projectDir) {
       const parser = new Parser(tokens, absPath)
       const program = parser.parse()
       const depsOut = new Set()
-      await resolveImports(program, absDir, relPath, new Set([absPath]), absDir, depsOut)
+      await resolveImports(program, absDir, relPath, new Map([[absPath, null]]), absDir, depsOut)
       for (const dep of depsOut) {
         if (!_depMap.has(dep)) _depMap.set(dep, new Set())
         _depMap.get(dep).add(slug)
