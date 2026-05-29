@@ -173,11 +173,8 @@ async function applyMigrationPg(statements, connectionString) {
   await client.connect()
   connected = true
   try {
-    await client.query('BEGIN')
-    for (const stmt of statements) {
-      await client.query(stmt)
-    }
-    await client.query('COMMIT')
+    // Send all DDL in one round-trip inside a single transaction
+    await client.query('BEGIN;\n' + statements.join(';\n') + ';\nCOMMIT')
   } catch (e) {
     if (connected) await client.query('ROLLBACK').catch(() => {})
     throw e
@@ -240,13 +237,9 @@ async function dropTables(schemas, opts = {}) {
     const client = new Client({ connectionString: dbUrl })
     await client.connect()
     try {
-      await client.query('BEGIN')
-      for (const tbl of tableNames) {
-        await client.query(`DROP TABLE IF EXISTS ${tbl} CASCADE`)
-      }
-      await client.query('COMMIT')
+      // Drop all tables in one round-trip instead of N sequential queries
+      await client.query(`DROP TABLE IF EXISTS ${tableNames.join(', ')} CASCADE`)
     } catch (e) {
-      await client.query('ROLLBACK').catch(() => {})
       throw e
     } finally {
       await client.end().catch(() => {})

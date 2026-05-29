@@ -11,6 +11,7 @@ const _RE_DIGIT = /[0-9]/
 const _RE_IDENT_START = /[a-zA-Z_$]/
 const _RE_IDENT_CONT = /[a-zA-Z0-9_$]/
 const _RE_AT_CONT = /[a-zA-Z0-9_]/
+const _RE_HEX_DIGIT = /[0-9a-fA-F_]/
 
 
 class Lexer {
@@ -81,7 +82,7 @@ class Lexer {
   tokenizeString(quote) {
     const line = this.line
     const col = this.col - 1
-    let value = ''
+    const chars = []
 
     while (this.pos < this.source.length) {
       const ch = this.source[this.pos]
@@ -89,14 +90,14 @@ class Lexer {
       if (ch === '\\') {
         this.advance()
         const esc = this.advance()
-        value += _STR_ESCAPES[esc] ?? esc
+        chars.push(_STR_ESCAPES[esc] ?? esc)
         continue
       }
 
       if (quote === '"' && ch === '{') {
         // Start interpolation
-        this.emit(T.STRING, value, line, col)
-        value = ''
+        this.emit(T.STRING, chars.join(''), line, col)
+        chars.length = 0
         this.advance() // consume {
         this.emit(T.INTERP_START, '{', this.line, this.col)
         // Tokenize the expression until matching }
@@ -114,11 +115,11 @@ class Lexer {
         this.error('Unterminated string literal')
       }
 
-      value += ch
+      chars.push(ch)
       this.advance()
     }
 
-    this.emit(T.STRING, value, line, col)
+    this.emit(T.STRING, chars.join(''), line, col)
   }
 
   tokenizeInterpolation() {
@@ -140,6 +141,15 @@ class Lexer {
 
   tokenizeNumber() {
     const start = this.pos - 1
+    // Hex literal: 0x...
+    if (this.source[start] === '0' && (this.source[this.pos] === 'x' || this.source[this.pos] === 'X')) {
+      this.advance() // consume x
+      while (this.pos < this.source.length && _RE_HEX_DIGIT.test(this.source[this.pos])) this.advance()
+      const raw = this.source.slice(start, this.pos).replace(/_/g, '')
+      this.emit(T.NUMBER, parseInt(raw, 16))
+      this.tokens[this.tokens.length - 1].raw = raw
+      return
+    }
     while (this.pos < this.source.length && _RE_DIGIT_UNDERSCORE.test(this.source[this.pos])) {
       this.advance()
     }
@@ -151,6 +161,7 @@ class Lexer {
     }
     const raw = this.source.slice(start, this.pos).replace(/_/g, '')
     this.emit(T.NUMBER, parseFloat(raw))
+    this.tokens[this.tokens.length - 1].raw = raw
   }
 
   tokenizeIdent(first) {
@@ -242,12 +253,18 @@ class Lexer {
         this.emit(T.BANG, '!')
         break
       case '<':
+        if (this.peek() === '<') { this.advance(); if (this.peek() === '=') { this.advance(); this.emit(T.LSHIFT_EQ, '<<='); } else { this.emit(T.LSHIFT, '<<'); } break }
         if (this.peek() === '=') { this.advance(); this.emit(T.LTEQ, '<='); break }
         this.emit(T.LT, '<')
         break
       case '>':
+        if (this.peek() === '>') { this.advance(); if (this.peek() === '=') { this.advance(); this.emit(T.RSHIFT_EQ, '>>='); } else { this.emit(T.RSHIFT, '>>'); } break }
         if (this.peek() === '=') { this.advance(); this.emit(T.GTEQ, '>='); break }
         this.emit(T.GT, '>')
+        break
+      case '^':
+        if (this.peek() === '=') { this.advance(); this.emit(T.CARET_EQ, '^='); break }
+        this.emit(T.CARET, '^')
         break
       case '&':
         if (this.peek() === '&') { this.advance(); this.emit(T.AMPAMP, '&&'); break }

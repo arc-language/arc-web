@@ -37,6 +37,12 @@ class ImagePipeline {
     this.hashByPath = new Map()      // src path → sha8
     this.processed = new Map()       // sha8 → { widths, variants, color, w, h, useAvif }
     this._inFlight = new Map()       // sha8 → Promise — coalesces concurrent calls for same image
+    // Cap Sharp's internal worker threads to avoid saturating libuv's thread pool
+    // (default 4 threads) when many images are processed in parallel across pages.
+    if (this.sharp?.concurrency) {
+      const { cpus } = require('os')
+      this.sharp.concurrency(Math.max(1, Math.floor(cpus().length / 2)))
+    }
   }
 
   // imgRefs: [{ src, alt, containerWidth?, position: 'above-fold'|'below-fold' }]

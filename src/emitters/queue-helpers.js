@@ -107,7 +107,7 @@ const email = {
       })
       let res = null
       for (let _attempt = 0; _attempt <= 1; _attempt++) {
-        if (_attempt > 0) await new Promise(r => setTimeout(r, 1000 + Math.random() * 500))
+        if (_attempt > 0) await new Promise(r => setTimeout(r, Math.pow(2, _attempt) * 500 + Math.random() * 500))
         try {
           res = await fetch('https://api.resend.com/emails', {
             method: 'POST',

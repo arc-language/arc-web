@@ -1,5 +1,22 @@
 'use strict'
 
+// Module-scope constants hoisted from buildAttrs to avoid per-call allocations
+const _FLEX_TAGS = new Set(['row', 'col', 'stack', 'wrap', 'center'])
+const _CSS_SHORTHANDS = {
+  p: 'padding', m: 'margin',
+  'p-x': 'padding-left', 'p-y': 'padding-top',
+  'p-t': 'padding-top', 'p-b': 'padding-bottom',
+  'p-l': 'padding-left', 'p-r': 'padding-right',
+  'm-x': 'margin-left', 'm-y': 'margin-top',
+  'm-t': 'margin-top', 'm-b': 'margin-bottom',
+  'm-l': 'margin-left', 'm-r': 'margin-right',
+  w: 'width', h: 'height',
+  'max-w': 'max-width', 'min-w': 'min-width',
+  'max-h': 'max-height', 'min-h': 'min-height',
+  radius: 'border-radius', shadow: 'box-shadow',
+  bg: 'background-color', fg: 'color',
+}
+
 // Recursively check whether an AST node subtree contains an <h1> element
 function _hasH1(nodes, depth = 0) {
   if (!Array.isArray(nodes) || depth > 20) return false
@@ -510,40 +527,21 @@ class HtmlEmitter {
 
     // Arc layout/style attributes → inline CSS style properties.
     // These never render as valid HTML attributes so must be intercepted here.
-    const _FLEX_TAGS = new Set(['row', 'col', 'stack', 'wrap', 'center'])
-    // CSS shorthand attrs valid on ANY element
-    const _CSS_SHORTHANDS = {
-      p: 'padding', m: 'margin',
-      'p-x': 'padding-left', 'p-y': 'padding-top',
-      'p-t': 'padding-top', 'p-b': 'padding-bottom',
-      'p-l': 'padding-left', 'p-r': 'padding-right',
-      'm-x': 'margin-left', 'm-y': 'margin-top',
-      'm-t': 'margin-top', 'm-b': 'margin-bottom',
-      'm-l': 'margin-left', 'm-r': 'margin-right',
-      w: 'width', h: 'height',
-      'max-w': 'max-width', 'min-w': 'min-width',
-      'max-h': 'max-height', 'min-h': 'min-height',
-      radius: 'border-radius', shadow: 'box-shadow',
-      bg: 'background-color', fg: 'color',
-    }
     {
       const styleParts = []
-      const _resolveVal = (v) => (v && typeof v === 'object' && v.type)
-        ? (this.isStaticExpr(v) ? String(this.evalStaticExpr(v) ?? '') : '')
-        : String(v ?? '')
 
       // Flex-container-only attrs
       if (_FLEX_TAGS.has(node.tag)) {
         if (attrs.align !== undefined) {
-          styleParts.push(`align-items:${_resolveVal(attrs.align)}`)
+          styleParts.push(`align-items:${this._resolveAttrVal(attrs.align)}`)
           delete attrs.align
         }
         if (attrs.justify !== undefined) {
-          styleParts.push(`justify-content:${_resolveVal(attrs.justify)}`)
+          styleParts.push(`justify-content:${this._resolveAttrVal(attrs.justify)}`)
           delete attrs.justify
         }
         if (attrs.gap !== undefined) {
-          styleParts.push(`gap:${_resolveVal(attrs.gap)}`)
+          styleParts.push(`gap:${this._resolveAttrVal(attrs.gap)}`)
           delete attrs.gap
         }
       }
@@ -553,26 +551,26 @@ class HtmlEmitter {
         if (attrs[shorthand] !== undefined) {
           // p-x and m-x expand to two properties
           if (shorthand === 'p-x') {
-            const v = _resolveVal(attrs[shorthand])
+            const v = this._resolveAttrVal(attrs[shorthand])
             styleParts.push(`padding-left:${v}`, `padding-right:${v}`)
           } else if (shorthand === 'm-x') {
-            const v = _resolveVal(attrs[shorthand])
+            const v = this._resolveAttrVal(attrs[shorthand])
             styleParts.push(`margin-left:${v}`, `margin-right:${v}`)
           } else if (shorthand === 'p-y') {
-            const v = _resolveVal(attrs[shorthand])
+            const v = this._resolveAttrVal(attrs[shorthand])
             styleParts.push(`padding-top:${v}`, `padding-bottom:${v}`)
           } else if (shorthand === 'm-y') {
-            const v = _resolveVal(attrs[shorthand])
+            const v = this._resolveAttrVal(attrs[shorthand])
             styleParts.push(`margin-top:${v}`, `margin-bottom:${v}`)
           } else {
-            styleParts.push(`${cssProp}:${_resolveVal(attrs[shorthand])}`)
+            styleParts.push(`${cssProp}:${this._resolveAttrVal(attrs[shorthand])}`)
           }
           delete attrs[shorthand]
         }
       }
 
       if (styleParts.length > 0) {
-        const existing = attrs.style ? _resolveVal(attrs.style) : ''
+        const existing = attrs.style ? this._resolveAttrVal(attrs.style) : ''
         const merged = existing ? existing + ';' + styleParts.join(';') : styleParts.join(';')
         parts.push(`style="${this.escape(merged)}"`)
         delete attrs.style
@@ -1169,6 +1167,12 @@ class HtmlEmitter {
       return expr.elements.map(e => this.evalStaticExpr(e))
     }
     return undefined
+  }
+
+  _resolveAttrVal(v) {
+    return (v && typeof v === 'object' && v.type)
+      ? (this.isStaticExpr(v) ? String(this.evalStaticExpr(v) ?? '') : '')
+      : String(v ?? '')
   }
 
   applyOp(op, l, r) {

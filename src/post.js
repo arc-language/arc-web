@@ -10,6 +10,14 @@
 //   4. Minification: strips whitespace from HTML
 //   5. Resource hints: dns-prefetch, preconnect for external domains
 
+const _CSS_STRING_RE = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g
+const _CSS_COMMENT_RE = /\/\*[\s\S]*?\*\//g
+const _CSS_WS_RE = /\s+/g
+const _CSS_TOKEN_RE = /\s*([{}:;,>+~])\s*/g
+const _CSS_SEMI_BRACE_RE = /;}/g
+const _CSS_RESTORE_RE = /__S(\d+)__/g
+const _RH_EXTERNAL_RE = /(?:href|src)="(https?:\/\/[^/"]+)/g
+
 class PostProcessor {
   constructor(options = {}) {
     this.options = options
@@ -89,21 +97,21 @@ class PostProcessor {
   minifyCss(css) {
     // Pull out strings so we don't mangle their content
     const strings = []
-    let s = css.replace(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g, (m) => {
+    let s = css.replace(_CSS_STRING_RE, (m) => {
       strings.push(m)
       return `__S${strings.length - 1}__`
     })
     // Strip /* ... */ comments
-    s = s.replace(/\/\*[\s\S]*?\*\//g, '')
+    s = s.replace(_CSS_COMMENT_RE, '')
     // Collapse all whitespace runs to a single space
-    s = s.replace(/\s+/g, ' ')
+    s = s.replace(_CSS_WS_RE, ' ')
     // Remove spaces adjacent to syntactic tokens
-    s = s.replace(/\s*([{}:;,>+~])\s*/g, '$1')
+    s = s.replace(_CSS_TOKEN_RE, '$1')
     // Drop trailing ; right before }
-    s = s.replace(/;}/g, '}')
+    s = s.replace(_CSS_SEMI_BRACE_RE, '}')
     s = s.trim()
     // Restore strings
-    s = s.replace(/__S(\d+)__/g, (_, i) => strings[parseInt(i, 10)])
+    s = s.replace(_CSS_RESTORE_RE, (_, i) => strings[parseInt(i, 10)])
     return s
   }
 
@@ -111,12 +119,11 @@ class PostProcessor {
 
   addResourceHints(html) {
     // Find external domains referenced in the HTML
+    // m[1] captures scheme + host (no trailing slash), which is the origin
     const externalDomains = new Set()
-    const hrefMatches = html.matchAll(/(?:href|src)="(https?:\/\/[^/"]+)/g)
-    for (const m of hrefMatches) {
-      try {
-        externalDomains.add(new URL(m[1]).origin)
-      } catch { /* skip malformed URLs in resource-hint scan */ }
+    _RH_EXTERNAL_RE.lastIndex = 0
+    for (const m of html.matchAll(_RH_EXTERNAL_RE)) {
+      externalDomains.add(m[1])
     }
 
     if (externalDomains.size === 0) return html

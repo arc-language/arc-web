@@ -192,6 +192,7 @@ class JsEmitter {
 
     this._reCache?.clear()
     this._emitCache = undefined
+    this._runtimeExprCache?.clear()
     return parts.join('\n')
   }
 
@@ -199,13 +200,18 @@ class JsEmitter {
 
   buildDeps(stateDecls, computedDecls, stateBindings) {
     const deps = new Map()
+    // Pre-build per-computed-name regexes once to avoid O(S×B×C) reconstructions
+    const computedReMap = new Map(computedDecls.map(c => [
+      c.name,
+      new RegExp('(?:^|[^a-zA-Z0-9_])' + c.name + '(?:[^a-zA-Z0-9_]|$)'),
+    ]))
 
     for (const s of stateDecls) {
       // Pre-compile once per state var, reused for all bindings
       const re = new RegExp(`(?:^|[^a-zA-Z0-9_@])@?${s.name}(?:[^a-zA-Z0-9_]|$)`)
       const affected = []
       for (const b of stateBindings) {
-        if (this.bindingDependsOn(b, s.name, computedDecls, re)) {
+        if (this.bindingDependsOn(b, s.name, computedDecls, re, computedReMap)) {
           affected.push(b)
         }
       }
@@ -215,7 +221,7 @@ class JsEmitter {
     return deps
   }
 
-  bindingDependsOn(binding, stateVar, computedDecls, re) {
+  bindingDependsOn(binding, stateVar, computedDecls, re, computedReMap) {
     const expr = binding.expr ?? ''
     // Check if stateVar appears as a whole word in the expression
     const stateRe = re ?? new RegExp(`(?:^|[^a-zA-Z0-9_@])@?${stateVar}(?:[^a-zA-Z0-9_]|$)`)
@@ -223,8 +229,9 @@ class JsEmitter {
 
     // Check if any computed that binding uses depends on stateVar
     for (const c of computedDecls) {
-      // Use word-boundary regex to avoid false matches (e.g. 'count' matching 'discountRate')
-      const nameRe = new RegExp('(?:^|[^a-zA-Z0-9_])' + c.name + '(?:[^a-zA-Z0-9_]|$)')
+      // Use pre-built regex from caller map to avoid per-call RegExp construction
+      const nameRe = computedReMap?.get(c.name)
+        ?? new RegExp('(?:^|[^a-zA-Z0-9_])' + c.name + '(?:[^a-zA-Z0-9_]|$)')
       if (nameRe.test(expr) && this.exprReferences(c.init, stateVar)) return true
     }
 

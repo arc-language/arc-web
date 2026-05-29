@@ -45,6 +45,26 @@ const { CloudflareEmitter } = require('../emitters/server-cloudflare')
 const { generateWranglerToml } = require('../compilers/wrangler-compiler')
 const { findArcFiles } = require('../utils/fs')
 
+// Transform a file path with [param] segments into a route path.
+// e.g. "users/[id].arc" → "/users/:id"
+//      "media/[[...path]].arc" → "/media/*path"
+// Returns null if no dynamic segments are found (plain file).
+function filePathToRoutePath(filePath, serverDir) {
+  const rel = path.relative(serverDir, filePath).replace(/\.arc$/, '')
+  const segments = rel.split(path.sep)
+  let hasDynamic = false
+  const routeSegments = segments.map(seg => {
+    // Catch-all [[...param]]
+    const catchAll = seg.match(/^\[\[\.\.\.([a-zA-Z_][a-zA-Z0-9_]*)\]\]$/)
+    if (catchAll) { hasDynamic = true; return `*${catchAll[1]}` }
+    // Dynamic [param]
+    const dynamic = seg.match(/^\[([a-zA-Z_][a-zA-Z0-9_]*)\]$/)
+    if (dynamic) { hasDynamic = true; return `:${dynamic[1]}` }
+    return seg
+  })
+  return hasDynamic ? '/' + routeSegments.join('/') : null
+}
+
 function fmt(bytes) {
   if (bytes < 1024) return `${bytes}B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
@@ -93,14 +113,39 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     process.exit(1)
   }
 
+  // Detect middleware.arc — compiled separately, emitted as _middleware(req, pathname)
+  const middlewareFile = arcFiles.find(f => path.basename(f) === 'middleware.arc')
+  const routeFiles = arcFiles.filter(f => path.basename(f) !== 'middleware.arc')
+
   const allDeclarations = []
-  for (const file of arcFiles) {
+  let middlewareDecls = []
+
+  const routeResults = await Promise.all(routeFiles.map(async (file) => {
     let src
     try { src = await fs.promises.readFile(file, 'utf8') }
     catch (e) { console.error(`arc: cannot read ${file}: ${e.message}`); process.exit(1) }
 
     const program = parseArcFile(file, src, formatError)
-    allDeclarations.push(...program.declarations)
+
+    // Attach route path derived from [param] filename segments to RouteGroupDecl/RouteDecl
+    // so dynamic filenames like users/[id].arc get their path context.
+    const dynamicPath = filePathToRoutePath(file, serverDir)
+    if (dynamicPath) {
+      for (const d of program.declarations) {
+        if (d.type === 'RouteDecl' && !d._fileRoutePath) d._fileRoutePath = dynamicPath
+      }
+    }
+
+    return program.declarations
+  }))
+  for (const decls of routeResults) allDeclarations.push(...decls)
+
+  if (middlewareFile) {
+    let src
+    try { src = await fs.promises.readFile(middlewareFile, 'utf8') }
+    catch (e) { console.error(`arc: cannot read ${middlewareFile}: ${e.message}`); process.exit(1) }
+    const program = parseArcFile(middlewareFile, src, formatError)
+    middlewareDecls = program.declarations
   }
 
   const mergedProgram = N.Program([], allDeclarations, 0)
@@ -152,6 +197,8 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     cors: flags.cors ?? null,
     profile: flags.profile ?? false,
   })
+  emitter.hasMiddleware = !!middlewareFile
+  emitter.middlewareDecls = middlewareDecls
   const serverJs = emitter.emitProgram(mergedProgram)
 
   if (!serverJs.trim()) {

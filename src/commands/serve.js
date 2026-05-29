@@ -101,8 +101,8 @@ async function serve(projectDir, flags, buildServer) {
   console.log(`${DIM}arc: watching ${path.relative(process.cwd(), serverDir)}/**/*.arc${RESET}`)
 
   // Re-emit child's exit code so the parent shell sees the correct status.
-  process.on('SIGINT', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGINT') } else process.exit(0) })
-  process.on('SIGTERM', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGTERM') } else process.exit(0) })
+  process.once('SIGINT', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGINT') } else process.exit(0) })
+  process.once('SIGTERM', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGTERM') } else process.exit(0) })
 }
 
 module.exports = { serve, createFileWatcher }

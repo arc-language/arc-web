@@ -29,6 +29,19 @@ const { RED, GREEN, YELLOW, CYAN, DIM, RESET, formatError, showSourceContext } =
 const { findArcFiles } = require('./utils/fs')
 const N = require('./ast')
 
+// Simple concurrency limiter used by fan-out Promise.all calls to cap simultaneous I/O.
+function _withConcurrency(limit, items, fn) {
+  let i = 0
+  const results = []
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++
+      results[idx] = await fn(items[idx], idx)
+    }
+  })
+  return Promise.all(workers).then(() => results)
+}
+
 // Stdout-specific colors (build output goes to stdout, errors to stderr)
 const _TTY = process.stdout.isTTY && !process.env.NO_COLOR
 const _OCYAN  = _TTY ? '\x1b[36m' : ''
@@ -48,6 +61,10 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
   if (imports.length === 0) return program
 
   const merged = program.declarations.filter(d => d.type !== 'ImportDecl')
+  // O(1) dedup tracking sets — updated alongside merged to avoid O(D×M) .some() scans
+  const mergedWidgetNames = new Set(merged.filter(d => d.type === 'WidgetDecl').map(d => d.name))
+  const mergedFnNames = new Set(merged.filter(d => d.type === 'FnDecl').map(d => d.name))
+  const mergedStateNames = new Set(merged.filter(d => d.type === 'StateDecl').map(d => d.name))
 
   for (const imp of imports) {
     const src = imp.source
@@ -136,17 +153,19 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
     for (const decl of importedProgram.declarations) {
       // Always include widgets and top-level fns that were imported by name
       if (decl.type === 'WidgetDecl' && (wantedNames.size === 0 || wantedNames.has(decl.name))) {
-        // Deduplicate: skip if same-named widget already merged (e.g. same file imported twice)
-        if (!merged.some(d => d.type === 'WidgetDecl' && d.name === decl.name)) {
+        if (!mergedWidgetNames.has(decl.name)) {
           merged.push(decl)
+          mergedWidgetNames.add(decl.name)
         }
       } else if (decl.type === 'FnDecl' && (wantedNames.has(decl.name) || importingWidget)) {
-        if (!merged.some(d => d.type === 'FnDecl' && d.name === decl.name)) {
+        if (!mergedFnNames.has(decl.name)) {
           merged.push(decl)
+          mergedFnNames.add(decl.name)
         }
       } else if (decl.type === 'StateDecl' && (wantedNames.has(decl.name) || importingWidget)) {
-        if (!merged.some(d => d.type === 'StateDecl' && d.name === decl.name)) {
+        if (!mergedStateNames.has(decl.name)) {
           merged.push(decl)
+          mergedStateNames.add(decl.name)
         }
       } else if (decl.type === 'DesignBlock') {
         // Always merge design blocks (they define CSS tokens/globals, no name to match)
@@ -602,7 +621,7 @@ function _patchPageHtml(htmlContent, sharedFilename, pageCssText) {
 // Reads/writes files in distDir. compiled is the array of { slug, meta } objects.
 async function _injectPrefetchTags(distDir, compiled) {
   const allSlugs = new Set(compiled.map(c => c.slug + '.html'))
-  await Promise.all(compiled.map(async c => {
+  await _withConcurrency(32, compiled, async c => {
     const p = path.join(distDir, c.slug + '.html')
     let html
     try { html = await fs.promises.readFile(p, 'utf8') } catch { return }
@@ -631,7 +650,7 @@ async function _injectPrefetchTags(distDir, compiled) {
       html = html.replace('</head>', inject + '</head>')
     }
     await fs.promises.writeFile(p, html)
-  }))
+  })
 }
 
 // Multi-page site build: compiles every .arc in the directory, then extracts
@@ -1128,7 +1147,7 @@ async function dev(projectDir) {
     const pageFiles = findArcFiles(absDir).filter(f => {
       try { return _isPageFile(fs.readFileSync(f, 'utf8')) } catch { return false }
     })
-    await Promise.all(pageFiles.map(f => _scanPageDeps(f)))
+    await _withConcurrency(16, pageFiles, f => _scanPageDeps(f))
     for (const [slug] of _slugFile) {
       const outPath = path.join(distDir, slug + '.html')
       try { _prevHtml.set(slug, fs.readFileSync(outPath, 'utf8')) } catch {}
@@ -1325,7 +1344,7 @@ async function dev(projectDir) {
           } catch (e) {
             let src = null
             try { src = fs.readFileSync(path.join(absDir, changedFile), 'utf8') } catch {} // intentionally ignored - src stays null; formatError handles null src gracefully
-            try { formatError(e, src, changedFile) } catch (e2) { console.error(e2) }
+            try { formatError(e, src, changedFile) } catch (e2) { console.error(`arc: dev: error formatting rebuild error: ${e2?.message ?? String(e2)}`) }
           }
         } while (rebuildRequested)
       } finally {
@@ -1827,11 +1846,12 @@ async function main() {
     case 'cms': {
       const sub = args[0]
       const positional = args.slice(1).filter(a => !a.startsWith('--'))
+      const force = args.includes('--force')
       if (sub === 'init') {
         const dir = positional[0] ?? '.'
-        await _cmsInitImpl(dir, {})
+        await _cmsInitImpl(dir, { force })
       } else {
-        console.error('arc cms init [dir]   Scaffold admin panel + CMS into project')
+        console.error('arc cms init [dir] [--force]   Scaffold admin panel + CMS into project')
         process.exit(1)
       }
       break

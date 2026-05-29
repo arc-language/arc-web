@@ -1,5 +1,10 @@
 'use strict'
 
+// Hoisted regex constants for expandFlex / expandGrid hot paths
+const _FLEX_NUMERIC_RE = /^\d+(\.\d+)?(\s+\d+(\.\d+)?(\s+\d+(\.\d+)?)?)?$/
+const _GRID_COL_RE = /^\d+col$/
+const _GRID_FR_RE = /^[\d.]+fr/
+
 // Arc design shorthand → CSS property expansion
 const SHORTHANDS = {
   // Spacing
@@ -127,7 +132,7 @@ const _KNOWN_JUSTIFY_VALUES = new Set(['center','start','end','flex-start','flex
 
 function expandFlex(value) {
   // Numeric value → flex-item shorthand: matches 1–3 space-separated decimal numbers
-  if (value && /^\d+(\.\d+)?(\s+\d+(\.\d+)?(\s+\d+(\.\d+)?)?)?$/.test(value.trim())) return `flex: ${value}`
+  if (value && _FLEX_NUMERIC_RE.test(value.trim())) return `flex: ${value}`
   // "column gap=16 align=center"
   const props = ['display: flex', 'box-sizing: border-box']
   if (!value) return props.join('; ')
@@ -160,10 +165,10 @@ function expandGrid(value) {
   const props = ['display: grid', 'box-sizing: border-box']
   const parts = value.split(/\s+/)
   for (const part of parts) {
-    if (/^\d+col$/.test(part)) {
+    if (_GRID_COL_RE.test(part)) {
       const n = parseInt(part, 10)
       props.push(`grid-template-columns: repeat(${n}, 1fr)`)
-    } else if (part.startsWith('"') || /^[\d.]+fr/.test(part)) {
+    } else if (part.startsWith('"') || _GRID_FR_RE.test(part)) {
       props.push(`grid-template-columns: ${part.replace(/"/g, '')}`)
     } else if (part.startsWith('gap=')) {
       props.push(`gap: ${part.slice(4)}`)
