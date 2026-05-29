@@ -60,8 +60,14 @@ class ImagePipeline {
     }
 
     const processImage = async ([src, { abs, ref }]) => {
-      const buf = await fs.promises.readFile(abs)
-      const sha8 = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 8)
+      // Stream-hash the file to compute sha8 without loading the full image into memory
+      const sha8 = await new Promise((resolve, reject) => {
+        const hash = crypto.createHash('sha256')
+        const stream = fs.createReadStream(abs)
+        stream.on('data', c => hash.update(c))
+        stream.on('end', () => resolve(hash.digest('hex').slice(0, 8)))
+        stream.on('error', reject)
+      })
       this.hashByPath.set(src, sha8)
       if (this.processed.has(sha8)) return   // F5: dedup by content
       // Coalesce concurrent calls for the same image (e.g. same img on multiple pages compiled in parallel).
@@ -74,7 +80,7 @@ class ImagePipeline {
       this._inFlight.set(sha8, p)
 
       try {
-      const img = this.sharp(buf)
+      const img = this.sharp(abs)
       const meta = await img.metadata()
       const widths = this._chooseWidths(meta.width, ref.containerWidth)
 
@@ -88,8 +94,8 @@ class ImagePipeline {
       const allTasks = []
       for (const w of widths) {
         const base = `${stem}.${sha8}.${w}w`
-        // Use .clone() so Sharp decodes buf only once per width, then branches to each format
-        const resized = this.sharp(buf).resize(w)
+        // Use .clone() so Sharp decodes the file only once per width, then branches to each format
+        const resized = this.sharp(abs).resize(w)
         if (wantAvif) {
           const p = path.join(this.outDir, `${base}.avif`)
           allTasks.push(resized.clone().avif({ quality: 60 }).toFile(p).then(info => { variants.avif[w] = `${base}.avif`; sizes.avif[w] = info.size }))
@@ -123,7 +129,7 @@ class ImagePipeline {
 
       let color = null
       if (this.dominantColors) {
-        const stats = await this.sharp(buf).stats()
+        const stats = await this.sharp(abs).stats()
         const d = stats.dominant
         color = '#' + [d.r, d.g, d.b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('')
       }
