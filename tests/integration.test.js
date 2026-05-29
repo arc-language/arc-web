@@ -142,12 +142,8 @@ describe('integration: patterns example', () => {
     assert.ok(result.html.includes('<details'), 'expected <details> element')
   })
 
-  test('modal uses popover API (zero JS)', () => {
-    // Popover-based modals don't need JS
-    assert.ok(
-      result.html.includes('popover') || result.html.includes('dialog'),
-      'expected popover or dialog element'
-    )
+  test('modal uses native dialog element (zero JS)', () => {
+    assert.ok(result.html.includes('<dialog'), 'expected native <dialog> element')
   })
 })
 

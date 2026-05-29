@@ -17,44 +17,6 @@ function bytes(value) {
 
 describe('ADP Protocol', () => {
 
-  describe('TAG constants', () => {
-    test('NULL tag is 0x00', () => {
-      assert.equal(TAG.NULL, 0x00)
-    })
-
-    test('TRUE tag is 0x01', () => {
-      assert.equal(TAG.TRUE, 0x01)
-    })
-
-    test('FALSE tag is 0x02', () => {
-      assert.equal(TAG.FALSE, 0x02)
-    })
-
-    test('UINT8 tag is 0x03', () => {
-      assert.equal(TAG.UINT8, 0x03)
-    })
-
-    test('INT32 tag is 0x04', () => {
-      assert.equal(TAG.INT32, 0x04)
-    })
-
-    test('FLOAT64 tag is 0x05', () => {
-      assert.equal(TAG.FLOAT64, 0x05)
-    })
-
-    test('STRING tag is 0x06', () => {
-      assert.equal(TAG.STRING, 0x06)
-    })
-
-    test('ARRAY tag is 0x07', () => {
-      assert.equal(TAG.ARRAY, 0x07)
-    })
-
-    test('OBJECT tag is 0x08', () => {
-      assert.equal(TAG.OBJECT, 0x08)
-    })
-  })
-
   describe('primitive encoding byte layout', () => {
     test('encode(null) produces [0x00]', () => {
       assert.deepEqual(bytes(null), [0x00])

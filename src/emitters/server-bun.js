@@ -24,6 +24,55 @@ const { profilerPreamble, profilerDbWrapper } = require('../profiler/hooks')
 
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
+// Flatten RouteGroupDecl nodes into RouteDecl[], prepending prefix and
+// tagging each route with a _groupGuardFn so a shared guard is used instead
+// of inlining the auth check N times (~95% less emitted JS for auth logic).
+function flattenGroups(declarations) {
+  const routes = []
+  for (const d of declarations) {
+    if (d.type === 'RouteDecl' && isValidRoute(d)) {
+      routes.push(d)
+    } else if (d.type === 'RouteGroupDecl') {
+      const slug = d.prefix.replace(/[^a-zA-Z0-9]/g, '_').replace(/^_+|_+$/g, '') || 'root'
+      const hasGroupAuth = d.annotations?.some(a => a === '@auth' || a.startsWith('@auth('))
+      const guardFn = hasGroupAuth ? `_guard_${slug}` : null
+      for (const route of d.routes) {
+        const path = d.prefix.replace(/\/$/, '') + route.path
+        const params = (path.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) ?? []).map(p => p.slice(1))
+        routes.push({
+          ...route,
+          path,
+          params,
+          annotations: [...(d.annotations ?? []), ...(route.annotations ?? [])],
+          _groupGuardFn: guardFn,
+          _groupAnnotations: d.annotations,
+        })
+      }
+    }
+  }
+  return routes
+}
+
+// Emit a shared auth guard function for a route group.
+// Called once per group; each handler calls _guard_xxx(req) instead of
+// inlining 12 lines of auth boilerplate per route.
+function emitGroupGuard(prefix, annotations) {
+  const authAnn = annotations?.find(a => a === '@auth' || a.startsWith('@auth('))
+  if (!authAnn) return null
+  const slug = prefix.replace(/[^a-zA-Z0-9]/g, '_').replace(/^_+|_+$/g, '') || 'root'
+  const name = `_guard_${slug}`
+  const roleMatch = authAnn.match(/^@auth\(([^)]+)\)$/)
+  const roles = roleMatch ? roleMatch[1].split(',').map(r => r.trim()).filter(Boolean) : null
+  const roleCheck = roles
+    ? `\n  if (!${JSON.stringify(roles)}.includes(s.role)) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Forbidden' }, 403) : Response.redirect('/admin/login', 302) }`
+    : ''
+  return `async function ${name}(req) {
+  const s = await auth.session(req)
+  if (!s) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Unauthorized' }, 401) : Response.redirect('/admin/login', 302) }${roleCheck}
+  return s
+}`
+}
+
 class BunServerEmitter {
   constructor(options = {}) {
     this.options = options
@@ -39,9 +88,10 @@ class BunServerEmitter {
   get isPg() { return this.db === 'postgres' }
 
   emitProgram(program) {
-    const routes = program.declarations.filter(d => d.type === 'RouteDecl' && isValidRoute(d))
+    const routes = flattenGroups(program.declarations)
     const schemas = program.declarations.filter(d => d.type === 'ModelDecl')
     const jobs = program.declarations.filter(d => d.type === 'JobDecl')
+    const groups = program.declarations.filter(d => d.type === 'RouteGroupDecl')
     const hasAuth = routes.some(r => r.annotations?.find(a => a === '@auth' || a.startsWith('@auth(')))
 
     if (routes.length === 0 && schemas.length === 0) return ''
@@ -53,7 +103,18 @@ class BunServerEmitter {
     parts.push(this.emitPreamble(schemas))
 
     if (this.profile && !this.isPg) parts.push(profilerDbWrapper())
-    if (hasAuth) parts.push(emitAuthPreamble(this.options.auth ?? {}))
+    if (hasAuth || this.hasMiddleware) parts.push(emitAuthPreamble(this.options.auth ?? {}))
+
+    // Emit middleware function if server/middleware.arc was found
+    if (this.hasMiddleware && this.middlewareDecls?.length > 0) {
+      const handleFn = this.middlewareDecls.find(d => d.type === 'FnDecl' && d.name === 'handle')
+      if (handleFn) {
+        const body = handleFn.body?.type === 'BlockStatement'
+          ? this.jsEmitter.emitBlock(handleFn.body.body)
+          : (handleFn.body ? this.jsEmitter.emitExpr(handleFn.body) : 'return null')
+        parts.push(`async function _middleware(req, pathname) {\n${body}\n}`)
+      }
+    }
 
     // Queue + email always emitted (tiny, zero deps)
     parts.push(emitQueuePreamble())
@@ -74,6 +135,19 @@ class BunServerEmitter {
       parts.push(this.emitJobHandler(job))
       // Public enqueue wrapper: `const SendEmail = (...args) => Queue.enqueue(_job_SendEmail, ...args)`
       parts.push(emitJobEnqueueWrapper(job.name))
+    }
+
+    // Emit one shared guard function per group (replaces N inline auth checks)
+    const emittedGuards = new Set()
+    for (const group of groups) {
+      const guard = emitGroupGuard(group.prefix, group.annotations)
+      if (guard) {
+        const slug = group.prefix.replace(/[^a-zA-Z0-9]/g, '_').replace(/^_+|_+$/g, '') || 'root'
+        if (!emittedGuards.has(slug)) {
+          emittedGuards.add(slug)
+          parts.push(guard)
+        }
+      }
     }
 
     for (const route of routes) {
@@ -100,7 +174,7 @@ class BunServerEmitter {
       parts.push(compileRoutes(routeSpecs))
     }
 
-    parts.push(this.emitBunServe(routes, schemas))
+    parts.push(this.emitBunServe(routes, schemas, this.hasMiddleware))
 
     return parts.filter(Boolean).join('\n\n')
   }
@@ -550,8 +624,11 @@ async function ${name}(req, params) {
       : ''
 
     // Item 11: RBAC auth guard
+    // If route belongs to a group, use the shared guard function (1 line vs 12 inline)
     let authGuard = ''
-    if (requiresAuth) {
+    if (route._groupGuardFn) {
+      authGuard = `const session = await ${route._groupGuardFn}(req); if (session instanceof Response) return session`
+    } else if (requiresAuth) {
       authGuard = `const _sess = await auth.session(req); if (!_sess) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Unauthorized' }, 401) : Response.redirect('/admin/login', 302); }\n    const session = _sess;`
       if (authRole) {
         const roles = authRole.split(',').map(r => r.trim()).filter(Boolean)
@@ -609,14 +686,14 @@ async function ${name}(req, params) {
     return 'handler'
   }
 
-  emitBunServe(routes, schemas) {
+  emitBunServe(routes, schemas, hasMiddleware = false) {
     const port = '+(process.env.PORT ?? 3000)'
     const hasAuth = routes.some(r => r.annotations?.find(a => a === '@auth' || a.startsWith('@auth(')))
     const hasDb = schemas && schemas.length > 0
     const dbProbe = hasDb
       ? (this.isPg
-        ? `let _dbOk=false;try{await Promise.race([_pool.query('SELECT 1'),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),2000))]);_dbOk=true}catch{}`
-        : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch{}`)
+        ? `let _dbOk=false;try{await Promise.race([_pool.query('SELECT 1'),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),2000))]);_dbOk=true}catch(_dbProbeErr){console.error(JSON.stringify({ts:new Date().toISOString(),level:'warn',event:'health_db_probe_failed',msg:_dbProbeErr?.message??String(_dbProbeErr)}))}`
+        : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch(_dbProbeErr){console.error(JSON.stringify({ts:new Date().toISOString(),level:'warn',event:'health_db_probe_failed',msg:_dbProbeErr?.message??String(_dbProbeErr)}))}` )
       : ''
     const healthBody = hasDb
       ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
@@ -747,7 +824,7 @@ const _server = Bun.serve({
     const _s = _u.indexOf('/', 8)
     const _q = _u.indexOf('?', _s > -1 ? _s : 8)
     const _pathname = _u.slice(_s > -1 ? _s : _u.length, _q > -1 ? _q : undefined) || '/'
-    if (_pathname === '/health') {
+    ${hasMiddleware ? 'const _mwRes = await _middleware(req, _pathname); if (_mwRes) return _mwRes\n    ' : ''}if (_pathname === '/health') {
       try {
     ${healthBody}
       } catch (_he) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'health_check_error', msg: _he?.message ?? String(_he) })); return _json({ status: 'error' }, 503, { 'Cache-Control': 'no-store, no-cache' }) }

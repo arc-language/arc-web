@@ -88,43 +88,38 @@ describe('stdlib/router.arc', () => {
 })
 
 describe('stdlib/store.arc', () => {
+  const { ast, src } = parseFile(path.join(STDLIB_DIR, 'store.arc'))
+  const topLevelFns = new Set(ast.declarations.filter(n => n.type === 'FnDecl').map(n => n.name))
+
   test('defines createStore function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'store.arc'), 'utf8')
-    assert.ok(src.includes('fn createStore'), 'createStore not found')
+    assert.ok(topLevelFns.has('createStore'), 'createStore not found')
   })
 
   test('defines useStore function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'store.arc'), 'utf8')
-    assert.ok(src.includes('fn useStore'), 'useStore not found')
+    assert.ok(topLevelFns.has('useStore'), 'useStore not found')
   })
 
   test('store has set method', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'store.arc'), 'utf8')
     assert.ok(src.includes('set:') || src.includes('set('), 'store.set not found')
   })
 
   test('store has subscribe method', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'store.arc'), 'utf8')
     assert.ok(src.includes('subscribe:') || src.includes('subscribe('), 'store.subscribe not found')
   })
 
   test('store has update method', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'store.arc'), 'utf8')
     assert.ok(src.includes('update:') || src.includes('update('), 'store.update not found')
   })
 
   test('defines createCounter convenience function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'store.arc'), 'utf8')
-    assert.ok(src.includes('fn createCounter'), 'createCounter not found')
+    assert.ok(topLevelFns.has('createCounter'), 'createCounter not found')
   })
 
   test('defines createList convenience function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'store.arc'), 'utf8')
-    assert.ok(src.includes('fn createList'), 'createList not found')
+    assert.ok(topLevelFns.has('createList'), 'createList not found')
   })
 
   test('createList has add/remove/clear methods', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'store.arc'), 'utf8')
     assert.ok(src.includes('add:') || src.includes('add('), 'list.add not found')
     assert.ok(src.includes('remove:') || src.includes('remove('), 'list.remove not found')
     assert.ok(src.includes('clear:') || src.includes('clear()'), 'list.clear not found')

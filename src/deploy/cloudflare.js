@@ -1,6 +1,6 @@
 'use strict'
 
-const _SAFE_HANDLER_NAME_CF = /^_handler_[a-zA-Z_$][a-zA-Z0-9_$]*$/
+const { resolveHandlerNames } = require('./deploy-utils')
 
 function generate({ html = '', css = '', js = '', edgeFunctions = '', projectName = 'arc-app', handlerNames = null }) {
   const assets = { '/': html }
@@ -11,13 +11,7 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', projectNam
     .map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)}`)
     .join(',\n')
 
-  // Prefer explicit handlerNames from compiler AST; fall back to text scan for deploy-from-files case
-  const edgeFnNames = handlerNames
-    ? handlerNames.filter(h => _SAFE_HANDLER_NAME_CF.test(h))
-    : edgeFunctions
-      ? [...edgeFunctions.matchAll(/^async function (_handler_\w+)\s*\(/mg)].map(m => m[1])
-          .filter(h => _SAFE_HANDLER_NAME_CF.test(h))
-      : []
+  const edgeFnNames = resolveHandlerNames(handlerNames, edgeFunctions)
   const edgeFunctionsBlock = edgeFunctions
     ? `
 // Edge functions (from @server declarations)

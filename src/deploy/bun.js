@@ -1,6 +1,6 @@
 'use strict'
 
-const _SAFE_HANDLER_NAME_BUN = /^_handler_[a-zA-Z_$][a-zA-Z0-9_$]*$/
+const { resolveHandlerNames } = require('./deploy-utils')
 
 function generate({ html = '', css = '', js = '', edgeFunctions = '', handlerNames = null }) {
   const assets = { '/': html }
@@ -11,13 +11,7 @@ function generate({ html = '', css = '', js = '', edgeFunctions = '', handlerNam
     .map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)}`)
     .join(',\n')
 
-  // Prefer explicit handlerNames from compiler AST; fall back to text scan for deploy-from-files case
-  const handlerMatches = handlerNames
-    ? handlerNames.filter(h => _SAFE_HANDLER_NAME_BUN.test(h))
-    : edgeFunctions
-      ? [...new Set([...edgeFunctions.matchAll(/^async function (_handler_\w+)\s*\(/mg)].map(m => m[1]))]
-          .filter(h => _SAFE_HANDLER_NAME_BUN.test(h))
-      : []
+  const handlerMatches = resolveHandlerNames(handlerNames, edgeFunctions)
 
   const handlerMapEntries = handlerMatches
     .map(h => `  ${JSON.stringify(h.slice('_handler_'.length))}: ${h}`)
