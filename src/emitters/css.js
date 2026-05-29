@@ -61,7 +61,8 @@ const SHORTHANDS = {
   'select':    v => `user-select: ${v}`,
   'transform': v => `transform: ${v}`,
   'transition':v => `transition: ${expandTransition(v)}`,
-  'animate':   v => expandAnimation(v),
+  'animate':      v => expandAnimation(v),
+  'gradient-text': v => expandGradientText(v),
 
   // Visibility
   'hidden':    () => `display: none`,
@@ -120,7 +121,13 @@ function expandTracking(value) {
   return named[value] ?? value
 }
 
+// Known valid values for align= and justify= shorthands (Arc aliases + direct CSS)
+const _KNOWN_ALIGN_VALUES = new Set(['center','start','end','flex-start','flex-end','stretch','baseline','normal','auto','space-between','space-around','space-evenly'])
+const _KNOWN_JUSTIFY_VALUES = new Set(['center','start','end','flex-start','flex-end','between','around','space-between','space-around','space-evenly','normal','auto'])
+
 function expandFlex(value) {
+  // Numeric value → flex-item shorthand: matches 1–3 space-separated decimal numbers
+  if (value && /^\d+(\.\d+)?(\s+\d+(\.\d+)?(\s+\d+(\.\d+)?)?)?$/.test(value.trim())) return `flex: ${value}`
   // "column gap=16 align=center"
   const props = ['display: flex', 'box-sizing: border-box']
   if (!value) return props.join('; ')
@@ -135,11 +142,13 @@ function expandFlex(value) {
     else if (part.startsWith('align=')) {
       const v = part.slice(6)
       const aliased = { center: 'center', start: 'flex-start', end: 'flex-end', stretch: 'stretch' }
+      if (!_KNOWN_ALIGN_VALUES.has(v)) process.stderr.write(`[arc] Warning: unknown align= value '${v}' — expected center, start, end, or stretch\n`)
       props.push(`align-items: ${aliased[v] ?? v}`)
     }
     else if (part.startsWith('justify=')) {
       const v = part.slice(8)
       const aliased = { center: 'center', start: 'flex-start', end: 'flex-end', between: 'space-between', around: 'space-around' }
+      if (!_KNOWN_JUSTIFY_VALUES.has(v)) process.stderr.write(`[arc] Warning: unknown justify= value '${v}' — expected center, start, end, between, or around\n`)
       props.push(`justify-content: ${aliased[v] ?? v}`)
     }
   }
@@ -152,7 +161,7 @@ function expandGrid(value) {
   const parts = value.split(/\s+/)
   for (const part of parts) {
     if (/^\d+col$/.test(part)) {
-      const n = parseInt(part)
+      const n = parseInt(part, 10)
       props.push(`grid-template-columns: repeat(${n}, 1fr)`)
     } else if (part.startsWith('"') || /^[\d.]+fr/.test(part)) {
       props.push(`grid-template-columns: ${part.replace(/"/g, '')}`)
@@ -176,10 +185,65 @@ function expandAnimation(value) {
   // Returns: { animation: '...', keyframes: '...' }
   const parts = value.split(/\s+/)
   const name = parts[0]
+  if (!name) {
+    process.stderr.write('[arc] Warning: animate requires a keyframe name (e.g. animate: fade-in 0.3s ease)\n')
+    return 'animation: none'
+  }
   const duration = parts[1] ?? '0.3s'
   const easing = parts[2] ?? 'ease'
 
-  return `animation: ${name} ${duration} ${easing}`
+  const extra = parts.slice(3).join(' ')
+  return `animation: ${name} ${duration} ${easing}${extra ? ' ' + extra : ''}`
+}
+
+// NOTE: These presets are duplicated in stdlib/gradient.arc (PRESETS const).
+// The two copies cannot be consolidated because css.js runs at compile time
+// and gradient.arc runs at Arc runtime. Keep both in sync when adding presets.
+const GRADIENT_PRESETS = {
+  rainbow: '#ff0000,#ff7700,#ffff00,#00ff00,#0077ff,#8b00ff',
+  // sunrise and gold contain #fde68a (~1.5:1 contrast on white) — only use on dark backgrounds
+  sunrise: '#f97316,#f59e0b,#fbbf24,#fde68a',
+  ocean:   '#0ea5e9,#06b6d4,#10b981',
+  fire:    '#ef4444,#f97316,#eab308',
+  neon:    '#00f2fe,#4facfe,#a78bfa',
+  aurora:  '#00c6ff,#0072ff,#a855f7',
+  candy:   '#ff6b9d,#c44dff,#4facfe',
+  // gold contains #fde68a — low contrast on white; also contains #ffff00 (rainbow) — use on dark bg
+  gold:    '#f59e0b,#fbbf24,#fde68a,#f59e0b',
+}
+
+function expandGradientText(value) {
+  if (!value) {
+    process.stderr.write('[arc] Warning: gradient-text requires a preset name or color list (e.g. gradient-text: rainbow)\n')
+    return ''
+  }
+  let direction = 'to right'
+  // Match CSS gradient directions: "to right", "to bottom right", "135deg", etc.
+  // Two-word "to" directions (e.g. "to bottom right") require the extended pattern.
+  let colorPart = value.trim()
+  const dirMatch = colorPart.match(/^(to\s+(?:top|bottom|left|right)(?:\s+(?:left|right|top|bottom))?|\d+(?:\.\d+)?(?:deg|turn|rad|grad))\s*,\s*/)
+  if (dirMatch) {
+    direction = dirMatch[1].trim()
+    colorPart = colorPart.slice(dirMatch[0].length).trim()
+  } else if (/^to\s+/i.test(colorPart)) {
+    process.stderr.write(`[arc] Warning: gradient-text direction not recognized: "${colorPart.split(',')[0].trim()}" — use "to right", "to bottom right", or "135deg"\n`)
+  }
+  const colors = GRADIENT_PRESETS[colorPart] ?? colorPart
+  if (!colors || colors === colorPart && !colorPart.includes('#') && !colorPart.match(/^(?:rgb|hsl|oklch|color)/i)) {
+    process.stderr.write(`[arc] Warning: gradient-text value "${colorPart}" is not a known preset and doesn't look like CSS colors\n`)
+  }
+  // Both background-clip variants are required: standard for Chrome/FF, -webkit- for Safari.
+  // color:transparent makes the gradient show through the text mask (background-clip: text technique).
+  // Do NOT rely on NEEDS_PREFIX here — shorthand expansions bypass that path in emitProps.
+  // Note: elements using gradient-text will have invisible text in forced-colors/high-contrast mode.
+  // Add a companion @media (forced-colors: active) { color: CanvasText; background: none } rule
+  // in your design block to restore visibility for users with Windows High Contrast enabled.
+  return [
+    `background: linear-gradient(${direction}, ${colors})`,
+    `background-clip: text`,
+    `-webkit-background-clip: text`,
+    `color: transparent`,
+  ].join('; ')
 }
 
 // Built-in keyframe library
@@ -192,7 +256,10 @@ const KEYFRAMES = {
   'scale-in':  '@keyframes scale-in { from { opacity: 0; transform: scale(0.95) } to { opacity: 1; transform: scale(1) } }',
   'bounce':    '@keyframes bounce { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }',
   'spin':      '@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }',
-  'pulse':     '@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }',
+  'pulse':          '@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }',
+  'gradient-shift': '@keyframes gradient-shift { 0% { background-position: 0% center } to { background-position: 200% center } }',
+  'gradient-x':     '@keyframes gradient-x { 0%,100% { background-position: 0% 50% } 50% { background-position: 100% 50% } }',
+  'shimmer':        '@keyframes shimmer { 0% { background-position: -200% center } to { background-position: 200% center } }',
 }
 
 // CSS properties that still need vendor prefixes
@@ -211,6 +278,8 @@ const BREAKPOINTS = {
   desktop: '(min-width: 1025px)',
   wide:    '(min-width: 1280px)',
 }
+
+const _SCOPE_CLASS_RE = /\.([\w-]+)/g
 
 class CssEmitter {
   constructor(options = {}) {
@@ -281,8 +350,18 @@ class CssEmitter {
   .arc-wrap { display: flex; flex-wrap: wrap }
   :focus-visible { outline: 2px solid oklch(60% 0.15 250); outline-offset: 2px }
   .arc-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0 }
-  .arc-skip-link { position: absolute; top: -40px; left: 0; background: Canvas; color: CanvasText; padding: 8px 16px; z-index: 9999; text-decoration: none; border: 2px solid CanvasText }
+  .arc-skip-link { position: absolute; top: -100px; left: 0; background: Canvas; color: CanvasText; padding: 8px 16px; z-index: 9999; text-decoration: none; border: 2px solid CanvasText; line-height: 1 }
   .arc-skip-link:focus { top: 0 }
+  [class*="arc-slider"] { position: relative }
+  [class*="arc-slider-track"] { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; scrollbar-width: none; -ms-overflow-style: none }
+  [class*="arc-slider-track"]::-webkit-scrollbar { display: none }
+  [class*="arc-slide"] { scroll-snap-align: var(--arc-ss,start); flex-shrink: 0; width: calc(100% / var(--arc-si,1)); padding: 0 calc(var(--arc-sg,0px) / 2) }
+  [class*="arc-slider-prev"], [class*="arc-slider-next"] { position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; background: oklch(100% 0 0 / .8); border: none; border-radius: var(--arc-radius-full,9999px); width: 2rem; height: 2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1rem }
+  [class*="arc-slider-prev"] { left: .5rem }
+  [class*="arc-slider-next"] { right: .5rem }
+  [class*="arc-slider-dots"] { display: flex; justify-content: center; gap: .5rem; padding: .5rem 0 }
+  [class*="arc-slider-dot"] { width: .5rem; height: .5rem; border-radius: var(--arc-radius-full,9999px); border: none; background: currentColor; opacity: .3; cursor: pointer; padding: 0; transition: opacity .2s }
+  [class*="arc-slider-dot"][aria-current="true"] { opacity: 1 }
   [class*="arc-tooltip-anchor"] { position: relative; display: inline-flex; cursor: default }
   [class*="arc-tooltip-tip"] { position: absolute; bottom: 100%; margin-bottom: 4px; left: 50%; transform: translateX(-50%); background: oklch(15% 0 0); color: oklch(100% 0 0); padding: 4px 8px; border-radius: var(--arc-radius-sm,4px); font-size: .875em; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 9999 }
   [class*="arc-tooltip-anchor"]:hover [class*="arc-tooltip-tip"],
@@ -450,8 +529,9 @@ class CssEmitter {
     // .card → .card_a3f7
     // nav → nav  (element selectors don't get scoped)
     // &:hover → handled by caller
-    return selector.replace(/\.([\w-]+)/g, (_, cls) => `.${cls}_${this.hash}`)
+    _SCOPE_CLASS_RE.lastIndex = 0
+    return selector.replace(_SCOPE_CLASS_RE, (_, cls) => `.${cls}_${this.hash}`)
   }
 }
 
-module.exports = { CssEmitter, KEYFRAMES, SHORTHANDS }
+module.exports = { CssEmitter, KEYFRAMES, SHORTHANDS, GRADIENT_PRESETS }

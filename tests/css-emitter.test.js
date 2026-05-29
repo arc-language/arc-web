@@ -3,7 +3,7 @@
 const { test, describe } = require('node:test')
 const assert = require('node:assert/strict')
 const { compile } = require('../src/cli')
-const { CssEmitter, SHORTHANDS, KEYFRAMES } = require('../src/emitters/css')
+const { CssEmitter, SHORTHANDS, KEYFRAMES, GRADIENT_PRESETS } = require('../src/emitters/css')
 
 // Helper: build a minimal AST program with a DesignBlock for direct CssEmitter testing
 function makeDesignProgram(selector, props) {
@@ -827,4 +827,95 @@ describe('CSS Emitter', () => {
       assert.equal(result, '')
     })
   })
+
+  describe('gradient-text shorthand', () => {
+    test('GRADIENT_PRESETS is exported and has 8 named presets', () => {
+      const keys = Object.keys(GRADIENT_PRESETS)
+      assert.equal(keys.length, 8)
+      assert.ok(keys.includes('rainbow'))
+      assert.ok(keys.includes('ocean'))
+    })
+
+    test('gradient-text: rainbow expands to 4 CSS declarations', () => {
+      const result = SHORTHANDS['gradient-text']('rainbow')
+      assert.ok(result.includes('linear-gradient(to right,'), `Expected gradient: ${result}`)
+      assert.ok(result.includes('#ff0000'), `Expected rainbow red: ${result}`)
+      assert.ok(result.includes('background-clip: text'), `Expected clip: ${result}`)
+      assert.ok(result.includes('-webkit-background-clip: text'), `Expected webkit clip: ${result}`)
+      assert.ok(result.includes('color: transparent'), `Expected transparent: ${result}`)
+    })
+
+    test('gradient-text: ocean expands with correct preset colors', () => {
+      const result = SHORTHANDS['gradient-text']('ocean')
+      assert.ok(result.includes('#0ea5e9'), `Expected ocean blue: ${result}`)
+    })
+
+    test('gradient-text with deg direction prefix strips it correctly', () => {
+      const result = SHORTHANDS['gradient-text']('135deg, #ff0000, #0000ff')
+      assert.ok(result.includes('linear-gradient(135deg,'), `Expected 135deg direction: ${result}`)
+      assert.ok(result.includes('#ff0000'), `Expected red: ${result}`)
+      assert.ok(result.includes('#0000ff'), `Expected blue: ${result}`)
+    })
+
+    test('gradient-text with single-word to-direction strips it correctly', () => {
+      const result = SHORTHANDS['gradient-text']('to bottom, #ff0000, #0000ff')
+      assert.ok(result.includes('linear-gradient(to bottom,'), `Expected to bottom: ${result}`)
+    })
+
+    test('gradient-text with two-word to-direction (to bottom right) strips it correctly', () => {
+      const result = SHORTHANDS['gradient-text']('to bottom right, #ff0000, #0000ff')
+      assert.ok(result.includes('linear-gradient(to bottom right, #ff0000'), `Expected two-word direction then colors: ${result}`)
+      // Verify colors were NOT treated as the direction (would produce "linear-gradient(to right, to bottom right, ...)")
+      assert.ok(!result.includes('linear-gradient(to right, to bottom'), 'Direction should not be mis-parsed')
+    })
+
+    test('gradient-text with raw color list (no direction) uses default direction', () => {
+      const result = SHORTHANDS['gradient-text']('#ff0000, #00ff00, #0000ff')
+      assert.ok(result.includes('linear-gradient(to right,'), `Expected default direction: ${result}`)
+      assert.ok(result.includes('#ff0000'), `Expected colors: ${result}`)
+    })
+
+    test('gradient-text emits in design block and produces scoped CSS', () => {
+      const emitter = new CssEmitter({ hash: 'test' })
+      const css = emitter.emitProgram(makeDesignProgram('.hero', [['gradient-text', 'neon']]))
+      assert.ok(css.includes('background-clip: text'), `Expected clip in: ${css}`)
+      assert.ok(css.includes('color: transparent'), `Expected transparent in: ${css}`)
+      assert.ok(css.includes('.hero_test'), `Expected scoped selector in: ${css}`)
+    })
+
+    test('animate: gradient-shift with infinite passes through extra token', () => {
+      const result = SHORTHANDS['animate']('gradient-shift 4s linear infinite')
+      assert.equal(result, 'animation: gradient-shift 4s linear infinite')
+    })
+
+    test('animate: gradient-shift in design block emits gradient-shift keyframes', () => {
+      const emitter = new CssEmitter({ hash: 'h1' })
+      const css = emitter.emitProgram(makeDesignProgram('.gt', [
+        ['background-size', '200% auto'],
+        ['animate', 'gradient-shift 4s linear infinite'],
+      ]))
+      assert.ok(css.includes('@keyframes gradient-shift'), `Expected keyframe: ${css}`)
+      assert.ok(css.includes('background-position'), `Expected background-position: ${css}`)
+    })
+
+    test('KEYFRAMES has gradient-shift, gradient-x, and shimmer', () => {
+      assert.ok(KEYFRAMES['gradient-shift'].includes('@keyframes gradient-shift'))
+      assert.ok(KEYFRAMES['gradient-x'].includes('@keyframes gradient-x'))
+      assert.ok(KEYFRAMES['shimmer'].includes('@keyframes shimmer'))
+    })
+
+    test('gradient-text with empty value emits empty string and warns', () => {
+      const result = SHORTHANDS['gradient-text']('')
+      assert.equal(result, '')
+    })
+
+    test('GRADIENT_PRESETS and SHORTHANDS gradient-text presets are consistent', () => {
+      for (const name of Object.keys(GRADIENT_PRESETS)) {
+        const result = SHORTHANDS['gradient-text'](name)
+        assert.ok(result.includes('linear-gradient'), `Expected gradient for preset "${name}": ${result}`)
+        assert.ok(result.includes(GRADIENT_PRESETS[name].split(',')[0]), `Expected first color of "${name}": ${result}`)
+      }
+    })
+  })
 })
+
