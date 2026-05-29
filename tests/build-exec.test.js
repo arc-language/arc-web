@@ -694,77 +694,77 @@ describe('BuildExecutor.evalCall — fetch and readFile', () => {
 
 // ── doFetch — SSRF protection ─────────────────────────────────────────────────
 
-// doFetch throws synchronously for invalid URLs - use assert.throws (not rejects)
+// doFetch is async — use assert.rejects
 describe('BuildExecutor.doFetch - SSRF protection', () => {
-  test('rejects file: protocol', () => {
+  test('rejects file: protocol', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('file:///etc/passwd'), /only http\/https allowed/)
+    await assert.rejects(() => e.doFetch('file:///etc/passwd'), /only http\/https allowed/)
   })
 
-  test('rejects ftp: protocol', () => {
+  test('rejects ftp: protocol', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('ftp://example.com/data'), /only http\/https allowed/)
+    await assert.rejects(() => e.doFetch('ftp://example.com/data'), /only http\/https allowed/)
   })
 
-  test('rejects invalid URL', () => {
+  test('rejects invalid URL', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('not-a-url'), /invalid URL/)
+    await assert.rejects(() => e.doFetch('not-a-url'), /invalid URL/)
   })
 
-  test('rejects localhost', () => {
+  test('rejects localhost', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('http://localhost/api'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://localhost/api'), /internal addresses not allowed/)
   })
 
-  test('rejects 127.0.0.1', () => {
+  test('rejects 127.0.0.1', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('http://127.0.0.1/api'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://127.0.0.1/api'), /internal addresses not allowed/)
   })
 
-  test('rejects 192.168.x.x private range', () => {
+  test('rejects 192.168.x.x private range', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('http://192.168.1.100/api'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://192.168.1.100/api'), /internal addresses not allowed/)
   })
 
-  test('rejects 10.x.x.x private range', () => {
+  test('rejects 10.x.x.x private range', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('http://10.0.0.1/api'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://10.0.0.1/api'), /internal addresses not allowed/)
   })
 
-  test('rejects 172.16.x.x private range', () => {
+  test('rejects 172.16.x.x private range', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('http://172.16.0.1/api'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://172.16.0.1/api'), /internal addresses not allowed/)
   })
 
-  test('rejects GCP metadata endpoint', () => {
+  test('rejects GCP metadata endpoint', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('http://metadata.google.internal/'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://metadata.google.internal/'), /internal addresses not allowed/)
   })
 
-  test('rejects IPv6 loopback [::1]', () => {
+  test('rejects IPv6 loopback [::1]', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('http://[::1]/api'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://[::1]/api'), /internal addresses not allowed/)
   })
 
-  test('rejects IPv6 unspecified address [::]', () => {
+  test('rejects IPv6 unspecified address [::]', async () => {
     // Linux routes :: to loopback, so it's an SSRF-equivalent target to ::1
     const e = exec()
-    assert.throws(() => e.doFetch('http://[::]/api'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://[::]/api'), /internal addresses not allowed/)
   })
 
-  test('rejects IPv6 unspecified address with zero blocks [0:0:0:0:0:0:0:0]', () => {
+  test('rejects IPv6 unspecified address with zero blocks [0:0:0:0:0:0:0:0]', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('http://[0:0:0:0:0:0:0:0]/api'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://[0:0:0:0:0:0:0:0]/api'), /internal addresses not allowed/)
   })
 
-  test('rejects IPv6 ULA range [fc00::1]', () => {
+  test('rejects IPv6 ULA range [fc00::1]', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('http://[fc00::1]/api'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://[fc00::1]/api'), /internal addresses not allowed/)
   })
 
-  test('rejects IPv6 link-local [fe80::1]', () => {
+  test('rejects IPv6 link-local [fe80::1]', async () => {
     const e = exec()
-    assert.throws(() => e.doFetch('http://[fe80::1]/api'), /internal addresses not allowed/)
+    await assert.rejects(() => e.doFetch('http://[fe80::1]/api'), /internal addresses not allowed/)
   })
 })
 
@@ -824,5 +824,147 @@ describe('BuildExecutor.doReadFile — security', () => {
     } finally {
       fs.unlinkSync(tmpFile)
     }
+  })
+})
+
+// ── Array methods — additional coverage ───────────────────────────────────────
+
+describe('Array methods — uncovered branches', () => {
+  function exec() { return new BuildExecutor('.') }
+  const N2 = require('../src/ast')
+
+  async function callMethod(arr, method, args = []) {
+    const e = exec()
+    e.context.arr = arr
+    const callee = N2.MemberExpr(N2.Identifier('arr', 0), N2.Identifier(method, 0), false, 0)
+    const argNodes = args.map(a => typeof a === 'function'
+      ? N2.ArrowFn(
+          [N2.Param('x', null, null, false, 0)],
+          N2.Literal(a, 0),
+          false, 0
+        )
+      : N2.Literal(a, 0)
+    )
+    const call = N2.CallExpr(callee, argNodes, 0)
+    return e.evalExpr(call)
+  }
+
+  test('Array.sort: with sync comparator throws (executor always wraps arrow fns async)', async () => {
+    const e = exec()
+    e.context.nums = [3, 1, 2]
+    // Build executor wraps ALL ArrowFn nodes in async wrappers, so even a
+    // non-async comparator returns a Promise during the probe check and is
+    // rejected as "must be synchronous".
+    const cmpFn = N2.ArrowFn(
+      [N2.Param('a', null, null, false, 0), N2.Param('b', null, null, false, 0)],
+      N2.BinaryExpr('-', N2.Identifier('a', 0), N2.Identifier('b', 0), 0),
+      false, 0
+    )
+    const call = N2.CallExpr(
+      N2.MemberExpr(N2.Identifier('nums', 0), N2.Identifier('sort', 0), false, 0),
+      [cmpFn], 0
+    )
+    await assert.rejects(() => e.evalExpr(call), /comparator must be synchronous/)
+  })
+
+  test('Array.sort: with async comparator throws', async () => {
+    const e = exec()
+    e.context.nums = [3, 1, 2]
+    // Build an arrow fn that returns a promise-like object
+    const asyncCmpFn = N2.ArrowFn(
+      [N2.Param('a', null, null, false, 0), N2.Param('b', null, null, false, 0)],
+      N2.Literal(0, 0),
+      true, // isAsync
+      0
+    )
+    const call = N2.CallExpr(
+      N2.MemberExpr(N2.Identifier('nums', 0), N2.Identifier('sort', 0), false, 0),
+      [asyncCmpFn], 0
+    )
+    await assert.rejects(() => e.evalExpr(call), /comparator must be synchronous/)
+  })
+
+  test('Array.find: returns undefined when nothing matches', async () => {
+    const e = exec()
+    e.context.arr = [1, 2, 3]
+    const fn = N2.ArrowFn(
+      [N2.Param('x', null, null, false, 0)],
+      N2.BinaryExpr('>', N2.Identifier('x', 0), N2.Literal(100, 0), 0),
+      false, 0
+    )
+    const call = N2.CallExpr(
+      N2.MemberExpr(N2.Identifier('arr', 0), N2.Identifier('find', 0), false, 0),
+      [fn], 0
+    )
+    const result = await e.evalExpr(call)
+    assert.strictEqual(result, undefined)
+  })
+
+  test('Array.some: returns false when nothing matches', async () => {
+    const e = exec()
+    e.context.arr = [1, 2, 3]
+    const fn = N2.ArrowFn(
+      [N2.Param('x', null, null, false, 0)],
+      N2.BinaryExpr('>', N2.Identifier('x', 0), N2.Literal(100, 0), 0),
+      false, 0
+    )
+    const call = N2.CallExpr(
+      N2.MemberExpr(N2.Identifier('arr', 0), N2.Identifier('some', 0), false, 0),
+      [fn], 0
+    )
+    const result = await e.evalExpr(call)
+    assert.strictEqual(result, false)
+  })
+
+  test('Array.every: returns false when one element fails', async () => {
+    const e = exec()
+    e.context.arr = [1, 2, 300]
+    const fn = N2.ArrowFn(
+      [N2.Param('x', null, null, false, 0)],
+      N2.BinaryExpr('<', N2.Identifier('x', 0), N2.Literal(100, 0), 0),
+      false, 0
+    )
+    const call = N2.CallExpr(
+      N2.MemberExpr(N2.Identifier('arr', 0), N2.Identifier('every', 0), false, 0),
+      [fn], 0
+    )
+    const result = await e.evalExpr(call)
+    assert.strictEqual(result, false)
+  })
+
+  test('IPv6 loopback ::1 is blocked', async () => {
+    const e = exec()
+    await assert.rejects(
+      () => e.doFetch('http://[::1]/api'),
+      /internal addresses not allowed/
+    )
+  })
+
+  test('IPv6 ULA fd00:: is blocked', async () => {
+    const e = exec()
+    await assert.rejects(
+      () => e.doFetch('http://[fd00::1]/api'),
+      /internal addresses not allowed/
+    )
+  })
+})
+
+// ── fetch via CallExpr ────────────────────────────────────────────────────────
+
+describe('BuildExecutor.evalCall — fetch URL evaluation', () => {
+  const N2 = require('../src/ast')
+  function exec() { return new BuildExecutor('.') }
+  function lit(v) { return N2.Literal(v, 0) }
+
+  test('fetch() via CallExpr with blocked URL rejects', async () => {
+    const e = exec()
+    const call = N2.CallExpr(N2.Identifier('fetch', 0), [lit('http://localhost/api')], 0)
+    await assert.rejects(() => e.evalExpr(call), /internal addresses not allowed/)
+  })
+
+  test('fetch() via CallExpr with file: URL rejects', async () => {
+    const e = exec()
+    const call = N2.CallExpr(N2.Identifier('fetch', 0), [lit('file:///etc/passwd')], 0)
+    await assert.rejects(() => e.evalExpr(call), /only http\/https allowed/)
   })
 })
