@@ -226,3 +226,43 @@ test('wrangler-compiler: no D1 bindings when no models', () => {
   const toml = generateWranglerToml(prog, { name: 'app' })
   assert.ok(!toml.includes('d1_databases'), 'no D1 bindings for modelless app')
 })
+
+
+// ── RouteGroupDecl: Cloudflare emitter flattens grouped routes ────────────────
+
+test('CloudflareEmitter: RouteGroupDecl flattens routes with prefix', () => {
+  const prog = parse(`
+@group "/api"
+  @route get "/users" -> Response
+    json({ ok: true })
+  @route post "/users" -> Response
+    json({ created: true })
+`)
+  const e = new CloudflareEmitter(prog, { hash: 'test' })
+  const { worker } = e.emitProgram(prog)
+  assert.ok(worker.includes('/api/users'), 'flattened route path should include prefix')
+  assert.ok(worker.includes('_route_get_api_users') || worker.includes('_route_post_api_users'),
+    'should have handler names for both routes')
+})
+
+test('CloudflareEmitter: @auth annotation on group-level route guards the handler', () => {
+  // Auth is applied at the group level via annotation string, merged into routes.
+  const prog = {
+    declarations: [{
+      type: 'RouteGroupDecl',
+      prefix: '/admin',
+      annotations: ['@auth'],
+      routes: [{
+        type: 'RouteDecl',
+        method: 'get',
+        path: '/dashboard',
+        annotations: [],
+        body: { type: 'BlockStatement', body: [] },
+      }],
+    }],
+  }
+  const e = new CloudflareEmitter(prog, { hash: 'test' })
+  const { worker } = e.emitProgram(prog)
+  assert.ok(worker.includes('Unauthorized') || worker.includes('session'),
+    'should have auth guard in output')
+})

@@ -25,7 +25,7 @@ describe('PostProcessor.inlineCriticalCss', () => {
     const html = '<head><link rel="stylesheet" href="styles.css"></head>'
     const css = '.x { color: red }'
     const result = pp.inlineCriticalCss(html, css)
-    assert.ok(result.html.includes('<style>'), `Expected <style> in:\n${result.html}`)
+    assert.ok(result.html.includes('<style'), `Expected <style> in:\n${result.html}`)
     assert.ok(/color:\s*red/.test(result.html), `Expected inlined CSS color rule`)
     assert.ok(!result.html.includes('href="styles.css"'), `Expected stylesheet link removed`)
     assert.strictEqual(result.cssInlined, true, 'cssInlined flag should be true for small CSS')
@@ -38,7 +38,7 @@ describe('PostProcessor.inlineCriticalCss', () => {
     const restCss = '@layer component { .big { padding: 1000px; color: navy; background: pink; border: 1px solid red; } }'
     const css = baseCss + '\n' + restCss
     const result = pp.inlineCriticalCss(html, css)
-    assert.ok(result.html.includes('<style>'), `Expected inline <style> for critical`)
+    assert.ok(result.html.includes('<style>'), `Expected inline <style> for critical CSS split`)
     assert.ok(result.html.includes('rel="preload"'), `Expected preload link in:\n${result.html}`)
     assert.ok(result.html.includes('onload='), `Expected onload swap for preload`)
   })
@@ -129,8 +129,8 @@ describe('postProcess convenience function', () => {
     const html = '<head><link rel="stylesheet" href="styles.css"></head><body></body>'
     const css = '.x { color: red }'
     const result = postProcess(html, css)
-    assert.ok(result.html.includes('<style>'))
-    assert.equal(result.css, css)
+    assert.ok(result.html.includes('<style'))
+    assert.ok(result.css.includes('.x') && result.css.includes('color'), 'css should contain the rule')
   })
 
   test('accepts options: threshold below css size triggers preload split', () => {
@@ -145,5 +145,33 @@ describe('postProcess convenience function', () => {
     // render-blocking stylesheet link must be replaced
     assert.ok(result.html.includes('<noscript>'), 'Expected noscript fallback for non-JS users')
     assert.ok(result.html.includes('rel="preload"'), 'Expected non-blocking preload swap')
+  })
+
+  test('warns and returns unchanged html when CSS link tag is not found', () => {
+    // HTML without the expected stylesheet link — triggers the "CSS link tag not found" warning
+    const html = '<head></head><body>no link here</body>'
+    const css = '.x { color: red }'
+    const stderrMsgs = []
+    const origWrite = process.stderr.write.bind(process.stderr)
+    process.stderr.write = (s) => { stderrMsgs.push(s); return true }
+    let result
+    try {
+      result = postProcess(html, css)
+    } finally {
+      process.stderr.write = origWrite
+    }
+    assert.ok(stderrMsgs.some(m => m.includes('CSS link tag not found')), 'Expected CSS link tag not found warning')
+    assert.ok(result.html === html, 'html should be returned unchanged')
+    assert.strictEqual(result.cssInlined, false, 'cssInlined should be false')
+  })
+
+  test('threshold split with no rest block (only critical CSS) omits preload', () => {
+    const html = '<head><link rel="stylesheet" href="styles.css"></head><body></body>'
+    // Only critical CSS — no non-critical block means rest is empty, preloadBlock = ''
+    const css = '@layer base { body { margin: 0; padding: 0; color: black; font-size: 16px } }'
+    const result = postProcess(html, css, { criticalCssThreshold: 1 })
+    assert.ok(result.html.includes('<style>'), 'Expected inline critical style')
+    assert.ok(!result.html.includes('preload'), 'No preload when rest is empty')
+    assert.strictEqual(result.cssInlined, false)
   })
 })

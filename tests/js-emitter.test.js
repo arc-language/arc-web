@@ -997,4 +997,143 @@ page "T"
     })
   })
 
+  describe('CallExpr arg safety net (regression: json(arg, 201) dropped first arg)', () => {
+    test('CallExpr with an empty-emitting Identifier arg throws a clear error', () => {
+      const emitter = new JsEmitter({ hash: 'test' })
+      // A parser glitch can produce an Identifier with empty name when a token
+      // collides with a reserved word (e.g. `group` as an object key). Before
+      // the safety net, this silently emitted as `json(,201)`.
+      const badArg = { type: 'Identifier', name: '' }
+      const callExpr = {
+        type: 'CallExpr',
+        callee: { type: 'Identifier', name: 'json' },
+        args: [badArg, { type: 'Literal', value: 201 }],
+      }
+      assert.throws(
+        () => emitter.emitExpr(callExpr),
+        /CallExpr argument 0 emitted as empty/,
+        'should throw a clear error pointing at arg 0',
+      )
+    })
+
+    test('CallExpr with valid args emits normally', () => {
+      const emitter = new JsEmitter({ hash: 'test' })
+      const callExpr = {
+        type: 'CallExpr',
+        callee: { type: 'Identifier', name: 'json' },
+        args: [
+          { type: 'Identifier', name: 'newGroup' },
+          { type: 'Literal', value: 201 },
+        ],
+      }
+      assert.equal(emitter.emitExpr(callExpr), 'json(newGroup,201)')
+    })
+  })
+
+})
+
+// ── emitPattern VariantPattern branches ──────────────────────────────────────
+
+describe('JsEmitter.emitPattern — VariantPattern variants', () => {
+  const { JsEmitter } = require('../src/emitters/js')
+
+  function mkVariant(v, name) {
+    return { type: 'VariantPattern', variant: v, name: name ?? null }
+  }
+
+  const emitter = new JsEmitter({ hash: 'test' })
+
+  test('None variant emits null/undefined check', () => {
+    assert.equal(emitter.emitPattern(mkVariant('None'), 'x'), '(x===null||x===undefined)')
+  })
+
+  test('Some variant emits not-null/not-undefined check', () => {
+    assert.equal(emitter.emitPattern(mkVariant('Some'), 'x'), '(x!==null&&x!==undefined)')
+  })
+
+  test('Ok variant emits .ok===true check', () => {
+    assert.equal(emitter.emitPattern(mkVariant('Ok'), 'x'), '(x?.ok===true)')
+  })
+
+  test('Err variant emits .ok===false check', () => {
+    assert.equal(emitter.emitPattern(mkVariant('Err'), 'x'), '(x?.ok===false)')
+  })
+
+  test('unknown variant falls back to true', () => {
+    assert.equal(emitter.emitPattern(mkVariant('Custom'), 'x'), 'true')
+  })
+})
+
+// ── emitMatchStmt — arm body types and variant bindings ──────────────────────
+
+describe('JsEmitter.emitMatchStmt — arm body and binding variants', () => {
+  const { JsEmitter } = require('../src/emitters/js')
+
+  function compile(src) {
+    const { Lexer } = require('../src/lexer')
+    const { Parser } = require('../src/parser')
+    const { JsEmitter } = require('../src/emitters/js')
+    const tokens = new Lexer(src).tokenize()
+    const prog = new Parser(tokens).parse()
+    const emitter = new JsEmitter({ hash: 'test' })
+    return emitter.emitProgram(prog)
+  }
+
+  test('match with array body arm emits body', () => {
+    // arm.body as an array (not wrapped in BlockStatement) — exercises the Array.isArray branch
+    const emitter = new JsEmitter({ hash: 'test' })
+    const stmt = {
+      type: 'MatchStatement',
+      subject: { type: 'Identifier', name: 'val' },
+      arms: [{
+        pattern: { type: 'Wildcard' },
+        // ReturnStatement uses .value (not .argument) in the JsEmitter
+        body: [{ type: 'ReturnStatement', value: { type: 'Literal', value: 1 } }],
+      }],
+    }
+    const out = emitter.emitMatchStmt(stmt)
+    assert.ok(out.includes('return 1'), `Expected return 1, got: ${out}`)
+  })
+
+  test('match with expression arm body (not BlockStatement, not array)', () => {
+    const emitter = new JsEmitter({ hash: 'test' })
+    const stmt = {
+      type: 'MatchStatement',
+      subject: { type: 'Identifier', name: 'val' },
+      arms: [{
+        pattern: { type: 'Wildcard' },
+        body: { type: 'Literal', value: 42 },
+      }],
+    }
+    const out = emitter.emitMatchStmt(stmt)
+    assert.ok(out.includes('42'), `Expected 42 in output, got: ${out}`)
+  })
+
+  test('match with null arm body emits empty', () => {
+    const emitter = new JsEmitter({ hash: 'test' })
+    const stmt = {
+      type: 'MatchStatement',
+      subject: { type: 'Identifier', name: 'val' },
+      arms: [{ pattern: { type: 'Wildcard' }, body: null }],
+    }
+    const out = emitter.emitMatchStmt(stmt)
+    assert.ok(typeof out === 'string', 'should produce a string')
+  })
+
+  test('VariantPattern arm with binding name emits const binding inside if', () => {
+    const emitter = new JsEmitter({ hash: 'test' })
+    const stmt = {
+      type: 'MatchStatement',
+      subject: { type: 'Identifier', name: 'res' },
+      arms: [{
+        pattern: { type: 'VariantPattern', variant: 'Ok', name: 'val' },
+        body: { type: 'BlockStatement', body: [
+          { type: 'ReturnStatement', value: { type: 'Identifier', name: 'val' } }
+        ]},
+      }],
+    }
+    const out = emitter.emitMatchStmt(stmt)
+    assert.ok(out.includes('const val='), `Expected binding, got: ${out}`)
+    assert.ok(out.includes('return val'), `Expected return val, got: ${out}`)
+  })
 })

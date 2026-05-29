@@ -906,6 +906,67 @@ describe('CSS Emitter', () => {
         assert.ok(result.includes(GRADIENT_PRESETS[name].split(',')[0]), `Expected first color of "${name}": ${result}`)
       }
     })
+
+    test('gradient-text with unrecognized to-direction warns and falls back to default', () => {
+      // "to diagonal" is not a recognized direction pattern — should warn but still produce output
+      const stderrMsgs = []
+      const origWrite = process.stderr.write.bind(process.stderr)
+      process.stderr.write = (s) => { stderrMsgs.push(s); return true }
+      try {
+        const result = SHORTHANDS['gradient-text']('to diagonal, #ff0000, #00ff00')
+        assert.ok(result.includes('linear-gradient'), `Expected gradient, got: ${result}`)
+      } finally {
+        process.stderr.write = origWrite
+      }
+      assert.ok(stderrMsgs.some(m => m.includes('not recognized')), 'Expected direction-not-recognized warning')
+    })
+
+    test('gradient-text with unknown non-color value warns', () => {
+      const stderrMsgs = []
+      const origWrite = process.stderr.write.bind(process.stderr)
+      process.stderr.write = (s) => { stderrMsgs.push(s); return true }
+      try {
+        const result = SHORTHANDS['gradient-text']('notapreset')
+        assert.ok(typeof result === 'string', 'should return a string')
+      } finally {
+        process.stderr.write = origWrite
+      }
+      assert.ok(stderrMsgs.some(m => m.includes("is not a known preset")), 'Expected unknown-preset warning')
+    })
+  })
+})
+
+// ── expandAnimation and emitProps passthrough ─────────────────────────────────
+
+describe('CssEmitter — animate shorthand and emitProps passthrough', () => {
+  const { CssEmitter } = require('../src/emitters/css')
+
+  function makeEmitter() {
+    return new CssEmitter({ hash: 'test' })
+  }
+
+  test('animate with empty value warns and emits animation: none', () => {
+    const stderrMsgs = []
+    const origWrite = process.stderr.write.bind(process.stderr)
+    process.stderr.write = (s) => { stderrMsgs.push(s); return true }
+    let result
+    try {
+      const e = makeEmitter()
+      // emitProps takes an array of {name, value} objects
+      result = e.emitProps([{ name: 'animate', value: '' }])
+    } finally {
+      process.stderr.write = origWrite
+    }
+    assert.ok(stderrMsgs.some(m => m.includes('animate')), 'Expected animate warning for empty value')
+    assert.ok(result.some(d => d.includes('animation')), `Expected animation declaration, got: ${result}`)
+  })
+
+  test('CSS property with no vendor prefix just passes through', () => {
+    const e = makeEmitter()
+    // emitProps takes an array of {name, value} objects
+    const result = e.emitProps([{ name: 'opacity', value: '0.5' }])
+    assert.ok(result.some(d => d === 'opacity: 0.5'), `Expected opacity: 0.5, got: ${result}`)
+    assert.equal(result.length, 1, 'Should have exactly 1 declaration (no prefix)')
   })
 })
 

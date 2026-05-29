@@ -799,3 +799,109 @@ describe('Checker: clean examples', () => {
     })
   }
 })
+
+// ── RouteGroupDecl and JobDecl ────────────────────────────────────────────────
+
+describe('Checker: RouteGroupDecl and JobDecl', () => {
+  test('RouteGroupDecl routes are type-checked', () => {
+    const { Checker } = require('../src/checker')
+    const checker = new Checker('test.arc')
+    const prog = {
+      declarations: [{
+        type: 'RouteGroupDecl',
+        name: 'api',
+        prefix: '/api',
+        annotations: [],
+        routes: [{
+          type: 'RouteDecl',
+          method: 'GET',
+          path: '/users',
+          annotations: [],
+          body: { type: 'BlockStatement', body: [] },
+        }],
+      }],
+    }
+    const result = checker.check(prog)
+    assert.equal(result.errors.length, 0, 'RouteGroupDecl with valid routes should have no errors')
+  })
+
+  test('JobDecl with body is type-checked', () => {
+    const { Checker } = require('../src/checker')
+    const checker = new Checker('test.arc')
+    const prog = {
+      declarations: [{
+        type: 'JobDecl',
+        name: 'sendEmail',
+        params: [{ name: 'to', typeAnnotation: { name: 'String' } }],
+        body: { type: 'BlockStatement', body: [] },
+      }],
+    }
+    const result = checker.check(prog)
+    assert.equal(result.errors.length, 0, 'JobDecl with valid body should have no errors')
+  })
+
+  test('ModelDecl registers type in scope for later use', () => {
+    const { Checker } = require('../src/checker')
+    const checker = new Checker('test.arc')
+    const prog = {
+      declarations: [
+        { type: 'ModelDecl', name: 'User', fields: [] },
+      ],
+    }
+    const result = checker.check(prog)
+    assert.equal(result.errors.length, 0, 'ModelDecl should register without errors')
+  })
+})
+
+// ── checkTemplateBody VarDecl and RawNode ─────────────────────────────────────
+
+describe('Checker: checkTemplateBody — VarDecl and RawNode branches', () => {
+  test('VarDecl in page body registers name in scope', () => {
+    assert.ok(clean(`
+page "Test"
+  let msg = "hello"
+  text "{msg}"
+`), 'VarDecl in template body should not produce errors')
+  })
+
+  test('@raw with non-literal html AST node produces warning', () => {
+    // The parser only accepts STRING tokens for @raw, but the checker checks
+    // the AST. Construct the AST directly to test the non-literal branch.
+    const { Checker } = require('../src/checker')
+    const checker = new Checker('test.arc')
+    const prog = {
+      declarations: [{
+        type: 'PageDecl',
+        name: 'Test',
+        body: [{
+          type: 'RawNode',
+          html: { type: 'Identifier', name: 'content' }, // non-literal object
+          line: 1,
+        }],
+      }],
+    }
+    const result = checker.check(prog)
+    assert.ok(result.warnings.some(w => w.message.includes('@raw html value is not a string literal')),
+      'Expected @raw warning for non-literal html')
+  })
+
+  test('@raw with plain string html value does not warn', () => {
+    // When html is a plain string (as produced by parser), no warning should fire
+    const { Checker } = require('../src/checker')
+    const checker = new Checker('test.arc')
+    const prog = {
+      declarations: [{
+        type: 'PageDecl',
+        name: 'Test',
+        body: [{
+          type: 'RawNode',
+          html: '<b>safe</b>', // plain string — typeof !== 'object'
+          line: 1,
+        }],
+      }],
+    }
+    const result = checker.check(prog)
+    assert.ok(!result.warnings.some(w => w.message.includes('@raw')),
+      'No @raw warning for plain string html')
+  })
+})
