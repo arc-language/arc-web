@@ -14,6 +14,13 @@ const _ROUTE_METHOD_MAP = Object.freeze({ DEL: 'DELETE', PATCH: 'PATCH' })
 // Hoisted to avoid per-rule object allocation in parseStyleRule
 const _PSEUDO_SHORTHANDS = Object.freeze({ hover: ':hover', focus: ':focus-visible', active: ':active', disabled: ':disabled', checked: ':checked', placeholder: '::placeholder' })
 
+// Reserved keywords that are valid CSS identifier segments (e.g. --grad-from, background-color)
+const _CSS_IDENT_TYPES = new Set([
+  T.IDENT, T.FROM, T.IN, T.FOR, T.LET, T.RETURN, T.MODEL, T.WIDGET, T.PAGE, T.CLASS,
+  T.IF, T.ELSE, T.NUMBER, T.IS, T.GET, T.NEW, T.STATIC
+])
+function _cssIdentVal(t) { return t.value ?? t.type.toLowerCase() }
+
 // Consume CSS function body after the opening '(' has been appended to `fn`.
 // Uses space-separated parts for proper CSS output, joining commas tightly.
 function _consumeCssFunctionBody(tokens, parser, fn) {
@@ -40,7 +47,8 @@ function _consumeCssFunctionBody(tokens, parser, fn) {
       parser.pos++
       let hex = '#'
       while (tokens[parser.pos]?.type === T.IDENT || tokens[parser.pos]?.type === T.NUMBER) {
-        hex += String(tokens[parser.pos++].value ?? '')
+        const nt = tokens[parser.pos++]
+        hex += nt.raw ?? String(nt.value ?? '')
       }
       parts.push(hex)
       continue
@@ -49,8 +57,8 @@ function _consumeCssFunctionBody(tokens, parser, fn) {
       parser.pos++
       if (parts.length > 0) {
         const next = tokens[parser.pos]
-        if (next && next.type === T.IDENT) {
-          parts[parts.length - 1] += '-' + next.value
+        if (next && _CSS_IDENT_TYPES.has(next.type)) {
+          parts[parts.length - 1] += '-' + _cssIdentVal(next)
           parser.pos++
           if (tokens[parser.pos]?.type === T.LPAREN) {
             let inner = parts.pop() + '('
@@ -82,8 +90,8 @@ function _consumeCssFunctionBody(tokens, parser, fn) {
       parts.push(inner)
       continue
     }
-    if (ft.type === T.IDENT && tokens[parser.pos + 1]?.type === T.LPAREN) {
-      let inner = ft.value + '('
+    if (_CSS_IDENT_TYPES.has(ft.type) && tokens[parser.pos + 1]?.type === T.LPAREN) {
+      let inner = _cssIdentVal(ft) + '('
       parser.pos += 2; depth++
       inner = _consumeCssFunctionBody(tokens, parser, inner)
       depth--
@@ -91,7 +99,7 @@ function _consumeCssFunctionBody(tokens, parser, fn) {
       continue
     }
     const prev = parts[parts.length - 1]
-    const val = String(ft.value ?? ft.type)
+    const val = _CSS_IDENT_TYPES.has(ft.type) ? _cssIdentVal(ft) : String(ft.value ?? ft.type)
     const isUnit = _CSS_UNIT_RE.test(val)
     const prevIsNum = prev !== undefined && _CSS_NUM_RE.test(prev)
     if (isUnit && prevIsNum) parts[parts.length - 1] = prev + val
@@ -102,13 +110,14 @@ function _consumeCssFunctionBody(tokens, parser, fn) {
 }
 
 // Annotations allowed inside template blocks: Set for O(1) vs O(7) Array.includes
-const _TEMPLATE_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker'])
+const _TEMPLATE_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker', '@param'])
 
 // Hoisted operator Sets for hot expression-parsing loops: avoids per-call array allocation
-const _ASSIGN_OPS = new Set([T.EQ, T.PLUS_EQ, T.MINUS_EQ, T.STAR_EQ, T.SLASH_EQ])
+const _ASSIGN_OPS = new Set([T.EQ, T.PLUS_EQ, T.MINUS_EQ, T.STAR_EQ, T.SLASH_EQ, T.CARET_EQ, T.LSHIFT_EQ, T.RSHIFT_EQ])
 const _DECLARATION_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker', '@param', '@route'])
 const _EQUALITY_OPS = new Set([T.EQEQ, T.BANGEQ, T.IS])
 const _CMP_OPS = new Set([T.LT, T.GT, T.LTEQ, T.GTEQ])
+const _SHIFT_OPS = new Set([T.LSHIFT, T.RSHIFT])
 const _ADDSUB_OPS = new Set([T.PLUS, T.MINUS])
 const _MULDIV_OPS = new Set([T.STAR, T.SLASH, T.PERCENT, T.STARSTAR])
 
@@ -339,7 +348,19 @@ class Parser {
     const firstTok = this.tokens[this.pos]
     const annotations = []
     while (this.tokens[this.pos]?.type === T.AT_IDENT) {
-      annotations.push(this.tokens[this.pos++].value)
+      let ann = this.tokens[this.pos++].value
+      // consume optional role list: @auth(admin,editor)
+      if (this.tokens[this.pos]?.type === T.LPAREN) {
+        this.pos++ // consume (
+        const roles = []
+        while (this.tokens[this.pos]?.type !== T.RPAREN && this.tokens[this.pos]?.type !== T.EOF) {
+          if (this.tokens[this.pos]?.type === T.COMMA) { this.pos++; continue }
+          roles.push(this.tokens[this.pos++].value)
+        }
+        if (this.tokens[this.pos]?.type === T.RPAREN) this.pos++ // consume )
+        ann += `(${roles.join(',')})`
+      }
+      annotations.push(ann)
     }
 
     // Find the primary annotation - the one that determines declaration type
@@ -481,11 +502,10 @@ class Parser {
 
     const body = this.parseTemplateBlock()
     // design can be inside the body block OR after it (both syntaxes supported)
-    // Design blocks are always the last node in a template body by syntax
     let design = null
-    const lastNode = body[body.length - 1]
-    if (lastNode?.type === 'DesignBlock') {
-      design = body.pop()
+    const designIdx = body.findIndex(n => n.type === 'DesignBlock')
+    if (designIdx >= 0) {
+      design = body.splice(designIdx, 1)[0]
     } else if (this.peekType() === T.DESIGN) {
       design = this.parseDesign()
     }
@@ -509,9 +529,9 @@ class Parser {
 
     const body = this.parseTemplateBlock()
     let design = null
-    const lastPageNode = body[body.length - 1]
-    if (lastPageNode?.type === 'DesignBlock') {
-      design = body.pop()
+    const designIdx = body.findIndex(n => n.type === 'DesignBlock')
+    if (designIdx >= 0) {
+      design = body.splice(designIdx, 1)[0]
     } else if (this.peekType() === T.DESIGN) {
       design = this.parseDesign()
     }
@@ -558,8 +578,22 @@ class Parser {
     // checker can add to its scope.
     if (t.type === T.CONST || t.type === T.LET) return this.parseVarDecl()
 
-    // Raw HTML passthrough
+    // Raw HTML passthrough — both bare `raw` and `@raw` forms
     if (t.type === T.RAW) return this.parseRawNode()
+    if (t.type === T.AT_IDENT && t.value === '@raw') {
+      this.pos++ // consume @raw
+      const strTok = this.eat(T.STRING)
+      this.consumeNewlines()
+      return N.RawNode(strTok.value, strTok.line)
+    }
+
+    // CSS package import — @css "package-name" bundles npm CSS into the page
+    if (t.type === T.AT_IDENT && t.value === '@css') {
+      this.pos++ // consume @css
+      const strTok = this.eat(T.STRING)
+      this.consumeNewlines()
+      return N.CssImport(strTok.value, strTok.line)
+    }
 
     // @state/@computed/@build inside template: hoist to program declarations
     if (t.type === T.AT_IDENT) {
@@ -710,6 +744,32 @@ class Parser {
           continue
         }
 
+        // Hyphenated attribute: data-foo="bar", aria-label="text", aria-hidden (bare)
+        if (next?.type === T.MINUS) {
+          let key = t.value
+          let i = this.pos + 1          // points at first MINUS
+          while (this.tokens[i]?.type === T.MINUS && this.tokens[i + 1]?.type === T.IDENT) {
+            key += '-' + this.tokens[i + 1].value
+            i += 2
+          }
+          const afterKey = this.tokens[i]
+          if (afterKey?.type === T.EQ) {
+            this.pos = i + 1            // skip key segments + EQ
+            attrs[key] = this.parseExpr()
+            continue
+          }
+          // Bare hyphenated boolean (aria-hidden, data-expanded, …)
+          if (!afterKey || afterKey.type === T.NEWLINE || afterKey.type === T.INDENT ||
+              afterKey.type === T.DEDENT || afterKey.type === T.EOF ||
+              afterKey.type === T.STRING || afterKey.type === T.LBRACE ||
+              afterKey.type === T.IDENT || afterKey.type === T.CLASS) {
+            this.pos = i
+            attrs[key] = true
+            continue
+          }
+          break
+        }
+
         // Regular attribute: key=value or key="..." or bare key
         if (next?.type === T.EQ) {
           const key = t.value
@@ -737,7 +797,12 @@ class Parser {
         const next = this.tokens[this.pos + 1]
         if (next?.type === T.EQ) {
           this.pos += 2
-          attrs['class'] = this.parseExpr()
+          const _ct = this.tokens[this.pos]
+          if (_ct?.type === T.STRING && this.tokens[this.pos + 1]?.type === T.INTERP_START) {
+            attrs['class'] = this.parseTemplateLiteralContent(_ct.line)
+          } else {
+            attrs['class'] = this.parseExpr()
+          }
           continue
         }
         break
@@ -790,6 +855,9 @@ class Parser {
       if (t.type === T.STRING) {
         if (t.value) parts.push(N.Literal(t.value, t.value, t.line))
         this.pos++
+        // Stop if the STRING is not followed by another interpolation — the template literal is complete.
+        // Without this, adjacent STRING tokens (e.g. the next child's inline content) get consumed.
+        if (this.tokens[this.pos]?.type !== T.INTERP_START) break
         continue
       }
 
@@ -954,20 +1022,43 @@ class Parser {
         continue
       }
 
+      // LBRACKET prefix: attribute selector ([disabled], [data-foo="bar"])
+      if (pt.type === T.LBRACKET) {
+        const rule = this.parseStyleRule()
+        if (rule) nestedRules.push(rule)
+        continue
+      }
+
+      // Combinator prefixes: > child, + adjacent sibling
+      if (pt.type === T.GT || pt.type === T.PLUS) {
+        const rule = this.parseStyleRule()
+        if (rule) nestedRules.push(rule)
+        continue
+      }
+
       // IDENT: either a direct property (prop: value) or a selector block (body { ... })
+      // Always look ahead first — IDENT+COLON can be either "color: red" (property)
+      // or "li:hover" / "li:nth-child(2n+1)" (selector with pseudo-class) depending
+      // on whether an indented block follows the line.
       if (pt.type === T.IDENT) {
-        const next = this.tokens[this.pos + 1]
-        if (next?.type === T.COLON) {
-          rootProps.push(this._parseDesignPropEntry(pt))
-          this.consumeNewlines()
-          continue
-        }
-        // Look past NEWLINEs to find INDENT (selector with block)
         let lookIdx = this.pos + 1
+        while (this.tokens[lookIdx] &&
+               this.tokens[lookIdx].type !== T.NEWLINE &&
+               this.tokens[lookIdx].type !== T.INDENT &&
+               this.tokens[lookIdx].type !== T.DEDENT &&
+               this.tokens[lookIdx].type !== T.EOF) lookIdx++
         while (this.tokens[lookIdx]?.type === T.NEWLINE) lookIdx++
         if (this.tokens[lookIdx]?.type === T.INDENT) {
           const rule = this.parseStyleRule()
           if (rule) nestedRules.push(rule)
+          continue
+        }
+        // No indented block → direct property. Handles both "color: red" (COLON)
+        // and hyphenated "align-items: center" (MINUS before COLON).
+        const next = this.tokens[this.pos + 1]
+        if (next?.type === T.COLON || next?.type === T.MINUS) {
+          rootProps.push(this._parseDesignPropEntry(pt))
+          this.consumeNewlines()
           continue
         }
       }
@@ -1057,11 +1148,25 @@ class Parser {
         children.push(this.parseStyleRule())
         continue
       }
-      // Nested selector with block (look past NEWLINEs to find INDENT)
+      if (pt.type === T.LBRACKET) {
+        children.push(this.parseStyleRule())
+        continue
+      }
+      if (pt.type === T.GT || pt.type === T.PLUS) {
+        children.push(this.parseStyleRule())
+        continue
+      }
+      // Nested selector with block — look past all tokens on the line before checking for INDENT.
+      // "li:nth-child(2n+1)" starts with IDENT+COLON but is a selector, not a property.
       if (pt.type === T.IDENT) {
         let lookIdx = this.pos + 1
+        while (this.tokens[lookIdx] &&
+               this.tokens[lookIdx].type !== T.NEWLINE &&
+               this.tokens[lookIdx].type !== T.INDENT &&
+               this.tokens[lookIdx].type !== T.DEDENT &&
+               this.tokens[lookIdx].type !== T.EOF) lookIdx++
         while (this.tokens[lookIdx]?.type === T.NEWLINE) lookIdx++
-        if (this.tokens[lookIdx]?.type === T.INDENT && this.tokens[this.pos + 1]?.type !== T.COLON) {
+        if (this.tokens[lookIdx]?.type === T.INDENT) {
           children.push(this.parseStyleRule())
           continue
         }
@@ -1071,11 +1176,11 @@ class Parser {
       if (pt.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.MINUS) {
         this.pos += 2 // consume --
         let propName = '--'
-        if (this.tokens[this.pos]?.type === T.IDENT) {
-          propName += this.tokens[this.pos++].value
-          while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.IDENT) {
+        if (_CSS_IDENT_TYPES.has(this.tokens[this.pos]?.type)) {
+          propName += _cssIdentVal(this.tokens[this.pos++])
+          while (this.tokens[this.pos]?.type === T.MINUS && _CSS_IDENT_TYPES.has(this.tokens[this.pos + 1]?.type)) {
             this.pos++
-            propName += '-' + this.tokens[this.pos++].value
+            propName += '-' + _cssIdentVal(this.tokens[this.pos++])
           }
           while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.NUMBER) {
             this.pos++
@@ -1096,9 +1201,9 @@ class Parser {
       if (pt.type === T.IDENT) {
         let propName = this.tokens[this.pos++].value
         // Consume hyphens in property names (align-items, min-height, background-color, etc.)
-        while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.IDENT) {
+        while (this.tokens[this.pos]?.type === T.MINUS && _CSS_IDENT_TYPES.has(this.tokens[this.pos + 1]?.type)) {
           this.pos++
-          propName += '-' + this.tokens[this.pos++].value
+          propName += '-' + _cssIdentVal(this.tokens[this.pos++])
         }
         if (this.tokens[this.pos]?.type === T.COLON) {
           this.pos++
@@ -1125,7 +1230,7 @@ class Parser {
     let selector = initial
     while (this.tokens[this.pos]) {
       const cur = this.tokens[this.pos]
-      if (cur.type === T.IDENT) { selector += cur.value; this.pos++ }
+      if (_CSS_IDENT_TYPES.has(cur.type)) { selector += _cssIdentVal(cur); this.pos++ }
       else if (cur.type === T.DOT) { selector += '.'; this.pos++ }
       else if (cur.type === T.HASH) { selector += '#'; this.pos++ }
       else if (cur.type === T.COLON) { selector += ':'; this.pos++ }
@@ -1134,6 +1239,57 @@ class Parser {
       else if (cur.type === T.STAR) { selector += '*'; this.pos++ }
       else if (cur.type === T.MINUS) { selector += '-'; this.pos++ }
       else if (cur.type === T.COMMA) { selector += ', '; this.pos++ }
+      else if (cur.type === T.EQ) { selector += '='; this.pos++ }
+      else if (cur.type === T.LBRACKET) {
+        // Attribute selector: [type="text"], [disabled], [href*="/"]
+        selector += '['
+        this.pos++
+        while (this.tokens[this.pos] && this.tokens[this.pos].type !== T.RBRACKET
+            && this.tokens[this.pos].type !== T.EOF && this.tokens[this.pos].type !== T.NEWLINE) {
+          const at = this.tokens[this.pos]
+          if (at.type === T.STRING) selector += `"${at.value}"`
+          else if (at.type === T.IDENT) selector += at.value
+          else if (at.type === T.NUMBER) selector += String(at.value)
+          else if (at.type === T.EQ) selector += '='
+          else if (at.type === T.BANG) selector += '!'
+          else if (at.type === T.STAR) selector += '*'
+          else if (at.type === T.PLUS) selector += '+'
+          else if (at.type === T.MINUS) selector += '-'
+          else if (at.type === T.COLON) selector += ':'
+          this.pos++
+        }
+        if (this.tokens[this.pos]?.type === T.RBRACKET) { selector += ']'; this.pos++ }
+      }
+      else if (cur.type === T.LPAREN) {
+        // Functional pseudo-class: :nth-child(2n+1), :is(.foo), :has(>p)
+        selector += '('
+        this.pos++
+        let depth = 1
+        while (this.tokens[this.pos] && this.tokens[this.pos].type !== T.EOF && this.tokens[this.pos].type !== T.NEWLINE) {
+          const pt = this.tokens[this.pos]
+          if (pt.type === T.LPAREN) { depth++; selector += '('; this.pos++ }
+          else if (pt.type === T.RPAREN) {
+            depth--
+            if (depth === 0) { this.pos++; break }
+            selector += ')'; this.pos++
+          }
+          else if (pt.type === T.STRING) { selector += `"${pt.value}"`; this.pos++ }
+          else if (_CSS_IDENT_TYPES.has(pt.type)) { selector += _cssIdentVal(pt); this.pos++ }
+          else if (pt.type === T.DOT) { selector += '.'; this.pos++ }
+          else if (pt.type === T.HASH) { selector += '#'; this.pos++ }
+          else if (pt.type === T.COLON) { selector += ':'; this.pos++ }
+          else if (pt.type === T.GT) { selector += '>'; this.pos++ }
+          else if (pt.type === T.PLUS) { selector += '+'; this.pos++ }
+          else if (pt.type === T.MINUS) { selector += '-'; this.pos++ }
+          else if (pt.type === T.STAR) { selector += '*'; this.pos++ }
+          else if (pt.type === T.AMP) { selector += '&'; this.pos++ }
+          else if (pt.type === T.COMMA) { selector += ', '; this.pos++ }
+          else if (pt.type === T.LBRACKET) { selector += '['; this.pos++ }
+          else if (pt.type === T.RBRACKET) { selector += ']'; this.pos++ }
+          else { this.pos++ }
+        }
+        selector += ')'
+      }
       else break
     }
     return selector
@@ -1211,10 +1367,10 @@ class Parser {
         if (pt?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.MINUS) {
           this.pos += 2
           let propName = '--'
-          if (this.tokens[this.pos]?.type === T.IDENT) {
-            propName += this.tokens[this.pos++].value
-            while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.IDENT) {
-              this.pos++; propName += '-' + this.tokens[this.pos++].value
+          if (_CSS_IDENT_TYPES.has(this.tokens[this.pos]?.type)) {
+            propName += _cssIdentVal(this.tokens[this.pos++])
+            while (this.tokens[this.pos]?.type === T.MINUS && _CSS_IDENT_TYPES.has(this.tokens[this.pos + 1]?.type)) {
+              this.pos++; propName += '-' + _cssIdentVal(this.tokens[this.pos++])
             }
             while (this.tokens[this.pos]?.type === T.MINUS && this.tokens[this.pos + 1]?.type === T.NUMBER) {
               this.pos++; propName += '-' + String(this.tokens[this.pos++].value)
@@ -1227,6 +1383,30 @@ class Parser {
           }
           this.consumeNewlines()
           continue
+        }
+        // Regular CSS property inside @dark/@mobile/etc.: name: value
+        // Detect: IDENT (optionally hyphenated) followed by COLON then a value (not INDENT)
+        if (pt.type === T.IDENT) {
+          let lookIdx = this.pos + 1
+          while (this.tokens[lookIdx]?.type === T.MINUS && _CSS_IDENT_TYPES.has(this.tokens[lookIdx + 1]?.type)) {
+            lookIdx += 2
+          }
+          const afterName = this.tokens[lookIdx]
+          if (afterName?.type === T.COLON) {
+            let peekIdx = lookIdx + 1
+            while (this.tokens[peekIdx]?.type === T.NEWLINE) peekIdx++
+            if (this.tokens[peekIdx]?.type !== T.INDENT) {
+              let propName = this.tokens[this.pos++].value
+              while (this.tokens[this.pos]?.type === T.MINUS && _CSS_IDENT_TYPES.has(this.tokens[this.pos + 1]?.type)) {
+                this.pos++; propName += '-' + _cssIdentVal(this.tokens[this.pos++])
+              }
+              this.pos++ // consume COLON
+              const value = this.parseStyleValue()
+              rules.push(N.StyleProp(propName, value, pt.line))
+              this.consumeNewlines()
+              continue
+            }
+          }
         }
         const before = this.pos
         const rule = this.parseStyleRule()
@@ -1254,7 +1434,7 @@ class Parser {
         while (this.tokens[this.pos]) {
           const nt = this.tokens[this.pos]
           if (nt.type === T.IDENT || nt.type === T.NUMBER) {
-            hex += String(nt.value ?? '')
+            hex += nt.raw ?? String(nt.value ?? '')
             this.pos++
           } else break
         }
@@ -1267,9 +1447,9 @@ class Parser {
         this.pos++
         if (parts.length > 0) {
           const next = this.tokens[this.pos]
-          if (next && next.type === T.IDENT) {
-            // hyphenated name: system-ui, linear-gradient, etc.
-            parts[parts.length - 1] = parts[parts.length - 1] + '-' + next.value
+          if (next && _CSS_IDENT_TYPES.has(next.type)) {
+            // hyphenated name: system-ui, linear-gradient, ease-in-out, etc.
+            parts[parts.length - 1] = parts[parts.length - 1] + '-' + _cssIdentVal(next)
             this.pos++
             // After joining (e.g. "linear-gradient"), check if followed by ( → function call
             if (this.tokens[this.pos]?.type === T.LPAREN) {
@@ -1316,8 +1496,8 @@ class Parser {
       }
 
       // CSS function call: ident( ... ) — consume entire call as one token without spaces
-      if (t.type === T.IDENT && this.tokens[this.pos + 1]?.type === T.LPAREN) {
-        let fn = t.value + '('
+      if (_CSS_IDENT_TYPES.has(t.type) && this.tokens[this.pos + 1]?.type === T.LPAREN) {
+        let fn = _cssIdentVal(t) + '('
         this.pos += 2 // skip ident and (
         fn = _consumeCssFunctionBody(this.tokens, this, fn)
         parts.push(fn)
@@ -1347,7 +1527,10 @@ class Parser {
     const kind = tok.value // 'const' or 'let'
     this.pos++
 
-    const name = this.eat(T.IDENT).value
+    // Accept IDENT or any keyword as variable name (e.g. `raw`, `page`, `type`)
+    this.skipWhitespace()
+    const nameTok = this.tokens[this.pos++]
+    const name = nameTok?.value ?? ''
     const typeAnnotation = this.eatIf(T.COLON) ? this.parseTypeAnnotation() : null
     let init = null
     if (this.eatIf(T.EQ)) {
@@ -1506,13 +1689,20 @@ class Parser {
     return N.ExprStatement(expr, tok?.line)
   }
 
+  _parseBlockOrIndented() {
+    if (this.tokens[this.pos]?.type === T.NEWLINE || this.tokens[this.pos]?.type === T.INDENT) {
+      return this.parseIndentedBlock()
+    }
+    return this.parseBlock()
+  }
+
   parseIfStatement() {
     const tok = this.eat(T.IF)
     const condition = this.parseExpr()
-    const consequent = this.parseBlock()
+    const consequent = this._parseBlockOrIndented()
     let alternate = null
     if (this.eatIf(T.ELSE)) {
-      alternate = this.tokens[this.pos]?.type === T.IF ? this.parseIfStatement() : this.parseBlock()
+      alternate = this.tokens[this.pos]?.type === T.IF ? this.parseIfStatement() : this._parseBlockOrIndented()
     }
     this.consumeNewlines()
     return N.IfStatement(condition, consequent, alternate, tok.line)
@@ -1521,7 +1711,7 @@ class Parser {
   parseUnlessStatement() {
     const tok = this.eat(T.UNLESS)
     const condition = this.parseExpr()
-    const body = this.parseBlock()
+    const body = this._parseBlockOrIndented()
     this.consumeNewlines()
     return N.UnlessStatement(condition, body, tok.line)
   }
@@ -1529,7 +1719,7 @@ class Parser {
   parseWhileStatement() {
     const tok = this.eat(T.WHILE)
     const condition = this.parseExpr()
-    const body = this.parseBlock()
+    const body = this._parseBlockOrIndented()
     this.consumeNewlines()
     return N.WhileStatement(condition, body, tok.line)
   }
@@ -1561,7 +1751,7 @@ class Parser {
 
     this.eat(T.IN)
     const collection = this.parseExpr()
-    const body = this.parseBlock()
+    const body = this._parseBlockOrIndented()
     this.consumeNewlines()
     return N.ForStatement(indexName, itemName, collection, body, tok.line)
   }
@@ -1600,9 +1790,12 @@ class Parser {
         const pattern = this.parseMatchPattern()
         if (!this.eatIf(T.ARROW)) this.eat(T.THIN_ARROW)
         // Multi-statement arm: `Pat ->\n  stmt1\n  stmt2` - NEWLINE after arrow signals a block
+        // Single-line return arm: `Pat -> return expr`
         const body = this.tokens[this.pos]?.type === T.NEWLINE
           ? this.parseIndentedBlock()
-          : this.parseExpr()
+          : this.tokens[this.pos]?.type === T.RETURN
+            ? this.parseStatement()
+            : this.parseExpr()
         this.consumeNewlines()
         arms.push(N.MatchArm(pattern, body, pattern?.line))
       }
@@ -1716,13 +1909,28 @@ class Parser {
 
   parseTernary() {
     const cond = this.parseOr()
+    const savedPos = this.pos
+    // Multi-line ternary: cond\n  ? cons\n  : alt
+    let multiLine = false
+    if (this.tokens[this.pos]?.type === T.NEWLINE &&
+        this.tokens[this.pos + 1]?.type === T.INDENT &&
+        this.tokens[this.pos + 2]?.type === T.QUESTION) {
+      this.pos += 2 // skip NEWLINE + INDENT
+      multiLine = true
+    }
     if (this.tokens[this.pos]?.type === T.QUESTION) {
       const tok = this.tokens[this.pos++]
       const cons = this.parseOr()
+      this.consumeNewlines() // : may be on the next line
       this.eat(T.COLON)
       const alt = this.parseTernary()
+      if (multiLine) {
+        this.consumeNewlines()
+        if (this.tokens[this.pos]?.type === T.DEDENT) this.pos++ // consume matching DEDENT
+      }
       return N.TernaryExpr(cond, cons, alt, tok.line)
     }
+    this.pos = savedPos
     return cond
   }
 
@@ -1745,10 +1953,37 @@ class Parser {
   }
 
   parseNullCoalesce() {
-    let left = this.parseEquality()
+    let left = this.parseBitOr()
     while (this.tokens[this.pos]?.type === T.QQ) {
       const tok = this.tokens[this.pos++]
-      left = N.NullCoalesce(left, this.parseEquality(), tok.line)
+      left = N.NullCoalesce(left, this.parseBitOr(), tok.line)
+    }
+    return left
+  }
+
+  parseBitOr() {
+    let left = this.parseBitXor()
+    while (this.tokens[this.pos]?.type === T.BAR) {
+      const tok = this.tokens[this.pos++]
+      left = N.BinaryExpr('|', left, this.parseBitXor(), tok.line)
+    }
+    return left
+  }
+
+  parseBitXor() {
+    let left = this.parseBitAnd()
+    while (this.tokens[this.pos]?.type === T.CARET) {
+      const tok = this.tokens[this.pos++]
+      left = N.BinaryExpr('^', left, this.parseBitAnd(), tok.line)
+    }
+    return left
+  }
+
+  parseBitAnd() {
+    let left = this.parseEquality()
+    while (this.tokens[this.pos]?.type === T.AMP) {
+      const tok = this.tokens[this.pos++]
+      left = N.BinaryExpr('&', left, this.parseEquality(), tok.line)
     }
     return left
   }
@@ -1768,8 +2003,17 @@ class Parser {
   }
 
   parseComparison() {
-    let left = this.parseAddSub()
+    let left = this.parseShift()
     while (_CMP_OPS.has(this.tokens[this.pos]?.type)) {
+      const tok = this.tokens[this.pos++]
+      left = N.BinaryExpr(tok.value, left, this.parseShift(), tok.line)
+    }
+    return left
+  }
+
+  parseShift() {
+    let left = this.parseAddSub()
+    while (_SHIFT_OPS.has(this.tokens[this.pos]?.type)) {
       const tok = this.tokens[this.pos++]
       left = N.BinaryExpr(tok.value, left, this.parseAddSub(), tok.line)
     }
@@ -1892,6 +2136,10 @@ class Parser {
     if (t.type === T.BOOL) { this.pos++; return N.Literal(t.value === 'true', t.value, t.line) }
     if (t.type === T.NONE) { this.pos++; return N.Literal(undefined, 'none', t.line) }
     if (t.type === T.STRING) {
+      // If followed by INTERP_START, parse as template literal expression
+      if (this.tokens[this.pos + 1]?.type === T.INTERP_START) {
+        return this._parseTemplateLiteralExpr(t)
+      }
       this.pos++
       return N.Literal(t.value, JSON.stringify(t.value), t.line)
     }
@@ -1972,6 +2220,32 @@ class Parser {
     // Skip unknown
     this.pos++
     return N.Literal(undefined, 'none', t.line)
+  }
+
+  _parseTemplateLiteralExpr(startTok) {
+    const parts = []
+    while (true) {
+      const t = this.tokens[this.pos]
+      if (!t || t.type === T.NEWLINE || t.type === T.INDENT || t.type === T.DEDENT || t.type === T.EOF) break
+      if (t.type === T.STRING) {
+        if (t.value) parts.push(N.Literal(t.value, JSON.stringify(t.value), t.line))
+        this.pos++
+        if (this.tokens[this.pos]?.type !== T.INTERP_START) break
+        continue
+      }
+      if (t.type === T.INTERP_START) {
+        this.pos++
+        if (this.tokens[this.pos]?.type !== T.INTERP_END) {
+          parts.push(this.parseExpr())
+        }
+        if (this.tokens[this.pos]?.type === T.INTERP_END) this.pos++
+        continue
+      }
+      break
+    }
+    if (parts.length === 0) return N.Literal('', '""', startTok.line)
+    if (parts.length === 1 && parts[0].type === 'Literal') return parts[0]
+    return N.TemplateLiteral(parts, startTok.line)
   }
 
   _parseArrowFnFromParens(t) {
@@ -2202,7 +2476,9 @@ class Parser {
       return N.ModelField(decorators, null, null, expr, exprLine)
     }
     const kwTok = this.tokens[this.pos]?.type === T.CONST ? this.eat(T.CONST) : this.eat(T.LET)
-    const name = this.eat(T.IDENT).value
+    // Accept any token as field name (keywords like `page`, `type`, `let` are valid field names in model context)
+    const nameTok = this.tokens[this.pos++]
+    const name = nameTok.value
     const typeAnnotation = this.eatIf(T.COLON) ? this.parseTypeAnnotation() : null
     // Use direct check (not eatIf) to avoid skipWhitespace() consuming NEWLINE+DEDENT
     const hasInit = this.tokens[this.pos]?.type === T.EQ
@@ -2240,8 +2516,11 @@ class Parser {
     const params = (routePath.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) ?? []).map(p => p.slice(1))
 
     // Optional return type annotation: -> Response
+    // Do NOT use eatIf here — it calls skipWhitespace which would consume NEWLINE+INDENT,
+    // leaving parseIndentedBlock unable to find the block.
     let returnType = null
-    if (this.eatIf(T.THIN_ARROW)) {
+    if (this.tokens[this.pos]?.type === T.THIN_ARROW) {
+      this.pos++
       returnType = this.parseTypeAnnotation()
     }
 
