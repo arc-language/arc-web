@@ -197,9 +197,9 @@ const _UPLOAD_MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'ima
 // SVG/PDF are user-uploaded content — force download to prevent script execution in browser origin
 const _ATTACHMENT_EXTS = new Set(['.svg', '.pdf'])
 async function _serveStatic(req, pathname) {
-  // Protect /admin/* pages before dispatch - a POST route match returns 405
-  // rather than 404, which would otherwise bypass both the static fallback and auth.
-  if (req.method === 'GET' && (pathname === '/admin' || pathname.startsWith('/admin/')) && pathname !== '/admin/login') {
+  // Protect /admin/* paths before dispatch - applies to all HTTP methods so that
+  // non-GET requests to unmatched admin paths can't bypass the auth check via 404/405.
+  if ((pathname === '/admin' || pathname.startsWith('/admin/')) && pathname !== '/admin/login') {
     const _sess = await auth.session(req)
     if (!_sess) return Response.redirect('/admin/login', 302)
   }

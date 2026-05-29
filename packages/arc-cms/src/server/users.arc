@@ -33,7 +33,11 @@
     const b = parseBody(request)
     const allowed = {}
     if b.name   allowed.name  = b.name
-    if b.email  allowed.email = b.email
+    if b.email
+      const taken = db.users.findFirst({ where: { email: b.email } })
+      if taken && taken.id != params.id
+        return json({ error: "Email already in use" }, 409)
+      allowed.email = b.email
     if b.role   allowed.role  = b.role
     if b.password && b.password.length > 0
       const salt = crypto.randomBytes(16).toString("hex")

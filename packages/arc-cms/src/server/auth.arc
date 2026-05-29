@@ -3,7 +3,24 @@
 // GET  /admin/check-auth — session probe (used by CmsLayout client-side check)
 // POST /admin/logout
 
+// Login rate limit: 5 attempts per IP per 15 minutes
+const _loginAttempts = new Map()
+fn _checkLoginLimit(ip: String) -> Bool
+  const now = Date.now()
+  const window = 15 * 60 * 1000
+  const entry = _loginAttempts.get(ip)
+  if !entry || now > entry.resetAt
+    _loginAttempts.set(ip, { count: 1, resetAt: now + window })
+    return false
+  entry.count += 1
+  if entry.count > 5
+    return true
+  return false
+
 @route post "/admin/login" -> Response
+  const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for") ?? "unknown"
+  if _checkLoginLimit(ip)
+    return json({ error: "Too many login attempts. Try again in 15 minutes." }, 429)
   const b = parseBody(request)
   if !b.email || !b.password
     return json({ error: "Email and password required" }, 400)
