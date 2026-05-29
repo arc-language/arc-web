@@ -2,7 +2,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert')
-const { generateModelMigration, desiredColumns, tableName, arcTypeToSql, migrate } = require('../src/compilers/migration-compiler')
+const { generateModelMigration, desiredColumns, tableName, arcTypeToSql, migrate, dropTables } = require('../src/compilers/migration-compiler')
 const { Lexer } = require('../src/lexer')
 const { Parser } = require('../src/parser')
 
@@ -187,4 +187,163 @@ model Tag
   })
   // New DB → table is new, not upToDate
   assert.strictEqual(result.upToDate, false)
+})
+
+// ── desiredColumns: nullable and @unique ──────────────────────────────────────
+
+test('desiredColumns: nullable field omits NOT NULL', () => {
+  const schema = parseModel(`
+model Post
+  @id let id = autoincrement()
+  let title: String?
+`)
+  const cols = desiredColumns(schema, 'sqlite')
+  const titleCol = cols.find(c => c.name === 'title')
+  assert.ok(titleCol, 'should have title column')
+  assert.ok(!titleCol.sql.includes('NOT NULL'), 'nullable field should not have NOT NULL')
+})
+
+test('desiredColumns: @unique field includes UNIQUE constraint', () => {
+  const schema = parseModel(`
+model User
+  @id let id = autoincrement()
+  @unique let email: String
+`)
+  const cols = desiredColumns(schema, 'sqlite')
+  const emailCol = cols.find(c => c.name === 'email')
+  assert.ok(emailCol, 'should have email column')
+  assert.ok(emailCol.sql.includes('UNIQUE'), 'email should have UNIQUE constraint')
+})
+
+test('desiredColumns: boolean field with default false gets DEFAULT 0 in sqlite', () => {
+  const schema = parseModel(`
+model Post
+  @id let id = autoincrement()
+  let published: Bool = false
+`)
+  const cols = desiredColumns(schema, 'sqlite')
+  const col = cols.find(c => c.name === 'published')
+  assert.ok(col, 'should have published column')
+  assert.ok(col.sql.includes('DEFAULT 0'), `bool default false → DEFAULT 0 in sqlite: ${col.sql}`)
+})
+
+test('desiredColumns: boolean field with default true gets DEFAULT 1 in sqlite', () => {
+  const schema = parseModel(`
+model Post
+  @id let id = autoincrement()
+  let active: Bool = true
+`)
+  const cols = desiredColumns(schema, 'sqlite')
+  const col = cols.find(c => c.name === 'active')
+  assert.ok(col.sql.includes('DEFAULT 1'), `bool default true → DEFAULT 1: ${col.sql}`)
+})
+
+test('desiredColumns: boolean default uses true/false in postgres', () => {
+  const schema = parseModel(`
+model Post
+  @id let id = autoincrement()
+  let active: Bool = true
+`)
+  const cols = desiredColumns(schema, 'postgres')
+  const col = cols.find(c => c.name === 'active')
+  assert.ok(col.sql.includes('DEFAULT true'), `postgres uses true/false: ${col.sql}`)
+})
+
+test('desiredColumns: numeric default included in SQL', () => {
+  const schema = parseModel(`
+model Counter
+  @id let id = autoincrement()
+  let count: Int = 0
+`)
+  const cols = desiredColumns(schema, 'sqlite')
+  const col = cols.find(c => c.name === 'count')
+  assert.ok(col.sql.includes('DEFAULT 0'), `numeric default: ${col.sql}`)
+})
+
+test('desiredColumns: string default is quoted', () => {
+  const schema = parseModel(`
+model User
+  @id let id = autoincrement()
+  let role: String = "editor"
+`)
+  const cols = desiredColumns(schema, 'sqlite')
+  const col = cols.find(c => c.name === 'role')
+  assert.ok(col.sql.includes("DEFAULT 'editor'"), `string default should be quoted: ${col.sql}`)
+})
+
+// ── generateModelMigration: unsafe model name ─────────────────────────────────
+
+test('generateModelMigration: throws on unsafe model name', () => {
+  const schema = { name: 'Drop Table; --', fields: [] }
+  assert.throws(
+    () => generateModelMigration(schema, new Set(), 'sqlite'),
+    /unsafe model name/,
+  )
+})
+
+test('generateModelMigration: nullable field in CREATE TABLE lacks NOT NULL', () => {
+  const schema = parseModel(`
+model Article
+  @id let id = autoincrement()
+  let subtitle: String?
+  let title: String
+`)
+  const stmts = generateModelMigration(schema, new Set(), 'sqlite')
+  assert.strictEqual(stmts.length, 1)
+  assert.ok(stmts[0].includes('subtitle TEXT'), 'nullable field should be TEXT without NOT NULL')
+  assert.ok(!stmts[0].match(/subtitle TEXT NOT NULL/), 'should not have NOT NULL for nullable')
+  assert.ok(stmts[0].includes('title TEXT NOT NULL'), 'non-nullable should have NOT NULL')
+})
+
+// ── migrate: multiple models ──────────────────────────────────────────────────
+
+test('migrate: dry run with multiple models emits multiple CREATE TABLE', async () => {
+  const s1 = parseModel(`
+model Post
+  @id let id = autoincrement()
+  let title: String
+`)
+  const s2 = parseModel(`
+model Comment
+  @id let id = autoincrement()
+  let body: String
+`)
+  const result = await migrate([s1, s2], {
+    db: 'sqlite',
+    url: '/tmp/arc-multi-' + Date.now() + '.db',
+    dry: true,
+  })
+  assert.strictEqual(result.upToDate, false)
+  assert.strictEqual(result.report.length, 2)
+  assert.ok(result.sql.includes('CREATE TABLE IF NOT EXISTS posts'))
+  assert.ok(result.sql.includes('CREATE TABLE IF NOT EXISTS comments'))
+})
+
+test('migrate: dry run returns applied=false', async () => {
+  const schema = parseModel(`
+model Widget
+  @id let id = autoincrement()
+  let name: String
+`)
+  const result = await migrate([schema], {
+    db: 'sqlite',
+    url: '/tmp/arc-applied-' + Date.now() + '.db',
+    dry: true,
+  })
+  assert.strictEqual(result.applied, false)
+})
+
+// ── dropTables: nonexistent DB returns empty dropped list ─────────────────────
+
+test('dropTables: nonexistent sqlite DB returns { dropped: [] }', async () => {
+  const schema = parseModel(`
+model Phantom
+  @id let id = autoincrement()
+  let name: String
+`)
+  const result = await dropTables([schema], {
+    db: 'sqlite',
+    url: '/tmp/arc-nonexistent-drop-' + Date.now() + '.db',
+  })
+  assert.deepStrictEqual(result, { dropped: [] })
 })
