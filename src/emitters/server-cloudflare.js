@@ -15,6 +15,7 @@
 const { JsEmitter } = require('./js')
 const { compileRoutes } = require('../compilers/route-compiler')
 const { emitAuthPreamble } = require('./auth-helpers')
+const { isValidRoute } = require('./route-utils')
 const { emitEmailPreamble } = require('./queue-helpers')
 const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
 const { routeHandlerName } = require('./route-utils')
@@ -31,7 +32,7 @@ class CloudflareEmitter {
 
   // Returns { worker: string, schema: string }
   emitProgram(program) {
-    const routes = program.declarations.filter(d => d.type === 'RouteDecl')
+    const routes = this._flattenGroups(program.declarations)
     const schemas = program.declarations.filter(d => d.type === 'ModelDecl')
     const jobs = program.declarations.filter(d => d.type === 'JobDecl')
     const hasAuth = routes.some(r => r.annotations?.some(a => a === '@auth' || a.startsWith('@auth(')))
@@ -77,6 +78,28 @@ class CloudflareEmitter {
     const schema = this.emitSchemaSql(schemas)
 
     return { worker, schema }
+  }
+
+  // Flatten RouteGroupDecl into RouteDecl[] — same logic as Bun emitter
+  _flattenGroups(declarations) {
+    const routes = []
+    for (const d of declarations) {
+      if (d.type === 'RouteDecl' && isValidRoute(d)) {
+        routes.push(d)
+      } else if (d.type === 'RouteGroupDecl') {
+        for (const route of d.routes) {
+          const path = d.prefix.replace(/\/$/, '') + route.path
+          const params = (path.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) ?? []).map(p => p.slice(1))
+          routes.push({
+            ...route,
+            path,
+            params,
+            annotations: [...(d.annotations ?? []), ...(route.annotations ?? [])],
+          })
+        }
+      }
+    }
+    return routes
   }
 
   // ── Preamble ──────────────────────────────────────────────────────────────────
@@ -345,10 +368,10 @@ export default {
     if (url.pathname === '/health') {
       try {
         let _dbOk = false
-        if (env.DB) { try { await Promise.race([env.DB.prepare('SELECT 1').first(), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]); _dbOk = true } catch {} }
+        if (env.DB) { try { await Promise.race([env.DB.prepare('SELECT 1').first(), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]); _dbOk = true } catch (_dbPingErr) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'health_db_probe_failed', msg: _dbPingErr?.message ?? String(_dbPingErr) })) } }
         else { _dbOk = true }
         return new Response(JSON.stringify({ status: _dbOk ? 'ok' : 'degraded', db: env.DB ? (_dbOk ? 'up' : 'down') : 'n/a', queue: env.QUEUE ? 'configured' : 'n/a', version: typeof __ARC_VERSION__ !== 'undefined' ? __ARC_VERSION__ : 'unknown', ts: new Date().toISOString() }), { status: _dbOk ? 200 : 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } })
-      } catch (_he) { return new Response(JSON.stringify({ status: 'error' }), { status: 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } }) }
+      } catch (_he) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'health_check_error', msg: _he?.message ?? String(_he) })); return new Response(JSON.stringify({ status: 'error' }), { status: 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' } }) }
     }
     const _rl = _checkRateLimit(req)
     if (_rl) return _rl
