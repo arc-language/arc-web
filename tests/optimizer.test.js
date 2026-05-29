@@ -547,3 +547,42 @@ describe('Optimizer - InterpolationNode substitution inside Element', () => {
     assert.equal(result[0].type, 'IfNode')
   })
 })
+
+// ── substituteExpr with non-primitive value ───────────────────────────────────
+
+describe('Optimizer.substituteExpr — non-primitive guard (line 287)', () => {
+  const { Optimizer } = require('../src/optimizer')
+  const N = require('../src/ast')
+
+  test('substituteExpr with array binding returns original expr (not inlined)', () => {
+    const opt = new Optimizer({})
+    const expr = N.Identifier('items', 0)
+    // If the resolved value is an array, substituteExpr must not inline it
+    // (would corrupt downstream emitters via String([object]) = "[object Object]")
+    const result = opt.substituteExpr(expr, { items: [1, 2, 3] })
+    assert.equal(result, expr, 'should return original expr for array value')
+  })
+
+  test('substituteExpr with object binding returns original expr', () => {
+    const opt = new Optimizer({})
+    const expr = N.Identifier('cfg', 0)
+    const result = opt.substituteExpr(expr, { cfg: { key: 'val' } })
+    assert.equal(result, expr, 'should return original expr for object value')
+  })
+
+  test('substituteExpr with string value inlines as Literal', () => {
+    const opt = new Optimizer({})
+    const expr = N.Identifier('name', 0)
+    const result = opt.substituteExpr(expr, { name: 'Alice' })
+    assert.equal(result.type, 'Literal', 'string value should be inlined as Literal')
+    assert.equal(result.value, 'Alice')
+  })
+
+  test('substituteExpr with null value inlines as Literal', () => {
+    const opt = new Optimizer({})
+    const expr = N.Identifier('nothing', 0)
+    const result = opt.substituteExpr(expr, { nothing: null })
+    assert.equal(result.type, 'Literal', 'null value should be inlined as Literal')
+    assert.equal(result.value, null)
+  })
+})

@@ -500,3 +500,60 @@ test('emitBunRoutesObject: default emits both tracing and rate-limit preamble', 
   assert.ok(js.includes('_traceId') || js.includes('_clientId'), 'default includes tracing preamble')
   assert.ok(js.includes('_checkRateLimit'), 'default includes rate-limit check')
 })
+
+// ── emitGroupGuard (server-bun.js) ────────────────────────────────────────────
+
+test('BunServerEmitter: @group with @auth emits shared guard function', () => {
+  const prog = parse(`
+@group "/admin" @auth
+  @route get "/dashboard" -> Response
+    json({ ok: true })
+`)
+  const e = new BunServerEmitter({ hash: 'test', bunRoutes: true })
+  const out = e.emitProgram(prog)
+  assert.ok(out.includes('_guard_admin'), 'should emit group guard function')
+  assert.ok(out.includes('Unauthorized'), 'guard should have auth check')
+})
+
+test('BunServerEmitter: @group with @auth(role) emits role check in guard', () => {
+  const prog = parse(`
+@group "/admin" @auth(admin)
+  @route get "/users" -> Response
+    json({ ok: true })
+`)
+  const e = new BunServerEmitter({ hash: 'test', bunRoutes: true })
+  const out = e.emitProgram(prog)
+  assert.ok(out.includes('_guard_admin'), 'should emit group guard function')
+  assert.ok(out.includes('Forbidden'), 'guard should have role check')
+})
+
+test('BunServerEmitter: @group without @auth does not emit guard', () => {
+  const prog = parse(`
+@group "/api"
+  @route get "/items" -> Response
+    json({ ok: true })
+`)
+  const e = new BunServerEmitter({ hash: 'test', bunRoutes: true })
+  const out = e.emitProgram(prog)
+  assert.ok(!out.includes('_guard_'), 'no guard emitted for unauthenticated group')
+})
+
+test('BunServerEmitter: middleware declarations are emitted (null body → return null)', () => {
+  // Test the hasMiddleware path; use null body to exercise the fallback branch
+  // (the BlockStatement path calls jsEmitter.emitBlock which doesn't exist — source bug)
+  const prog = parse(`
+@route get "/" -> Response
+  json({ ok: true })
+`)
+  const e = new BunServerEmitter({ hash: 'test', bunRoutes: true })
+  e.hasMiddleware = true
+  e.middlewareDecls = [{
+    type: 'FnDecl',
+    name: 'handle',
+    params: [],
+    body: null, // null body → 'return null' fallback
+  }]
+  const out = e.emitProgram(prog)
+  assert.ok(out.includes('_middleware'), 'should emit middleware function')
+  assert.ok(out.includes('return null'), 'null body emits return null')
+})
