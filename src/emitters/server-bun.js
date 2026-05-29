@@ -20,6 +20,7 @@ const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
 const { routeHandlerName } = require('./route-utils')
 const { SHARED_RESPONSE_HELPERS } = require('./emitter-preamble')
 const { emitRouteBody } = require('./route-body-emitter')
+const { profilerPreamble, profilerDbWrapper } = require('../profiler/hooks')
 
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
@@ -31,6 +32,7 @@ class BunServerEmitter {
     this.noTracing = options.noTracing ?? false
     this.bunRoutes = options.bunRoutes ?? false
     this.cors = options.cors ?? null
+    this.profile = options.profile ?? false
     this.jsEmitter = new JsEmitter(options)
   }
 
@@ -40,13 +42,17 @@ class BunServerEmitter {
     const routes = program.declarations.filter(d => d.type === 'RouteDecl')
     const schemas = program.declarations.filter(d => d.type === 'ModelDecl')
     const jobs = program.declarations.filter(d => d.type === 'JobDecl')
-    const hasAuth = routes.some(r => r.annotations?.includes('@auth'))
+    const hasAuth = routes.some(r => r.annotations?.find(a => a === '@auth' || a.startsWith('@auth(')))
 
     if (routes.length === 0 && schemas.length === 0) return ''
 
     const parts = []
 
+    if (this.profile) parts.push(profilerPreamble())
+
     parts.push(this.emitPreamble(schemas))
+
+    if (this.profile && !this.isPg) parts.push(profilerDbWrapper())
     if (hasAuth) parts.push(emitAuthPreamble(this.options.auth ?? {}))
 
     // Queue + email always emitted (tiny, zero deps)
@@ -666,6 +672,36 @@ _printBanner(_server.port)
 `.trim()
     }
 
+    const profilerRouteCheck = this.profile
+      ? `\n    if (_pathname.startsWith('/_arc/profiler')) return _arc_p_handle(req, _pathname)`
+      : ''
+
+    const dispatchCall = this.profile
+      ? `const _arc_p_t0 = performance.now()
+    const _arc_p_store = { queries: [], ts: Date.now() }
+    const _arc_p_resp = await _arc_p_als.run(_arc_p_store, async () => _dispatch(req, _pathname))
+    const _arc_p_total = +(performance.now() - _arc_p_t0).toFixed(3)
+    const _arc_p_rqh = _arc_p_redact(Object.fromEntries(req.headers))
+    const _arc_p_rsh = _arc_p_redact(Object.fromEntries(_arc_p_resp.headers))
+    let _arc_p_mem = 0; try { _arc_p_mem = process.memoryUsage().rss } catch {}
+    queueMicrotask(() => _arc_p_push({
+      id: (_arc_p_store.ts % 2176782336).toString(36),
+      ts: _arc_p_store.ts,
+      method: req.method,
+      path: _pathname,
+      route: _pathname,
+      status: _arc_p_resp.status ?? 200,
+      total_ms: _arc_p_total,
+      queries: _arc_p_store.queries,
+      mem: _arc_p_mem,
+      reqHeaders: _arc_p_rqh,
+      resHeaders: _arc_p_rsh
+    }))
+    return _arc_p_resp`
+      : `return _dispatch(req, _pathname)`
+
+    const fetchKeyword = this.profile ? 'async fetch' : 'fetch'
+
     return `
 ${traceHoist}
 
@@ -674,7 +710,7 @@ ${bannerFn}
 ${envBlock}// Start Bun server
 const _server = Bun.serve({
   port: ${port},
-  fetch(req) {
+  ${fetchKeyword}(req) {
     ${traceSetup.trim() ? traceSetup.trim() + '\n    ' : ''}// Fast pathname extraction — avoids full URL parse (new URL() overhead)
     const _u = req.url
     const _s = _u.indexOf('/', 8)
@@ -684,13 +720,15 @@ const _server = Bun.serve({
       try {
     ${healthBody}
       } catch (_he) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'health_check_error', msg: _he?.message ?? String(_he) })); return _json({ status: 'error' }, 503, { 'Cache-Control': 'no-store, no-cache' }) }
-    }
+    }${profilerRouteCheck}
     ${corsOptionsHandler.trim() ? corsOptionsHandler.trim() + '\n    ' : ''}${pgGuard.trim()}
     ${rlCheck.trim()}
-    return _dispatch(req, _pathname)
+    ${dispatchCall}
   }
 })
 _printBanner(_server.port)
+${this.profile ? `console.log('  \\x1b[36marc: profiler\\x1b[0m  \\x1b[2mhttp://localhost:' + _server.port + '/_arc/profiler\\x1b[0m')
+console.warn('  \\x1b[33marc: --profile is for development only — disable in production\\x1b[0m')` : ''}
 `.trim()
   }
 }

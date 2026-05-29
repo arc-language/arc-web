@@ -23,7 +23,7 @@ const { buildServer: _buildServerImpl } = require('./commands/build-server')
 const { serve: _serveImpl, createFileWatcher } = require('./commands/serve')
 const { dbCommand: _dbCommandImpl, runSeed: _runSeedImpl } = require('./commands/db')
 const { scaffold: _scaffoldImpl, scaffoldAll: _scaffoldAllImpl, scaffoldBlock: _scaffoldBlockImpl, scaffoldBlockInit: _scaffoldBlockInitImpl } = require('./commands/scaffold')
-const { newProject } = require('./new-command')
+const { newProject, detectPackageManager, runWizard } = require('./new-command')
 const { emit: emitSiteMeta } = require('./emitters/site-meta')
 const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
 const { RED, GREEN, YELLOW, CYAN, DIM, RESET, formatError, showSourceContext } = require('./utils/errors')
@@ -115,13 +115,20 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
       ...(imp.defaultName ? [imp.defaultName] : []),
     ])
 
+    // When importing a widget, also bring in supporting FnDecl/StateDecl from the same file.
+    // Widget libraries define helpers alongside their widgets; importing a widget implicitly
+    // requires those helpers (e.g. the fireworks engine that the Fireworks widget depends on).
+    const importingWidget = importedProgram.declarations.some(d =>
+      d.type === 'WidgetDecl' && (wantedNames.size === 0 || wantedNames.has(d.name))
+    )
+
     for (const decl of importedProgram.declarations) {
       // Always include widgets and top-level fns that were imported by name
       if (decl.type === 'WidgetDecl' && (wantedNames.size === 0 || wantedNames.has(decl.name))) {
         merged.push(decl)
-      } else if (decl.type === 'FnDecl' && wantedNames.has(decl.name)) {
+      } else if (decl.type === 'FnDecl' && (wantedNames.has(decl.name) || importingWidget)) {
         merged.push(decl)
-      } else if (decl.type === 'StateDecl' && wantedNames.has(decl.name)) {
+      } else if (decl.type === 'StateDecl' && (wantedNames.has(decl.name) || importingWidget)) {
         merged.push(decl)
       } else if (decl.type === 'DesignBlock') {
         // Always merge design blocks (they define CSS tokens/globals, no name to match)
@@ -148,6 +155,70 @@ function _resolveImageFormats(program) {
     }
   }
   return undefined
+}
+
+function _collectCssImports(program) {
+  const pkgs = []
+  function walk(nodes) {
+    if (!Array.isArray(nodes)) return
+    for (const n of nodes) {
+      if (!n || typeof n !== 'object') continue
+      if (n.type === 'CssImport') { pkgs.push(n.pkg); continue }
+      if (n.body) walk(Array.isArray(n.body) ? n.body : [n.body])
+      if (n.children) walk(n.children)
+      if (n.declarations) walk(n.declarations)
+    }
+  }
+  walk(program.declarations)
+  return pkgs
+}
+
+function _resolveCssFile(cssPath, visited = new Set()) {
+  if (visited.has(cssPath)) return ''
+  visited.add(cssPath)
+  let src
+  try { src = fs.readFileSync(cssPath, 'utf8') } catch { return '' }
+  const dir = path.dirname(cssPath)
+  // Resolve @import "..." or @import './...' statements inline
+  return src.replace(/@import\s+["']([^"']+)["'];?/g, (_, imp) => {
+    if (imp.startsWith('http://') || imp.startsWith('https://')) return ''
+    const resolved = path.resolve(dir, imp)
+    return _resolveCssFile(resolved, visited)
+  })
+}
+
+function _resolveCssPackages(pkgs, rootDir) {
+  const parts = []
+  for (const pkg of pkgs) {
+    // Walk up from rootDir to find node_modules containing the package
+    let dir = rootDir
+    let cssPath = null
+    for (let i = 0; i < 8; i++) {
+      const candidate = path.join(dir, 'node_modules', pkg)
+      if (fs.existsSync(candidate)) {
+        // Resolve main CSS file via package.json style/main fields or index.css
+        let entry = null
+        try {
+          const pkgJson = JSON.parse(fs.readFileSync(path.join(candidate, 'package.json'), 'utf8'))
+          entry = pkgJson.style ?? pkgJson.main ?? null
+          if (entry && !entry.endsWith('.css')) entry = null
+        } catch {}
+        if (!entry) entry = 'index.css'
+        cssPath = path.join(candidate, entry)
+        break
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+    if (!cssPath || !fs.existsSync(cssPath)) {
+      console.warn(`arc: warning: @css "${pkg}" — package not found in node_modules`)
+      continue
+    }
+    const resolved = _resolveCssFile(cssPath)
+    if (resolved) parts.push(resolved)
+  }
+  return parts.length > 0 ? parts.join('\n') : null
 }
 
 async function compile(source, filename = '<input>', options = {}) {
@@ -208,7 +279,7 @@ async function compile(source, filename = '<input>', options = {}) {
   }
 
   // 6. HTML emit (also collects stateBindings + eventBindings)
-  const htmlEmitter = new HtmlEmitter({ hash, buildContext, imgPipeline })
+  const htmlEmitter = new HtmlEmitter({ hash, buildContext, imgPipeline, allowRaw: true })
   const html = htmlEmitter.emitProgram(program)
 
   // 7. CSS emit
@@ -217,6 +288,14 @@ async function compile(source, filename = '<input>', options = {}) {
   // Tree-shake unused base utility classes (sr-only, skip-link, row, col, etc.)
   // based on what's actually referenced in the emitted HTML.
   css = treeshakeBaseCss(css, html)
+
+  // 7b. @css package imports — resolve npm CSS from node_modules and bundle inline
+  const cssImports = _collectCssImports(program)
+  if (cssImports.length > 0) {
+    const rootDir = options.rootDir ?? options.projectDir ?? path.dirname(path.resolve(filename))
+    const bundled = _resolveCssPackages(cssImports, rootDir)
+    if (bundled) css = bundled + '\n' + css
+  }
 
   // 8. @server function compilation
   const serverEmitter = new ServerEmitter({ hash })
@@ -925,16 +1004,43 @@ pre{background:#f3f3f3;padding:16px;border-radius:8px;overflow:auto;font-size:13
 
 // H1: Watcher setup for the dev server (module-scope helper)
 // Watches absDir recursively for .arc changes and calls onChange(filePath).
+// Uses per-directory fs.watch instances because fs.watch({ recursive: true })
+// is unreliable on Linux (inotify requires each dir to be watched explicitly).
 function _startWatcher(absDir, onChange) {
+  const watchers = []
+
+  function watchDir(dir) {
+    try {
+      const w = fs.watch(dir, (event, filename) => {
+        if (!filename) return
+        const full = path.join(dir, filename)
+        const rel = path.relative(absDir, full)
+        onChange(rel)
+      })
+      w.on('error', () => {}) // ignore errors on individual dirs
+      watchers.push(w)
+    } catch {}
+  }
+
+  function scanAndWatch(dir) {
+    watchDir(dir)
+    try {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.isDirectory() && entry.name !== 'dist' && entry.name !== 'node_modules' && !entry.name.startsWith('.')) {
+          scanAndWatch(path.join(dir, entry.name))
+        }
+      }
+    } catch {}
+  }
+
   try {
-    const watcher = fs.watch(absDir, { recursive: true }, (event, changedFile) => {
-      if (changedFile) onChange(changedFile)
-    })
-    watcher.on('error', e => console.error(`arc: watcher error: ${e.message}`))
+    scanAndWatch(absDir)
   } catch (e) {
     console.error(`arc: could not start file watcher: ${e.message}`)
     console.error('arc: automatic rebuilds disabled — run \'arc build\' manually after changes')
   }
+
+  return { close: () => watchers.forEach(w => { try { w.close() } catch {} }) }
 }
 
 async function dev(projectDir) {
@@ -1530,6 +1636,7 @@ function parseServerFlags(args) {
   if (args.includes('--no-tracing')) flags.noTracing = true
   if (args.includes('--bun-routes')) flags.bunRoutes = true
   if (args.includes('--watch')) flags.watch = true
+  if (args.includes('--profile')) flags.profile = true
   // --cors [origin] — optional value, defaults to '*'
   const corsIdx = args.indexOf('--cors')
   if (corsIdx !== -1) {
@@ -1581,17 +1688,28 @@ async function main() {
     }
 
     case 'new': {
-      if (!args[0]) {
-        console.error('arc new <name> [--template default|counter|blog]')
-        process.exit(1)
-      }
       const tmplIdx = args.indexOf('--template')
+      const pmIdx = args.indexOf('--pm')
       if (tmplIdx !== -1 && !args[tmplIdx + 1]) {
         console.error('arc: --template requires a value (default|counter|blog|api|cms)')
         process.exit(1)
       }
-      const template = tmplIdx !== -1 ? args[tmplIdx + 1] : 'default'
-      newProject(args[0], template)
+      const template = tmplIdx !== -1 ? args[tmplIdx + 1] : undefined
+      const pm = pmIdx !== -1 ? args[pmIdx + 1] : undefined
+      const flagValues = new Set()
+      if (tmplIdx !== -1 && args[tmplIdx + 1]) flagValues.add(args[tmplIdx + 1])
+      if (pmIdx !== -1 && args[pmIdx + 1]) flagValues.add(args[pmIdx + 1])
+      const name = args.find(a => !a.startsWith('--') && !flagValues.has(a))
+      const install = args.includes('--install') ? true : args.includes('--no-install') ? false : undefined
+
+      if (name && template) {
+        await newProject(name, template, { pm: pm ?? detectPackageManager(), install: install ?? false })
+      } else if (process.stdin.isTTY) {
+        await runWizard({ name, template, pm, install })
+      } else {
+        console.error('arc new <name> [--template default|counter|blog|api|cms]')
+        process.exit(1)
+      }
       break
     }
 

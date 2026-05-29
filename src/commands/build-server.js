@@ -142,6 +142,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     noTracing: flags.noTracing ?? false,
     bunRoutes: flags.bunRoutes ?? false,
     cors: flags.cors ?? null,
+    profile: flags.profile ?? false,
   })
   const serverJs = emitter.emitProgram(mergedProgram)
 
