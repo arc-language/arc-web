@@ -301,24 +301,7 @@ async function compile(source, filename = '<input>', options = {}) {
   program = optimizer.optimizeProgram(program)
 
   // 5b. Image pipeline: collect <img src=...> refs, run sharp-based pre-pass.
-  // Pipeline is a no-op when sharp is unavailable (returns null from emitPicture);
-  // emitter then falls back to plain <img>.
-  const imgRefs = collectImgRefs(program)
-  let imgPipeline = null
-  if (imgRefs.length > 0 && options.distDir) {
-    const formats = _resolveImageFormats(program)
-    if (options.sharedImgPipeline) {
-      // Multi-page build: reuse the shared pipeline so concurrent pages don't race on the same image
-      imgPipeline = options.sharedImgPipeline
-    } else {
-      imgPipeline = new ImagePipeline({
-        srcDir: projectDir,
-        outDir: options.distDir,
-        ...(formats ? { formats } : {}),
-      })
-    }
-    await imgPipeline.processAll(imgRefs)
-  }
+  const imgPipeline = await _setupImagePipeline(program, projectDir, options)
 
   // 6. HTML emit (also collects stateBindings + eventBindings)
   const htmlEmitter = new HtmlEmitter({ hash, buildContext, imgPipeline, allowRaw: true })
@@ -397,6 +380,21 @@ function treeshakeBaseCss(css, html) {
     css = css.replace(re, '')
   }
   return css
+}
+
+// Pipeline is a no-op when sharp is unavailable (returns null from emitPicture);
+// emitter then falls back to plain <img>.
+async function _setupImagePipeline(program, projectDir, options) {
+  const imgRefs = collectImgRefs(program)
+  if (imgRefs.length === 0 || !options.distDir) return null
+  const formats = _resolveImageFormats(program)
+  const pipeline = options.sharedImgPipeline ?? new ImagePipeline({
+    srcDir: projectDir,
+    outDir: options.distDir,
+    ...(formats ? { formats } : {}),
+  })
+  await pipeline.processAll(imgRefs)
+  return pipeline
 }
 
 function composeClientJs(reactive, stubs, realtime) {
