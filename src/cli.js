@@ -55,6 +55,33 @@ const _ORST   = _TTY ? '\x1b[0m'  : ''
 
 // visited: Map<importPath, importedProgram> - caches parsed+resolved programs.
 // Prevents re-parsing and infinite recursion, but still processes named exports on repeat imports.
+// Resolve an import source string to an absolute path within topLevelRoot.
+// Returns the resolved path, or null (with a console.warn) if not found or out-of-bounds.
+// Defense: uses fs.realpathSync to prevent symlink traversal outside the project root.
+function _resolveImportPath(src, projectDir, filename, topLevelRoot) {
+  const fileDir = path.dirname(path.resolve(projectDir, filename))
+  const candidates = [
+    path.resolve(projectDir, src),
+    path.resolve(projectDir, src + '.arc'),
+    path.resolve(projectDir, src.replace(/\.arc$/, '') + '.arc'),
+    path.resolve(fileDir, src),
+    path.resolve(fileDir, src + '.arc'),
+  ]
+  const importPath = candidates.find(p => fs.existsSync(p))
+  if (!importPath) {
+    console.warn(`arc: warning: import not found: ${src}`)
+    return null
+  }
+  let realImportPath
+  try { realImportPath = fs.realpathSync(importPath) } catch { realImportPath = importPath }
+  const realTopLevelRoot = (() => { try { return fs.realpathSync(topLevelRoot) } catch { return topLevelRoot } })()
+  if (!realImportPath.startsWith(realTopLevelRoot + path.sep) && realImportPath !== realTopLevelRoot) {
+    console.warn(`arc: warning: import escapes project root, skipping: ${src}`)
+    return null
+  }
+  return importPath
+}
+
 async function resolveImports(program, projectDir, filename, visited, rootDir, depsOut) {
   const topLevelRoot = rootDir ?? path.resolve(projectDir)
   const imports = program.declarations.filter(d => d.type === 'ImportDecl')
@@ -70,30 +97,8 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
     const src = imp.source
     if (!src || src.startsWith('arc/')) continue // stdlib - not a file
 
-    const fileDir = path.dirname(path.resolve(projectDir, filename))
-    const candidates = [
-      path.resolve(projectDir, src),
-      path.resolve(projectDir, src + '.arc'),
-      path.resolve(projectDir, src.replace(/\.arc$/, '') + '.arc'),
-      path.resolve(fileDir, src),
-      path.resolve(fileDir, src + '.arc'),
-    ]
-    const importPath = candidates.find(p => fs.existsSync(p))
-    if (!importPath) {
-      console.warn(`arc: warning: import not found: ${src}`)
-      continue
-    }
-
-    // Prevent directory traversal and symlink traversal outside original project root.
-    // path.resolve() does NOT follow symlinks; fs.realpathSync() does - use it to
-    // canonicalize before the boundary check so symlinks can't escape the project root.
-    let realImportPath
-    try { realImportPath = fs.realpathSync(importPath) } catch { realImportPath = importPath }
-    const realTopLevelRoot = (() => { try { return fs.realpathSync(topLevelRoot) } catch { return topLevelRoot } })()
-    if (!realImportPath.startsWith(realTopLevelRoot + path.sep) && realImportPath !== realTopLevelRoot) {
-      console.warn(`arc: warning: import escapes project root, skipping: ${src}`)
-      continue
-    }
+    const importPath = _resolveImportPath(src, projectDir, filename, topLevelRoot)
+    if (!importPath) continue
 
     // Use cached program if already parsed; null means currently resolving (circular).
     let importedProgram
@@ -920,6 +925,26 @@ const RELOAD_SCRIPT = `<script>
 })()
 </script>`
 
+function _handleDevReload(req, res, reloadClients) {
+  const origin = req.headers.origin ?? ''
+  const acao = _LOCALHOST_RE.test(origin) ? origin : 'http://localhost'
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': acao,
+  })
+  res.write('retry: 1000\n\n')
+  let page = '/'
+  try { page = new URL(req.url, 'http://x').searchParams.get('page') || '/' } catch {}
+  if (!reloadClients.has(page)) reloadClients.set(page, new Set())
+  const _clients = reloadClients.get(page)
+  _clients.add(res)
+  const _cleanup = () => { _clients.delete(res); if (_clients.size === 0) reloadClients.delete(page) }
+  req.on('close', _cleanup)
+  res.on('error', _cleanup)
+}
+
 // H1 / H3: HTTP request handler for the dev server (module-scope helper)
 function _createDevRequestHandler(distDir, reloadClients) {
   return async function _handleDevRequest(req, res) {
@@ -930,23 +955,7 @@ function _createDevRequestHandler(distDir, reloadClients) {
     }
 
     if (req.url?.startsWith('/_arc/reload')) {
-      const origin = req.headers.origin ?? ''
-      const acao = _LOCALHOST_RE.test(origin) ? origin : 'http://localhost'
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': acao,
-      })
-      res.write('retry: 1000\n\n')
-      let page = '/'
-      try { page = new URL(req.url, 'http://x').searchParams.get('page') || '/' } catch {}
-      if (!reloadClients.has(page)) reloadClients.set(page, new Set())
-      const _clients = reloadClients.get(page)
-      _clients.add(res)
-      const _cleanup = () => { _clients.delete(res); if (_clients.size === 0) reloadClients.delete(page) }
-      req.on('close', _cleanup)
-      res.on('error', _cleanup)
+      _handleDevReload(req, res, reloadClients)
       return
     }
 
