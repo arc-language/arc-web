@@ -16,6 +16,7 @@ const {
   findArcFiles,
   newProject,
 } = _internal
+const { validateName, getTemplate } = require('../src/new-command')
 
 const TMPDIR = os.tmpdir()
 
@@ -417,6 +418,62 @@ describe('cli: newProject', () => {
       // Should be lowercased, special chars replaced with -
       assert.ok(/^[a-z0-9-]+$/.test(pkg.name), `Expected valid name, got: ${pkg.name}`)
     } finally { rmDir(dir) }
+  })
+
+  test('creates api template with nested server/ directories', () => {
+    const dir = mkTmpDir('newapi')
+    try {
+      const cwd = process.cwd()
+      process.chdir(dir)
+      try { newProject('my-api', 'api', { pm: 'npm' }) } finally { process.chdir(cwd) }
+      assert.ok(fs.existsSync(path.join(dir, 'my-api', 'server', 'schemas', 'post.arc')))
+      assert.ok(fs.existsSync(path.join(dir, 'my-api', 'server', 'routes', 'posts.arc')))
+      assert.ok(fs.existsSync(path.join(dir, 'my-api', 'server', 'jobs', 'notify.arc')))
+    } finally { rmDir(dir) }
+  })
+
+  test('creates cms template with arc.config.json in .gitignore', () => {
+    const dir = mkTmpDir('newcms')
+    try {
+      const cwd = process.cwd()
+      process.chdir(dir)
+      try { newProject('my-cms', 'cms', { pm: 'npm' }) } finally { process.chdir(cwd) }
+      assert.ok(fs.existsSync(path.join(dir, 'my-cms', 'arc.config.json')))
+      const gi = fs.readFileSync(path.join(dir, 'my-cms', '.gitignore'), 'utf8')
+      assert.ok(gi.includes('arc.config.json'), '.gitignore should list arc.config.json')
+    } finally { rmDir(dir) }
+  })
+
+  test('api template start script uses bun when pm is bun', () => {
+    const files = getTemplate('my-api', 'api', 'bun')
+    const pkg = JSON.parse(files['package.json'])
+    assert.equal(pkg.scripts.start, 'bun dist/server.js')
+  })
+
+  test('api template start script uses node when pm is npm', () => {
+    const files = getTemplate('my-api', 'api', 'npm')
+    const pkg = JSON.parse(files['package.json'])
+    assert.equal(pkg.scripts.start, 'node dist/server.js')
+  })
+
+  test('validateName: rejects empty string', () => {
+    assert.ok(validateName('') !== null)
+  })
+
+  test('validateName: rejects name with spaces', () => {
+    assert.ok(validateName('my app') !== null)
+  })
+
+  test('validateName: rejects leading dot', () => {
+    assert.ok(validateName('.hidden') !== null)
+  })
+
+  test('validateName: rejects all-special-chars (sanitizes to empty)', () => {
+    assert.ok(validateName('!!!') !== null)
+  })
+
+  test('validateName: rejects name longer than 214 chars', () => {
+    assert.ok(validateName('a'.repeat(215)) !== null)
   })
 })
 

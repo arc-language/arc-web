@@ -1026,4 +1026,4 @@ async function runWizard(presets = {}) {
   await newProject(name, template, { pm, install: doInstall })
 }
 
-module.exports = { newProject, detectPackageManager, runWizard }
+module.exports = { newProject, detectPackageManager, detectAvailablePMs, validateName, getTemplate, runWizard }
