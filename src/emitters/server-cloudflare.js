@@ -290,9 +290,11 @@ async function ${name}(req, params, env) {
 
   emitEmailHelper() {
     return `
-// Email helper - compiled once, shared across all handlers
+// Email helper - WeakMap-cached per env so it's only allocated once per isolate lifetime
+const _emailCache = new WeakMap()
 function _makeEmail(env) {
-  return {
+  if (_emailCache.has(env)) return _emailCache.get(env)
+  const _email = {
     send: async (opts) => {
       const apiKey = env.RESEND_API_KEY
       if (!apiKey) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:email] RESEND_API_KEY binding not set — email not sent' })); return }
@@ -307,6 +309,8 @@ function _makeEmail(env) {
       return { ok: true, id: _body?.id }
     }
   }
+  _emailCache.set(env, _email)
+  return _email
 }`.trim()
   }
 
