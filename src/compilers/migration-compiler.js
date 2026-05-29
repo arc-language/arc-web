@@ -136,7 +136,7 @@ async function getExistingColumnsPg(connectionString, tableNames = []) {
 }
 
 // Apply migration SQL to SQLite.
-// NOTE: SQLite DDL (ALTER TABLE, CREATE TABLE) is NOT transactional in WAL mode — a ROLLBACK
+// NOTE: SQLite DDL (ALTER TABLE, CREATE TABLE) is NOT transactional in WAL mode - a ROLLBACK
 // after a DDL statement will NOT undo schema changes. This transaction provides atomicity only
 // for DML statements and guards the migration log. For DDL safety, migrations should be
 // additive-only (no DROP COLUMN, no rename) until SQLite 3.45+ strict-mode is confirmed.
@@ -154,7 +154,7 @@ async function applyMigrationSqlite(statements, dbPath) {
   const db = new Database(dbPath)
   try {
     // db.transaction wraps DDL+DML in a proper savepoint; manual BEGIN/COMMIT
-    // does not protect DDL in WAL mode — schema changes survive a ROLLBACK.
+    // does not protect DDL in WAL mode - schema changes survive a ROLLBACK.
     db.transaction(() => {
       for (const stmt of statements) db.exec(stmt)
     })()
@@ -268,7 +268,7 @@ async function dropTables(schemas, opts = {}) {
 
   const db = new Database(dbUrl)
   try {
-    // Check all existing tables — if only model tables + sqlite internals remain, we can drop safely
+    // Check all existing tables - if only model tables + sqlite internals remain, we can drop safely
     const existing = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(r => r.name)
     const modelSet = new Set(tableNames)
     const toDrop = existing.filter(t => modelSet.has(t))

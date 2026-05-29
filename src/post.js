@@ -25,11 +25,33 @@ class PostProcessor {
   }
 
   // ── Critical CSS ──────────────────────────────────────────────────────────
-  //
-  // Always inline all CSS into a <style> tag. This guarantees styles apply
-  // instantly with no external file dependency — works over file://, HTTP,
-  // CDN, and any other delivery mechanism without timing or loading issues.
 
+  // Splits CSS into { critical, rest } using @layer base as the critical boundary.
+  // If no @layer base marker is present, all CSS is returned as critical with empty rest.
+  splitCriticalCss(css) {
+    const marker = '@layer base'
+    const idx = css.indexOf(marker)
+    if (idx === -1) return { critical: css, rest: '' }
+
+    // Walk forward from marker to find the matching closing brace
+    let depth = 0
+    let end = idx
+    for (let i = idx; i < css.length; i++) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}') {
+        depth--
+        if (depth === 0) { end = i + 1; break }
+      }
+    }
+
+    const critical = css.slice(idx, end).trim()
+    const rest = (css.slice(0, idx) + css.slice(end)).trim()
+    return { critical, rest }
+  }
+
+  // Inlines CSS into the HTML. For CSS below criticalCssThreshold (bytes), inlines
+  // everything. For larger CSS, splits critical (@layer base) inline and defers the
+  // rest via <link rel="preload"> with an onload swap and <noscript> fallback.
   inlineCriticalCss(html, css) {
     if (!css || !css.trim()) return { html, css, cssInlined: false }
 
@@ -37,13 +59,29 @@ class PostProcessor {
     const safeInline = (s) => s.replace(/<\/style>/gi, '<\\/style>')
 
     const minified = this.minifyCss(css)
-    const inlined = html
-      .replace('<link rel="stylesheet" href="styles.css">', `<style data-arc-css>${safeInline(minified)}</style>`)
+    const threshold = this.options.criticalCssThreshold
+
+    let replacement
+    let cssInlined = true
+    if (threshold != null && minified.length > threshold) {
+      const { critical, rest } = this.splitCriticalCss(minified)
+      const criticalTag = critical ? `<style>${safeInline(critical)}</style>` : ''
+      const preloadBlock = rest
+        ? `<link rel="preload" href="styles.css" as="style" onload="this.onload=null;this.rel='stylesheet'">` +
+          `<noscript><link rel="stylesheet" href="styles.css"></noscript>`
+        : ''
+      replacement = criticalTag + preloadBlock
+      cssInlined = false
+    } else {
+      replacement = `<style data-arc-css>${safeInline(minified)}</style>`
+    }
+
+    const inlined = html.replace('<link rel="stylesheet" href="styles.css">', replacement)
     if (inlined === html) {
       process.stderr.write('[arc] Warning: CSS link tag not found in HTML — styles may not be inlined\n')
       return { html, css: minified, cssInlined: false }
     }
-    return { html: inlined, css: minified, cssInlined: true }
+    return { html: inlined, css: minified, cssInlined }
   }
 
   // Conservative CSS minifier - strips comments, collapses whitespace, removes

@@ -1,6 +1,6 @@
 'use strict'
 
-const _SAFE_BINARY_OPS = new Set(['+','-','*','/','%','**','==','!=','<','>','<=','>=','===','!==','instanceof','in'])
+const _SAFE_BINARY_OPS = new Set(['+','-','*','/','%','**','==','!=','<','>','<=','>=','===','!==','instanceof','in','&','|','^','<<','>>'])
 const _SAFE_UNARY_OPS = new Set(['!','-','+','~','typeof','void'])
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 function _assertSafeIdent(val, context) {
@@ -398,7 +398,7 @@ class JsEmitter {
   // ── Expression emission ────────────────────────────────────────────────────
 
   emitRuntimeExpr(exprStr) {
-    // Memoize: same expression string produces same output — avoids double-regex per DOM update
+    // Memoize: same expression string produces same output - avoids double-regex per DOM update
     this._runtimeExprCache ??= new Map()
     if (this._runtimeExprCache.has(exprStr)) return this._runtimeExprCache.get(exprStr)
     // Convert @name → _name, and known state/computed identifiers → _name
@@ -471,8 +471,19 @@ class JsEmitter {
         return `(${this.emitExpr(expr.left)}??${this.emitExpr(expr.right)})`
 
       case 'CallExpr': {
-        const callee = this.emitExpr(expr.callee)
         const args = (expr.args ?? []).map(a => this.emitExpr(a)).join(',')
+        // new ClassName(args) is encoded as CallExpr(MemberExpr(null, Identifier(name)), args)
+        if (expr.callee?.type === 'MemberExpr' && expr.callee.object === null) {
+          const className = expr.callee.property?.name ?? expr.callee.property?.value ?? ''
+          _assertSafeIdent(className, 'new expr class name')
+          return `new ${className}(${args})`
+        }
+        const calleeType = expr.callee?.type
+        const callee = this.emitExpr(expr.callee)
+        // Arrow/function expressions must be wrapped in parens before being called
+        if (calleeType === 'ArrowFn' || calleeType === 'FnExpr') {
+          return `(${callee})(${args})`
+        }
         return `${callee}(${args})`
       }
 
@@ -550,7 +561,7 @@ class JsEmitter {
     if (!expr.arms || expr.arms.length === 0) return 'undefined'
     const id = (this._matchCounter = (this._matchCounter ?? 0) + 1)
     const subj = `_ms${id}`
-    const tmp  = `_mr${id}`
+    const matchRef = `_mr${id}`
     const sentinel = `_mn${id}` // unique no-match sentinel avoids collision with undefined arm results
     const arms = (expr.arms ?? []).map(arm => {
       const body = this.emitExpr(arm.body)
@@ -566,13 +577,13 @@ class JsEmitter {
       const cond = this.emitPattern(arm.pattern, subj)
       return `(${cond}?(${body}):${sentinel})`
     })
-    // Chain right-to-left; assign each arm to tmp so it's only evaluated once
+    // Chain right-to-left; assign each arm to matchRef so it's only evaluated once
     const chain = arms.reduceRight((acc, cur, i) => {
       if (i === arms.length - 1) return cur // wildcard/binding: no sentinel check needed
-      return `((${tmp}=${cur})!==${sentinel}?${tmp}:${acc})`
+      return `((${matchRef}=${cur})!==${sentinel}?${matchRef}:${acc})`
     })
-    // Outer IIFE: subj=subject, tmp=arm scratch, sentinel=Symbol() for no-match
-    return `((${subj},${tmp},${sentinel})=>${chain})(${this.emitExpr(expr.subject)},undefined,Symbol())`
+    // Outer IIFE: subj=subject, matchRef=arm scratch, sentinel=Symbol() for no-match
+    return `((${subj},${matchRef},${sentinel})=>${chain})(${this.emitExpr(expr.subject)},undefined,Symbol())`
   }
 
   emitPattern(pattern, subj) {

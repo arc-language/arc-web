@@ -552,7 +552,7 @@ describe('Checker: direct AST construction for dead-code path coverage', () => {
   const { Checker } = require('../src/checker')
   const N = require('../src/ast')
 
-  test('Scope.get walks up parent chain when key not in own', () => {
+  test('checker resolves outer-scope variable in nested BlockStatement inside @server fn', () => {
     // Test the Scope class directly
     const checker = new Checker('test')
     // Build nested scopes through checkBody indirectly

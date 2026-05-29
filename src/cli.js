@@ -17,12 +17,11 @@ const { RealtimeEmitter } = require('./realtime/client')
 const { Checker } = require('./checker')
 const { postProcess, PostProcessor } = require('./post')
 const { SourceMapBuilder } = require('./sourcemap')
-const { CloudflareEmitter } = require('./emitters/server-cloudflare')
-const { generateWranglerToml } = require('./compilers/wrangler-compiler')
 const { buildServer: _buildServerImpl } = require('./commands/build-server')
 const { serve: _serveImpl, createFileWatcher } = require('./commands/serve')
-const { dbCommand: _dbCommandImpl, runSeed: _runSeedImpl } = require('./commands/db')
+const { dbCommand: _dbCommandImpl } = require('./commands/db')
 const { scaffold: _scaffoldImpl, scaffoldAll: _scaffoldAllImpl, scaffoldBlock: _scaffoldBlockImpl, scaffoldBlockInit: _scaffoldBlockInitImpl } = require('./commands/scaffold')
+const { cmsInit: _cmsInitImpl } = require('./commands/cms')
 const { newProject, detectPackageManager, runWizard } = require('./new-command')
 const { emit: emitSiteMeta } = require('./emitters/site-meta')
 const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
@@ -41,7 +40,7 @@ const _ORST   = _TTY ? '\x1b[0m'  : ''
 // Reads imported .arc files, extracts their widget/fn/style declarations,
 // and merges them into the importing program's declaration list.
 
-// visited: Map<importPath, importedProgram> — caches parsed+resolved programs.
+// visited: Map<importPath, importedProgram> - caches parsed+resolved programs.
 // Prevents re-parsing and infinite recursion, but still processes named exports on repeat imports.
 async function resolveImports(program, projectDir, filename, visited, rootDir, depsOut) {
   const topLevelRoot = rootDir ?? path.resolve(projectDir)
@@ -69,7 +68,7 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
     }
 
     // Prevent directory traversal and symlink traversal outside original project root.
-    // path.resolve() does NOT follow symlinks; fs.realpathSync() does — use it to
+    // path.resolve() does NOT follow symlinks; fs.realpathSync() does - use it to
     // canonicalize before the boundary check so symlinks can't escape the project root.
     let realImportPath
     try { realImportPath = fs.realpathSync(importPath) } catch { realImportPath = importPath }
@@ -308,7 +307,7 @@ async function compile(source, filename = '<input>', options = {}) {
   // based on what's actually referenced in the emitted HTML.
   css = treeshakeBaseCss(css, html)
 
-  // 7b. @css package imports — resolve npm CSS from node_modules and bundle inline
+  // 7b. @css package imports - resolve npm CSS from node_modules and bundle inline
   const cssImports = _collectCssImports(program)
   if (cssImports.length > 0) {
     const rootDir = options.rootDir ?? options.projectDir ?? path.dirname(path.resolve(filename))
@@ -463,7 +462,7 @@ async function build(projectDir) {
   const withAssets = injectAssets(result.html, result.js)
   let finalHtml, finalCss, cssInlined
   try {
-    ;({ html: finalHtml, css: finalCss, cssInlined } = postProcess(withAssets, result.css))
+    ;({ html: finalHtml, css: finalCss, cssInlined } = postProcess(withAssets, result.css, { criticalCssThreshold: 14 * 1024 }))
   } catch (e) {
     console.error(`arc: post-processing failed for ${filename}: ${e.message}`)
     process.exit(1)
@@ -656,7 +655,7 @@ async function buildSite(projectDir) {
     console.error(`arc: no .arc files in ${absDir}`); process.exit(1)
   }
 
-  // Read and filter to page files only — partials (widget/design/fn declarations) are skipped
+  // Read and filter to page files only - partials (widget/design/fn declarations) are skipped
   const pageFiles = (await Promise.all(
     allArcFiles.map(async absPath => {
       let src
@@ -740,6 +739,20 @@ async function buildSite(projectDir) {
 
   const headersText = emitHeadersManifest({ sharedCssFilename: null })
   fs.writeFileSync(path.join(distDir, '_headers'), headersText)
+
+  // Copy public/ directory to dist/ (static assets like CSS, fonts, images)
+  const publicDir = path.join(absDir, 'public')
+  if (fs.existsSync(publicDir)) {
+    const _copyDir = (src, dest) => {
+      fs.mkdirSync(dest, { recursive: true })
+      for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        const s = path.join(src, entry.name), d = path.join(dest, entry.name)
+        if (entry.isDirectory()) _copyDir(s, d)
+        else fs.copyFileSync(s, d)
+      }
+    }
+    _copyDir(publicDir, distDir)
+  }
 
   try {
     await _injectPrefetchTags(distDir, compiled)
@@ -838,8 +851,8 @@ async function check(files) {
 //     Registers client for page-targeted reload events. The client script
 //     passes location.pathname so only affected pages get reloaded.
 //     Events:
-//       message (data: "reload")  — full page reload required (HTML/JS changed)
-//       css     (data: <cssText>) — CSS-only change, hot-swapped into <style data-arc-css>
+//       message (data: "reload")  - full page reload required (HTML/JS changed)
+//       css     (data: <cssText>) - CSS-only change, hot-swapped into <style data-arc-css>
 //
 //   GET /_arc/health
 //     Returns JSON: { status: "ok", pages: <n>, clients: <n> }
@@ -1038,7 +1051,7 @@ function _startWatcher(absDir, onChange) {
       })
       w.on('error', () => {}) // ignore errors on individual dirs
       watchers.push(w)
-    } catch {}
+    } catch {} // intentionally ignored - inaccessible directory; skip silently
   }
 
   function scanAndWatch(dir) {
@@ -1049,7 +1062,7 @@ function _startWatcher(absDir, onChange) {
           scanAndWatch(path.join(dir, entry.name))
         }
       }
-    } catch {}
+    } catch {} // intentionally ignored - inaccessible directory; skip silently
   }
 
   try {
@@ -1081,9 +1094,9 @@ async function dev(projectDir) {
   const _rebuild = () => isMultiPage ? buildSite(projectDir) : build(projectDir)
 
   // ── HMR state ─────────────────────────────────────────────────────────────
-  // _depMap:   absFilePath → Set<slug>  — which pages import a given file
-  // _slugFile: slug → absSourcePath    — reverse lookup for partial rebuilds
-  // _prevHtml: slug → last finalHtml   — used to detect CSS-only vs structural change
+  // _depMap:   absFilePath → Set<slug>  - which pages import a given file
+  // _slugFile: slug → absSourcePath    - reverse lookup for partial rebuilds
+  // _prevHtml: slug → last finalHtml   - used to detect CSS-only vs structural change
   const _depMap   = new Map()
   const _slugFile = new Map()
   const _prevHtml = new Map()
@@ -1122,7 +1135,7 @@ async function dev(projectDir) {
     }
   }
 
-  // SSE helpers — operate on the reloadClients Map
+  // SSE helpers - operate on the reloadClients Map
   function _broadcastReload(pagePath) {
     if (pagePath) {
       const clients = reloadClients.get(pagePath)
@@ -1171,7 +1184,7 @@ async function dev(projectDir) {
       let html = _patchPageHtml(withAssets, null, fullCss)
       html = pp.addResourceHints(html)
       html = pp.minifyHtml(html)
-      // Strip CSP meta — _injectPrefetchTags removes it from buildSite dist files,
+      // Strip CSP meta - _injectPrefetchTags removes it from buildSite dist files,
       // so _prevHtml loaded via _initHmrState won't have it. Keep both paths consistent.
       html = html.replace(_CSP_META_RE, '')
 
@@ -1217,7 +1230,7 @@ async function dev(projectDir) {
   const port = (Number.isInteger(rawPort) && rawPort > 0 && rawPort < 65536) ? rawPort : 3000
   if (rawPort !== port) console.warn(`arc: invalid PORT value, using 3000`)
 
-  // SSE clients — Map<pagePath, Set<res>> for per-page targeting
+  // SSE clients - Map<pagePath, Set<res>> for per-page targeting
   const reloadClients = new Map()
 
   const server = http.createServer(_createDevRequestHandler(distDir, reloadClients))
@@ -1285,7 +1298,7 @@ async function dev(projectDir) {
             }
 
             if (isMultiPage && affected.size > 0) {
-              // Partial rebuild — only recompile affected pages
+              // Partial rebuild - only recompile affected pages
               await _devRebuildPages(affected)
               const dur = Date.now() - t0
               const n = _totalClients()
@@ -1311,7 +1324,7 @@ async function dev(projectDir) {
             }
           } catch (e) {
             let src = null
-            try { src = fs.readFileSync(path.join(absDir, changedFile), 'utf8') } catch {}
+            try { src = fs.readFileSync(path.join(absDir, changedFile), 'utf8') } catch {} // intentionally ignored - src stays null; formatError handles null src gracefully
             try { formatError(e, src, changedFile) } catch (e2) { console.error(e2) }
           }
         } while (rebuildRequested)
@@ -1392,7 +1405,7 @@ async function deploy(projectDir, target) {
 
 // Parse a list of .arc files, merge all RouteDecl / SchemaDecl / JobDecl nodes
 // into one synthetic program, then emit a Bun server.js.
-// buildServer delegates to src/commands/build-server.js — extracted to reduce cli.js size.
+// buildServer delegates to src/commands/build-server.js - extracted to reduce cli.js size.
 // See that module for the full implementation.
 async function buildServer(projectDir, opts = {}, flags = {}) {
   return _buildServerImpl(projectDir, opts, flags, { formatError })
@@ -1656,7 +1669,7 @@ function parseServerFlags(args) {
   if (args.includes('--bun-routes')) flags.bunRoutes = true
   if (args.includes('--watch')) flags.watch = true
   if (args.includes('--profile')) flags.profile = true
-  // --cors [origin] — optional value, defaults to '*'
+  // --cors [origin] - optional value, defaults to '*'
   const corsIdx = args.indexOf('--cors')
   if (corsIdx !== -1) {
     const next = args[corsIdx + 1]
@@ -1811,6 +1824,19 @@ async function main() {
       break
     }
 
+    case 'cms': {
+      const sub = args[0]
+      const positional = args.slice(1).filter(a => !a.startsWith('--'))
+      if (sub === 'init') {
+        const dir = positional[0] ?? '.'
+        await _cmsInitImpl(dir, {})
+      } else {
+        console.error('arc cms init [dir]   Scaffold admin panel + CMS into project')
+        process.exit(1)
+      }
+      break
+    }
+
     case 'generate':
     case 'g':
       generate(args[0], args[1])
@@ -1838,6 +1864,7 @@ async function main() {
       console.log('  arc explain <file>       Show compile-time analysis of routes/schemas/jobs')
       console.log('  arc generate <type> <name>  Scaffold: model, handler')
       console.log('  arc scaffold <Model> [dir]  Generate admin routes + pages for a model (--all, --force)')
+      console.log('  arc cms init [dir]       Scaffold full admin panel + CMS (arc-ui based)')
       console.log('  arc new <name>           Create a new Arc project (--template default|counter|blog|api|cms)')
       console.log('  arc deploy [dir]         Deploy to hosting (--target cloudflare|deno|bun|node)')
       console.log('  arc db <cmd>             Database: migrate, seed, studio')

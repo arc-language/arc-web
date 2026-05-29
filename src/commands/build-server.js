@@ -7,7 +7,7 @@ const { Lexer } = require('../lexer')
 const { Parser } = require('../parser')
 const N = require('../ast')
 
-// Rust compiler binary — faster parsing for server-only .arc files
+// Rust compiler binary - faster parsing for server-only .arc files
 const _RUST_BIN = path.join(__dirname, '../../arc-compiler/target/release/arc-compiler')
 const _rustAvailable = fs.existsSync(_RUST_BIN)
 
@@ -16,7 +16,15 @@ function parseArcFile(file, src, formatError) {
   if (_rustAvailable) {
     try {
       const r = spawnSync(_RUST_BIN, [file], { encoding: 'utf8', timeout: 10000 })
-      if (r.status === 0 && r.stdout) return JSON.parse(r.stdout)
+      if (r.status === 0 && r.stdout) {
+        const ast = JSON.parse(r.stdout)
+        // Rust compiler bug: @auth(role) annotations cause method:"(" in RouteDecl.
+        // Fall through to JS parser if any route has a non-alpha method.
+        const hasBrokenRoute = ast.declarations?.some(
+          d => d.type === 'RouteDecl' && d.method && !/^[a-zA-Z]+$/.test(d.method)
+        )
+        if (!hasBrokenRoute) return ast
+      }
     } catch (_) {
       // fall through to JS parser
     }

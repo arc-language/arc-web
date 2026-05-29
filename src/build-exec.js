@@ -22,7 +22,7 @@ const _httpsAgent = new https.Agent({ keepAlive: true })
 //
 // Known limitations:
 //   - DNS rebinding: hostname check is pre-connection; egress firewall rules are the primary defense.
-//   - Only synchronous-looking expressions are supported — no async/await in @build expressions.
+//   - Only synchronous-looking expressions are supported - no async/await in @build expressions.
 //   - Object methods are restricted to ALLOWED_OBJ_METHODS; calling unlisted methods throws.
 
 // Explicit allowlist for object method dispatch: prevents calling dangerous prototype methods
@@ -82,7 +82,7 @@ function _isBlockedHost(h) {
 // BuildExecutor runs @build blocks at compile time in a sandboxed, synchronous-only interpreter.
 // It intentionally supports only a constrained subset of JavaScript: variable assignments, string
 // interpolation, fetch (HTTP/S only, no internal addresses), and file writes to the dist directory.
-// Async operations are disallowed by design — the interpreter is not an event loop. Any await in
+// Async operations are disallowed by design - the interpreter is not an event loop. Any await in
 // @build source is a compile error. This constraint ensures deterministic, cacheable build outputs.
 class BuildExecutor {
   constructor(projectDir = '.') {
@@ -379,7 +379,7 @@ class BuildExecutor {
     const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
     if (_isBlockedHost(hostname)) throw new Error(`@build fetch: internal addresses not allowed: ${hostname}`)
     // DNS pre-resolution: resolve hostname once and verify the resolved IP is not internal.
-    // This is defense-in-depth against DNS rebinding — an attacker-controlled domain could
+    // This is defense-in-depth against DNS rebinding - an attacker-controlled domain could
     // pass the hostname check above but rebind to an internal IP at TCP connect time.
     // Network-level egress filtering remains the primary defense.
     if (hostname !== 'localhost' && !/^\d+\.\d+\.\d+\.\d+$/.test(hostname) && !hostname.includes(':')) {
@@ -392,7 +392,7 @@ class BuildExecutor {
         }
       } catch (e) {
         if (e.message.startsWith('@build fetch:')) throw e
-        // DNS lookup failed — warn and let the HTTP request fail naturally
+        // DNS lookup failed - warn and let the HTTP request fail naturally
         console.warn(`arc: @build fetch: DNS pre-check failed for ${hostname} (${e.code ?? e.message}) — proceeding with request`)
       }
     }
@@ -441,7 +441,7 @@ class BuildExecutor {
       }).on('error', e => {
         if (!settled) {
           settled = true
-          // ECONNREFUSED/ENOTFOUND mean the server is definitively unreachable — don't retry
+          // ECONNREFUSED/ENOTFOUND mean the server is definitively unreachable - don't retry
           const _noRetry = e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'EADDRNOTAVAIL'
           reject(_noRetry ? Object.assign(e, { _noRetry: true }) : e)
         }

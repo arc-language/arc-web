@@ -74,7 +74,7 @@ function _reportCols(entry) {
     const cols = m[1].split(',').map(c => c.trim().split(/\s+/)[0])
     return `(${cols.join(', ')})`
   }
-  // ALTER TABLE — show "+ colname" for each added column
+  // ALTER TABLE - show "+ colname" for each added column
   const added = entry.statements.map(s => {
     const m = s.match(/ADD COLUMN (\w+)/)
     return m ? `+${m[1]}` : null

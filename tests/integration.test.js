@@ -71,11 +71,7 @@ describe('integration: counter example', () => {
   })
 
   test('JS contains a DOM update setter', () => {
-    // The JS emitter produces setters like _setCount or direct DOM update functions
-    assert.ok(
-      result.js.includes('textContent') || result.js.includes('innerHTML') || result.js.includes('function'),
-      'expected DOM manipulation in JS'
-    )
+    assert.ok(result.js.includes('textContent'), 'expected textContent setter for @state DOM update')
   })
 
   test('HTML has a button element', () => {

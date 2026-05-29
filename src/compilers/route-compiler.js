@@ -65,7 +65,7 @@ function compileRoutes(routes, opts = {}) {
   return emitDispatchFn(root, opts)
 }
 
-// Collect all routes reachable without any :param segment — their full path is a
+// Collect all routes reachable without any :param segment - their full path is a
 // compile-time literal we can match directly via switch(_pathname), skipping
 // split('/').filter(Boolean) for every request that hits them.
 function collectStaticPaths(root) {
@@ -77,7 +77,7 @@ function collectStaticPaths(root) {
     for (const [seg, child] of node.children) {
       walk(child, prefix + '/' + seg)
     }
-    // Do not walk paramChild — those paths are dynamic
+    // Do not walk paramChild - those paths are dynamic
   }
   walk(root, '')
   return result
@@ -111,7 +111,7 @@ function _dispatch(req, _pathname${extra}) {
 }`.trim()
 }
 
-// Emit Bun native routes object (C++ routing — fastest path).
+// Emit Bun native routes object (C++ routing - fastest path).
 // Bun.serve({ routes }) dispatches before JS executes, bypassing the JS trie entirely.
 function emitBunRoutesObject(routes, opts = {}) {
   const byPath = new Map()
@@ -138,12 +138,12 @@ function emitBunRoutesObject(routes, opts = {}) {
   for (const [path, methods] of byPath) {
     const handlerLines = methods.map(({ method, handlerName }) => {
       const staticConstName = opts.staticHandlers?.get(handlerName)
-      // Item 4: static routes use a sync wrapper — no async/await overhead
+      // Item 4: static routes use a sync wrapper - no async/await overhead
       if (staticConstName && !preamble) {
         return `      ${method}: (_req, _ctx) => ${staticConstName},`
       }
       if (staticConstName && preamble) {
-        // Preamble is sync (rate-limit check) — still avoid Promise for the return
+        // Preamble is sync (rate-limit check) - still avoid Promise for the return
         return `      ${method}: (req, _ctx) => {${preamble}
         return ${staticConstName}
       },`
@@ -156,7 +156,7 @@ function emitBunRoutesObject(routes, opts = {}) {
   }
 
   return `
-// Bun native routes object — dispatched in C++ before JS executes
+// Bun native routes object - dispatched in C++ before JS executes
 const _arcRoutes = {
   routes: {
 ${healthEntry}
@@ -172,7 +172,7 @@ function emitTrieNodeWithExtra(node, depth, indent, extra) {
 
   if (node.children.size === 0 && !node.paramChild) {
     if (node.handlers.size === 0) {
-      // Leaf with no handlers (e.g., empty routes list) — return 404
+      // Leaf with no handlers (e.g., empty routes list) - return 404
       lines.push(`${pad}return new Response('Not Found', { status: 404 })`)
     } else {
       lines.push(`${pad}switch (method) {`)

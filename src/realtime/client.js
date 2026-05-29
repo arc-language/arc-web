@@ -47,7 +47,7 @@ class RealtimeEmitter {
 
     // Trigger reactive setters for @state vars bound to this realtime variable.
     // The setter machinery handles all DOM updates: we just need to assign the new value.
-    // Escape once and build the regex once — varName is a validated identifier so no special chars,
+    // Escape once and build the regex once - varName is a validated identifier so no special chars,
     // but escapedName is kept for correctness with any future punctuation-containing names.
     const escapedName = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const re = new RegExp(`\\b${escapedName}\\b`, 'u')

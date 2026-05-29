@@ -201,14 +201,14 @@ function expandAnimation(value) {
 // and gradient.arc runs at Arc runtime. Keep both in sync when adding presets.
 const GRADIENT_PRESETS = {
   rainbow: '#ff0000,#ff7700,#ffff00,#00ff00,#0077ff,#8b00ff',
-  // sunrise and gold contain #fde68a (~1.5:1 contrast on white) — only use on dark backgrounds
+  // sunrise and gold contain #fde68a (~1.5:1 contrast on white) - only use on dark backgrounds
   sunrise: '#f97316,#f59e0b,#fbbf24,#fde68a',
   ocean:   '#0ea5e9,#06b6d4,#10b981',
   fire:    '#ef4444,#f97316,#eab308',
   neon:    '#00f2fe,#4facfe,#a78bfa',
   aurora:  '#00c6ff,#0072ff,#a855f7',
   candy:   '#ff6b9d,#c44dff,#4facfe',
-  // gold contains #fde68a — low contrast on white; also contains #ffff00 (rainbow) — use on dark bg
+  // gold contains #fde68a - low contrast on white; also contains #ffff00 (rainbow) - use on dark bg
   gold:    '#f59e0b,#fbbf24,#fde68a,#f59e0b',
 }
 
@@ -234,7 +234,7 @@ function expandGradientText(value) {
   }
   // Both background-clip variants are required: standard for Chrome/FF, -webkit- for Safari.
   // color:transparent makes the gradient show through the text mask (background-clip: text technique).
-  // Do NOT rely on NEEDS_PREFIX here — shorthand expansions bypass that path in emitProps.
+  // Do NOT rely on NEEDS_PREFIX here - shorthand expansions bypass that path in emitProps.
   // Note: elements using gradient-text will have invisible text in forced-colors/high-contrast mode.
   // Add a companion @media (forced-colors: active) { color: CanvasText; background: none } rule
   // in your design block to restore visibility for users with Windows High Contrast enabled.
@@ -312,7 +312,7 @@ class CssEmitter {
     let baseCSS = this.baseStyles ? this.emitBase() : ''
 
     // When there are no component rules, the @layer base { } wrapper adds no cascade benefit
-    // — unwrap it to save ~20 bytes.
+    // - unwrap it to save ~20 bytes.
     if (baseCSS && rules.length === 0) {
       const m = baseCSS.match(/^@layer base \{([\s\S]*)\}\s*$/)
       if (m) baseCSS = m[1].trim()
@@ -353,7 +353,8 @@ class CssEmitter {
   .arc-skip-link { position: absolute; top: -100px; left: 0; background: Canvas; color: CanvasText; padding: 8px 16px; z-index: 9999; text-decoration: none; border: 2px solid CanvasText; line-height: 1 }
   .arc-skip-link:focus { top: 0 }
   [class*="arc-slider"] { position: relative }
-  [class*="arc-slider-track"] { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; scrollbar-width: none; -ms-overflow-style: none }
+  [class*="arc-slider-track"] { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; scrollbar-width: none; -ms-overflow-style: none; cursor: grab }
+  [class*="arc-slider-track"]:active { cursor: grabbing }
   [class*="arc-slider-track"]::-webkit-scrollbar { display: none }
   [class*="arc-slide"] { scroll-snap-align: var(--arc-ss,start); flex-shrink: 0; width: calc(100% / var(--arc-si,1)); padding: 0 calc(var(--arc-sg,0px) / 2) }
   [class*="arc-slider-prev"], [class*="arc-slider-next"] { position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; background: oklch(100% 0 0 / .8); border: none; border-radius: var(--arc-radius-full,9999px); width: 2rem; height: 2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1rem }

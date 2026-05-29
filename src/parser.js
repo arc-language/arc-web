@@ -578,7 +578,7 @@ class Parser {
     // checker can add to its scope.
     if (t.type === T.CONST || t.type === T.LET) return this.parseVarDecl()
 
-    // Raw HTML passthrough — both bare `raw` and `@raw` forms
+    // Raw HTML passthrough - both bare `raw` and `@raw` forms
     if (t.type === T.RAW) return this.parseRawNode()
     if (t.type === T.AT_IDENT && t.value === '@raw') {
       this.pos++ // consume @raw
@@ -587,7 +587,7 @@ class Parser {
       return N.RawNode(strTok.value, strTok.line)
     }
 
-    // CSS package import — @css "package-name" bundles npm CSS into the page
+    // CSS package import - @css "package-name" bundles npm CSS into the page
     if (t.type === T.AT_IDENT && t.value === '@css') {
       this.pos++ // consume @css
       const strTok = this.eat(T.STRING)
@@ -855,7 +855,7 @@ class Parser {
       if (t.type === T.STRING) {
         if (t.value) parts.push(N.Literal(t.value, t.value, t.line))
         this.pos++
-        // Stop if the STRING is not followed by another interpolation — the template literal is complete.
+        // Stop if the STRING is not followed by another interpolation - the template literal is complete.
         // Without this, adjacent STRING tokens (e.g. the next child's inline content) get consumed.
         if (this.tokens[this.pos]?.type !== T.INTERP_START) break
         continue
@@ -1037,7 +1037,7 @@ class Parser {
       }
 
       // IDENT: either a direct property (prop: value) or a selector block (body { ... })
-      // Always look ahead first — IDENT+COLON can be either "color: red" (property)
+      // Always look ahead first - IDENT+COLON can be either "color: red" (property)
       // or "li:hover" / "li:nth-child(2n+1)" (selector with pseudo-class) depending
       // on whether an indented block follows the line.
       if (pt.type === T.IDENT) {
@@ -1156,7 +1156,7 @@ class Parser {
         children.push(this.parseStyleRule())
         continue
       }
-      // Nested selector with block — look past all tokens on the line before checking for INDENT.
+      // Nested selector with block - look past all tokens on the line before checking for INDENT.
       // "li:nth-child(2n+1)" starts with IDENT+COLON but is a selector, not a property.
       if (pt.type === T.IDENT) {
         let lookIdx = this.pos + 1
@@ -1485,7 +1485,7 @@ class Parser {
         continue
       }
 
-      // LPAREN not following an ident (e.g. standalone grouping) — attach to previous if possible
+      // LPAREN not following an ident (e.g. standalone grouping) - attach to previous if possible
       if (t.type === T.LPAREN) {
         // Check if the last part ends with ident-like char (for missed function names)
         let fn = (parts.length > 0 ? parts.pop() : '') + '('
@@ -1495,7 +1495,7 @@ class Parser {
         continue
       }
 
-      // CSS function call: ident( ... ) — consume entire call as one token without spaces
+      // CSS function call: ident( ... ) - consume entire call as one token without spaces
       if (_CSS_IDENT_TYPES.has(t.type) && this.tokens[this.pos + 1]?.type === T.LPAREN) {
         let fn = _cssIdentVal(t) + '('
         this.pos += 2 // skip ident and (
@@ -2516,7 +2516,7 @@ class Parser {
     const params = (routePath.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) ?? []).map(p => p.slice(1))
 
     // Optional return type annotation: -> Response
-    // Do NOT use eatIf here — it calls skipWhitespace which would consume NEWLINE+INDENT,
+    // Do NOT use eatIf here - it calls skipWhitespace which would consume NEWLINE+INDENT,
     // leaving parseIndentedBlock unable to find the block.
     let returnType = null
     if (this.tokens[this.pos]?.type === T.THIN_ARROW) {

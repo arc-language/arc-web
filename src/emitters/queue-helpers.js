@@ -1,10 +1,10 @@
 'use strict'
 
 // Queue and email helpers emitted into generated server.js.
-// Zero external dependencies — works in Bun and Node 18+.
+// Zero external dependencies - works in Bun and Node 18+.
 //
 // Queue: in-process async queue with retry (exponential backoff, max 3 retries).
-//   IMPORTANT: this queue is NOT persistent — jobs enqueued during a crash or restart
+//   IMPORTANT: this queue is NOT persistent - jobs enqueued during a crash or restart
 //   will be lost. For durable queues, use arc build --target cloudflare (CF Queues)
 //   or integrate a persistent queue adapter (BullMQ + Redis, etc.).
 // Email: Resend API (HTTP) primary, nodemailer SMTP fallback.
@@ -73,10 +73,10 @@ const _queue = {
 const Queue = {
   enqueue: (fn, ...args) => _queue.enqueue(fn, args),
   size: () => _queue._items.length,
-  // dead() returns serializable snapshots: { name, args, error, failedAt } — safe to JSON.stringify
+  // dead() returns serializable snapshots: { name, args, error, failedAt } - safe to JSON.stringify
   dead: () => _queue._dead.map(({ name, args, error, failedAt }) => ({ name, args, error, failedAt })),
   // replayDead() re-enqueues all dead jobs for retry and clears the DLQ.
-  // Only works within the same process — in-process _fn references are gone after restart.
+  // Only works within the same process - in-process _fn references are gone after restart.
   replayDead: () => {
     const jobs = _queue._dead.splice(0)
     for (const { _fn, args } of jobs) {
@@ -118,7 +118,7 @@ const email = {
           if (res.ok || res.status < 500) break
         } catch (_fetchErr) {
           if (_attempt >= 1) throw _fetchErr
-          // network error — retry once
+          // network error - retry once
         }
       }
       if (res && !res.ok) {

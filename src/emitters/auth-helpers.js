@@ -32,7 +32,7 @@ if (!_AUTH_SECRET) {
   console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: '[arc:auth] SESSION_SECRET is not set — sessions will not persist across restarts. Set SESSION_SECRET env var before deploying to production.' }))
 }
 // __Host- prefix in production: prevents subdomain session fixation (RFC 6265bis).
-// Requires Secure + Path=/ + no Domain= — all satisfied below. Plain name in dev (no HTTPS).
+// Requires Secure + Path=/ + no Domain= - all satisfied below. Plain name in dev (no HTTPS).
 const _PROD_COOKIE = process.env.NODE_ENV === 'production'
 const _SESSION_COOKIE = _PROD_COOKIE ? '__Host-${cookieName}' : '${cookieName}'
 const _SESSION_MAX_AGE = ${sessionMaxAge}
@@ -42,9 +42,9 @@ const _SESSION_MAX_AGE = ${sessionMaxAge}
 const _hmacKeyCache = new Map()
 function _getHmacKey(secret) {
   if (_hmacKeyCache.has(secret)) return _hmacKeyCache.get(secret)
-  // Cache the Promise, not the resolved key — concurrent calls with the same secret
+  // Cache the Promise, not the resolved key - concurrent calls with the same secret
   // await the same derivation instead of each starting their own crypto.subtle.importKey.
-  // Evict the oldest entry (FIFO — Map preserves insertion order) so active keys stay warm.
+  // Evict the oldest entry (FIFO - Map preserves insertion order) so active keys stay warm.
   if (_hmacKeyCache.size >= 64) _hmacKeyCache.delete(_hmacKeyCache.keys().next().value)
   const enc = new TextEncoder()
   const p = crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
@@ -149,7 +149,7 @@ const jwt = {
     const parts = token.split('.')
     if (parts.length !== 3) return null
     const [headerB64, payloadB64, sig] = parts
-    // Reject tokens that don't declare HS256 — prevents alg:none attacks and cross-algorithm confusion
+    // Reject tokens that don't declare HS256 - prevents alg:none attacks and cross-algorithm confusion
     try {
       const hdr = JSON.parse(atob(headerB64.replace(/-/g, '+').replace(/_/g, '/')))
       if (hdr.alg !== 'HS256') return null
@@ -157,7 +157,7 @@ const jwt = {
     if (!await _hmacVerify(\`\${headerB64}.\${payloadB64}\`, sig, secret)) return null
     try {
       const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')))
-      // Require exp — tokens without an expiry claim are rejected (permanent tokens are a security risk)
+      // Require exp - tokens without an expiry claim are rejected (permanent tokens are a security risk)
       if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null
       return payload
     } catch { return null }

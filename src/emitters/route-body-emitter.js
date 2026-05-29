@@ -35,7 +35,7 @@ const _DB_ASYNC_METHODS = new Set([
 ])
 
 function _isDbCall(callPath) {
-  // Avoid split() allocation — check db. prefix, then find the method after the second dot.
+  // Avoid split() allocation - check db. prefix, then find the method after the second dot.
   const first = callPath.indexOf('.')
   if (first === -1 || callPath.slice(0, first) !== 'db') return false
   const second = callPath.indexOf('.', first + 1)

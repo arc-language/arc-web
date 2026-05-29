@@ -288,6 +288,42 @@ describe('stdlib/icons.arc', () => {
   })
 })
 
+describe('stdlib/highlight.arc', () => {
+  const src = fs.readFileSync(path.join(STDLIB_DIR, 'highlight.arc'), 'utf8')
+
+  test('has header comment', () => {
+    assert.ok(src.startsWith('//'), 'must start with comment')
+  })
+
+  test('defines Code widget', () => {
+    assert.ok(src.includes('widget Code'), 'Code widget not found')
+  })
+
+  test('initializes _arcHL state', () => {
+    assert.ok(src.includes('_arcHL'), '_arcHL initializer not found')
+  })
+
+  test('exposes window.arcHL for dynamic use', () => {
+    assert.ok(src.includes('window.arcHL'), 'window.arcHL not exposed')
+  })
+
+  test('highlights on DOMContentLoaded', () => {
+    assert.ok(src.includes('DOMContentLoaded'), 'DOMContentLoaded listener not found')
+  })
+
+  test('supports common languages', () => {
+    const langs = ['js', 'ts', 'py', 'sh', 'sql', 'json', 'css', 'html']
+    for (const lang of langs) {
+      assert.ok(src.includes(`"${lang}"`), `language "${lang}" not in CONFIGS`)
+    }
+  })
+
+  test('dark and light themes', () => {
+    assert.ok(src.includes('data-theme="light"') || src.includes("data-theme=\"light\""), 'light theme not found')
+  })
+
+})
+
 describe('stdlib: content quality checks', () => {
   test('no TODO or FIXME markers in stdlib', () => {
     const files = fs.readdirSync(STDLIB_DIR).filter(f => f.endsWith('.arc'))
@@ -306,13 +342,13 @@ describe('stdlib: content quality checks', () => {
     }
   })
 
-  test('total stdlib line count is reasonable (< 1500 lines)', () => {
+  test('total stdlib line count is reasonable (< 3000 lines)', () => {
     const files = fs.readdirSync(STDLIB_DIR).filter(f => f.endsWith('.arc'))
     let total = 0
     for (const file of files) {
       const src = fs.readFileSync(path.join(STDLIB_DIR, file), 'utf8')
       total += src.split('\n').length
     }
-    assert.ok(total < 1500, `stdlib is ${total} lines: should be < 1500`)
+    assert.ok(total < 3000, `stdlib is ${total} lines: should be < 3000`)
   })
 })

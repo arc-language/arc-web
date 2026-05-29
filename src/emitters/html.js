@@ -23,7 +23,7 @@ function _hasH1(nodes, depth = 0) {
 
 const _INTERACTIVE_TAGS = new Set(['button', 'a', 'input', 'select', 'textarea', 'summary'])
 
-// Locale maps hoisted to module scope — constructed once, not per-element-emit
+// Locale maps hoisted to module scope - constructed once, not per-element-emit
 const _LOCALE_NEW_TAB = { en: '(opens in new tab)', fr: '(ouvre dans un nouvel onglet)', es: '(se abre en nueva pestaña)', de: '(öffnet in neuem Tab)', pt: '(abre em nova aba)', ja: '(新しいタブで開く)', zh: '（在新标签页中打开）', ar: '(يفتح في علامة تبويب جديدة)' }
 const _LOCALE_CLOSE_DIALOG = { en: 'Close dialog', fr: 'Fermer la boîte de dialogue', es: 'Cerrar diálogo', de: 'Dialog schließen', pt: 'Fechar diálogo', ja: 'ダイアログを閉じる', zh: '关闭对话框', ar: 'إغلاق مربع الحوار' }
 const _LOCALE_SKIP_LINK = { en: 'Skip to main content', fr: 'Aller au contenu principal', es: 'Ir al contenido principal', de: 'Zum Hauptinhalt springen', pt: 'Ir para o conteúdo principal', ja: 'メインコンテンツへスキップ', zh: '跳到主要内容', ar: 'تخطى إلى المحتوى الرئيسي' }
@@ -197,7 +197,7 @@ class HtmlEmitter {
     const hasUserMain = (node.body ?? []).some(
       n => n.type === 'Element' && (n.tag === 'main' || n.attrs?.role === 'main')
     )
-    // a11y: warn at compile time if user's <main> has no <h1> — screen readers use the h1 as page title
+    // a11y: warn at compile time if user's <main> has no <h1> - screen readers use the h1 as page title
     if (hasUserMain && !_hasH1(node.body ?? [])) {
       console.warn(`[arc] a11y: page "${title}" has a <main> but no <h1> inside it — add an <h1> so screen reader users can identify the page topic`)
     }
@@ -372,6 +372,7 @@ class HtmlEmitter {
     if (tag === 'modal') return this.emitModal(node)
     if (tag === 'tooltip') return this.emitTooltip(node)
     if (tag === 'accordion') return this.emitAccordion(node)
+    if (tag === 'slider') return this.emitSlider(node)
     if (tag === 'section') this._sawSection = true
 
     // <img>: route through the image pipeline when available (sharp + processed).
@@ -429,7 +430,7 @@ class HtmlEmitter {
     }
 
     // Skip allocations for elements with no layout or user classes (majority of elements)
-    // Base structural classes (arc-row, arc-col, etc.) are defined globally without hash — don't scope them.
+    // Base structural classes (arc-row, arc-col, etc.) are defined globally without hash - don't scope them.
     // User-defined classes get the component hash to prevent cross-component CSS leakage.
     const baseClasses = ELEMENT_CLASSES[tag]
     const scopedClasses = (baseClasses != null || classes.length > 0)
@@ -507,26 +508,69 @@ class HtmlEmitter {
       parts.push(`class="${classes.map(c => this.escape(c)).join(' ')}"`)
     }
 
-    // Arc layout attributes on flex containers → inline CSS style properties.
+    // Arc layout/style attributes → inline CSS style properties.
     // These never render as valid HTML attributes so must be intercepted here.
     const _FLEX_TAGS = new Set(['row', 'col', 'stack', 'wrap', 'center'])
-    if (_FLEX_TAGS.has(node.tag)) {
+    // CSS shorthand attrs valid on ANY element
+    const _CSS_SHORTHANDS = {
+      p: 'padding', m: 'margin',
+      'p-x': 'padding-left', 'p-y': 'padding-top',
+      'p-t': 'padding-top', 'p-b': 'padding-bottom',
+      'p-l': 'padding-left', 'p-r': 'padding-right',
+      'm-x': 'margin-left', 'm-y': 'margin-top',
+      'm-t': 'margin-top', 'm-b': 'margin-bottom',
+      'm-l': 'margin-left', 'm-r': 'margin-right',
+      w: 'width', h: 'height',
+      'max-w': 'max-width', 'min-w': 'min-width',
+      'max-h': 'max-height', 'min-h': 'min-height',
+      radius: 'border-radius', shadow: 'box-shadow',
+      bg: 'background-color', fg: 'color',
+    }
+    {
       const styleParts = []
       const _resolveVal = (v) => (v && typeof v === 'object' && v.type)
         ? (this.isStaticExpr(v) ? String(this.evalStaticExpr(v) ?? '') : '')
         : String(v ?? '')
-      if (attrs.align !== undefined) {
-        styleParts.push(`align-items:${_resolveVal(attrs.align)}`)
-        delete attrs.align
+
+      // Flex-container-only attrs
+      if (_FLEX_TAGS.has(node.tag)) {
+        if (attrs.align !== undefined) {
+          styleParts.push(`align-items:${_resolveVal(attrs.align)}`)
+          delete attrs.align
+        }
+        if (attrs.justify !== undefined) {
+          styleParts.push(`justify-content:${_resolveVal(attrs.justify)}`)
+          delete attrs.justify
+        }
+        if (attrs.gap !== undefined) {
+          styleParts.push(`gap:${_resolveVal(attrs.gap)}`)
+          delete attrs.gap
+        }
       }
-      if (attrs.justify !== undefined) {
-        styleParts.push(`justify-content:${_resolveVal(attrs.justify)}`)
-        delete attrs.justify
+
+      // Universal CSS shorthand attrs (any element)
+      for (const [shorthand, cssProp] of Object.entries(_CSS_SHORTHANDS)) {
+        if (attrs[shorthand] !== undefined) {
+          // p-x and m-x expand to two properties
+          if (shorthand === 'p-x') {
+            const v = _resolveVal(attrs[shorthand])
+            styleParts.push(`padding-left:${v}`, `padding-right:${v}`)
+          } else if (shorthand === 'm-x') {
+            const v = _resolveVal(attrs[shorthand])
+            styleParts.push(`margin-left:${v}`, `margin-right:${v}`)
+          } else if (shorthand === 'p-y') {
+            const v = _resolveVal(attrs[shorthand])
+            styleParts.push(`padding-top:${v}`, `padding-bottom:${v}`)
+          } else if (shorthand === 'm-y') {
+            const v = _resolveVal(attrs[shorthand])
+            styleParts.push(`margin-top:${v}`, `margin-bottom:${v}`)
+          } else {
+            styleParts.push(`${cssProp}:${_resolveVal(attrs[shorthand])}`)
+          }
+          delete attrs[shorthand]
+        }
       }
-      if (attrs.gap !== undefined) {
-        styleParts.push(`gap:${_resolveVal(attrs.gap)}`)
-        delete attrs.gap
-      }
+
       if (styleParts.length > 0) {
         const existing = attrs.style ? _resolveVal(attrs.style) : ''
         const merged = existing ? existing + ';' + styleParts.join(';') : styleParts.join(';')
@@ -569,7 +613,7 @@ class HtmlEmitter {
       const safeId = _safeInlineId(value)
       // safeId is JSON.stringify(id) with " → &quot; (via _safeInlineId), so onclick is XSS-safe.
       // &quot; inside onclick="..." is decoded by the browser before JS executes.
-      // requestAnimationFrame defers focus until after the dialog is painted — avoids silent focus
+      // requestAnimationFrame defers focus until after the dialog is painted - avoids silent focus
       // failure in Safari where the dialog display transition isn't complete at showModal() time.
       const _action = `var _d=document.getElementById(${safeId});if(_d){_d.showModal();var _f=_d.querySelector('button,input,select,textarea,a[href],[tabindex]:not([tabindex=&quot;-1&quot;])');if(_f)requestAnimationFrame(function(){_f.focus();});}`
       parts.push(`onclick="${_action}"`)
@@ -618,7 +662,7 @@ class HtmlEmitter {
   _safeUri(key, value) {
     if (key === 'href' || key === 'src' || key === 'action' || key === 'formaction') {
       let normalized = String(value)
-      // Decode percent-encoding iteratively until stable — prevents double-encoded bypasses
+      // Decode percent-encoding iteratively until stable - prevents double-encoded bypasses
       // like javascript%253A → javascript%3A → javascript: slipping through a single-pass check.
       for (let _i = 0; _i < 10; _i++) {
         try { const _d = decodeURIComponent(normalized); if (_d === normalized) break; normalized = _d } catch { break }
@@ -737,7 +781,7 @@ class HtmlEmitter {
     const ifHtml = `<div id="${ifId}" hidden>${ifContent}</div>`
     const elseHtml = elseId ? `<div id="${elseId}">${elseContent}</div>` : ''
 
-    // No aria-live by default — most reactive changes are visual-only. Authors opt in
+    // No aria-live by default - most reactive changes are visual-only. Authors opt in
     // with an explicit aria-live attr on a parent element when content changes are meaningful to AT.
     return `<div>${ifHtml}${elseHtml ? '\n' + elseHtml : ''}</div>`
   }
@@ -949,6 +993,76 @@ class HtmlEmitter {
     return `<details class="arc-accordion_${this.componentHash}">\n${summaryFallback}${this.emitChildren(node.children)}\n</details>`
   }
 
+  emitSlider(node) {
+    const attrs = node.attrs ?? {}
+    const uid = `${this.componentHash}_${this.reactiveCounter++}`
+
+    const getAttr = (key, fallback) => {
+      const v = attrs[key]
+      if (v == null) return fallback
+      return (v && typeof v === 'object' && v.type) ? this.evalStaticExpr(v) : v
+    }
+
+    const autoplay    = getAttr('autoplay', false)
+    const timeout     = Math.max(500, Number(getAttr('timeout', 4000)))
+    const items       = Math.max(1, Number(getAttr('items', 1)))
+    const showNav     = getAttr('nav', true) !== false && getAttr('nav', true) !== 'false'
+    const showDots    = getAttr('dots', true) !== false && getAttr('dots', true) !== 'false'
+    const center      = getAttr('center', false)
+    const gap         = getAttr('gap', 0)
+    const label       = getAttr('label', 'Slider')
+
+    const children = node.children ?? []
+    const count    = children.length
+    const trackId  = `arc-t-${uid}`
+    const snapAlign = center ? 'center' : 'start'
+
+    const slidesHtml = children.map((child, i) =>
+      `<div class="arc-slide_${uid}" role="group" aria-roledescription="slide" aria-label="${i + 1} of ${count}">${this.emitNode(child)}</div>`
+    ).join('\n')
+
+    const navHtml = (showNav && count > 1) ? [
+      `<button class="arc-slider-prev_${uid}" aria-label="Previous slide" onclick="var t=document.getElementById('${trackId}');if(t)t.scrollBy({left:-t.offsetWidth/${items},behavior:'smooth'})">&#8592;</button>`,
+      `<button class="arc-slider-next_${uid}" aria-label="Next slide" onclick="var t=document.getElementById('${trackId}');if(t)t.scrollBy({left:t.offsetWidth/${items},behavior:'smooth'})">&#8594;</button>`,
+    ].join('\n') : ''
+
+    const dotsHtml = (showDots && count > 1) ? [
+      `<div class="arc-slider-dots_${uid}" role="tablist">`,
+      ...children.map((_, i) =>
+        `<button class="arc-slider-dot_${uid}" role="tab" aria-label="Slide ${i + 1}" aria-current="${i === 0 ? 'true' : 'false'}"></button>`
+      ),
+      `</div>`,
+    ].join('\n') : ''
+
+    const needsScript = showDots || autoplay
+    const scriptHtml = needsScript ? `<script>(function(){var t=document.getElementById('${trackId}');if(!t)return;${
+      showDots
+        ? `var sl=t.children,dt=t.parentElement.querySelectorAll('.arc-slider-dot_${uid}');if(dt.length){var ob=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){var i=Array.prototype.indexOf.call(sl,e.target);dt.forEach(function(d,j){d.setAttribute('aria-current',i===j?'true':'false');});}});},{root:t,threshold:.5});Array.prototype.forEach.call(sl,function(s){ob.observe(s);});}`
+        : ''
+    }${
+      autoplay
+        ? `var idx=0,sl2=t.children;t.addEventListener('mouseenter',function(){clearInterval(_ap);});t.addEventListener('mouseleave',function(){_ap=setInterval(_fn,${timeout});});function _fn(){idx=(idx+1)%sl2.length;sl2[idx].scrollIntoView({behavior:'smooth',block:'nearest',inline:'start'});}var _ap=setInterval(_fn,${timeout});`
+        : ''
+    }})();</script>` : ''
+
+    const style = [
+      items !== 1 ? `--arc-si:${items}` : '',
+      gap ? `--arc-sg:${typeof gap === 'number' ? gap + 'px' : gap}` : '',
+      `--arc-ss:${snapAlign}`,
+    ].filter(Boolean).join(';')
+
+    return [
+      `<div class="arc-slider_${uid}" role="region" aria-roledescription="carousel" aria-label="${this.escape(String(label))}">`,
+      navHtml,
+      `<div id="${trackId}" class="arc-slider-track_${uid}"${style ? ` style="${style}"` : ''}>`,
+      slidesHtml,
+      `</div>`,
+      dotsHtml,
+      scriptHtml,
+      `</div>`,
+    ].filter(Boolean).join('\n')
+  }
+
   // Wrap an element that has a tooltip="" attr as a tooltip-anchor.
   // Add tabindex="0" so non-interactive wrapped elements (e.g. <span tooltip="...">)
   // are keyboard-focusable and can surface the tooltip via :focus styles.
@@ -970,7 +1084,7 @@ class HtmlEmitter {
     }
     // WARNING: node.html is emitted verbatim with no sanitization.
     // allowRaw must ONLY be used for trusted, developer-authored content.
-    // Never pass user-supplied input through RawNode — use escape() instead.
+    // Never pass user-supplied input through RawNode - use escape() instead.
     return node.html
   }
 
@@ -1028,10 +1142,10 @@ class HtmlEmitter {
       return undefined
     }
     if (expr.type === 'MemberExpr' && !expr.computed) {
-      const obj = this.evalStaticExpr(expr.object)
-      if (obj !== undefined && obj !== null) {
+      const evaluated = this.evalStaticExpr(expr.object)
+      if (evaluated !== undefined && evaluated !== null) {
         const key = expr.property.name ?? expr.property.value
-        return obj[key]
+        return evaluated[key]
       }
       return undefined
     }

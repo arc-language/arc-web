@@ -1,10 +1,10 @@
 'use strict'
 
 // Shared preamble content emitted by all server targets.
-// Includes response helpers and body parser — identical across Bun and Cloudflare.
+// Includes response helpers and body parser - identical across Bun and Cloudflare.
 
 const SHARED_RESPONSE_HELPERS = `
-// Pick only the listed keys from an object — used by db helpers to strip unexpected request fields
+// Pick only the listed keys from an object - used by db helpers to strip unexpected request fields
 function _pick(obj, keys) {
   if (!obj || typeof obj !== 'object') return {}
   const out = Object.create(null)
@@ -12,7 +12,7 @@ function _pick(obj, keys) {
   return out
 }
 
-// Pre-allocated header objects — reused across requests to avoid per-request allocation
+// Pre-allocated header objects - reused across requests to avoid per-request allocation
 // _CORS_ORIGIN is emitted by callers (null = no CORS, string = allowed origin)
 const _HEADERS_JSON = _CORS_ORIGIN
   ? { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': _CORS_ORIGIN }
@@ -50,7 +50,7 @@ const _redirect = (location, status = 302) =>
 const _MAX_BODY_SIZE = 1024 * 1024 // 1 MB
 async function _parseBody(req) {
   const ct = req.headers.get('content-type') ?? ''
-  // JSON fast path first — most API routes send application/json
+  // JSON fast path first - most API routes send application/json
   if (ct.includes('application/json')) {
     const length = +(req.headers.get('content-length') ?? 0)
     if (length > _MAX_BODY_SIZE) throw Object.assign(new Error('Request body too large'), { status: 413 })
@@ -59,7 +59,7 @@ async function _parseBody(req) {
     catch { throw Object.assign(new Error('Invalid JSON body'), { status: 400 }) }
   }
   if (ct.includes('multipart/form-data')) {
-    // Reject chunked multipart (no Content-Length) — req.formData() has no built-in
+    // Reject chunked multipart (no Content-Length) - req.formData() has no built-in
     // size limit, so an attacker could stream an unbounded body to exhaust memory.
     if (!req.headers.get('content-length')) throw Object.assign(new Error('Chunked multipart not supported — send Content-Length'), { status: 413 })
     const length = +(req.headers.get('content-length') ?? 0)

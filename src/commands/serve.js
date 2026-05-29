@@ -65,7 +65,7 @@ async function serve(projectDir, flags, buildServer) {
     child = thisChild
     thisChild.on('error', e => console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_spawn_failed', msg: e.message })))
     thisChild.on('exit', (code, signal) => {
-      // Ignore exit from superseded children — only act on the currently active one.
+      // Ignore exit from superseded children - only act on the currently active one.
       if (child !== thisChild) return
       if (signal !== 'SIGTERM') process.exit(code ?? 0)
     })

@@ -1,6 +1,6 @@
 'use strict'
 
-// arc-profiler hooks — code strings injected into compiled server.js when --profile is active.
+// arc-profiler hooks - code strings injected into compiled server.js when --profile is active.
 // All exports are functions returning JavaScript source code strings.
 
 const TOOLBAR_JS = `(function(){
@@ -163,7 +163,7 @@ function updateStats(){
     state.memH.push(m)
     if(state.memH.length>120)state.memH.shift()
     if(state.tab==='memory')renderMemory()
-  }).catch(function(){})
+  }).catch(function(_err) { /* intentionally ignored - profiler hook failure must not crash the app */ })
 }
 
 function msCls(ms){return ms<100?'mf':ms<500?'mm':'ms'}
@@ -367,7 +367,7 @@ document.addEventListener('keydown',function(e){if(e.altKey&&e.key==='p')window.
  */
 function profilerPreamble() {
   return `
-// ── arc-profiler — injected by arc serve --profile ────────────────────────────
+// ── arc-profiler - injected by arc serve --profile ────────────────────────────
 const { AsyncLocalStorage } = require('node:async_hooks')
 const _arc_p_als = new AsyncLocalStorage()
 const _arc_p_ring = []

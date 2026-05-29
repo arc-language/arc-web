@@ -3,12 +3,12 @@
 // Arc image pipeline.
 // Five things this provides that runtime plugins (Astro's @astrojs/image, Next/image) can't:
 //   F1. Build-time transcoding to AVIF + WebP + original-format fallback (baseline parity)
-//   F2. Layout-aware srcset widths — uses ONLY widths the design block actually needs,
+//   F2. Layout-aware srcset widths - uses ONLY widths the design block actually needs,
 //       not a generic ladder
-//   F3. AST-derived above-the-fold detection — first image in header/main gets
+//   F3. AST-derived above-the-fold detection - first image in header/main gets
 //       fetchpriority=high, others get loading=lazy automatically
-//   F4. Dominant-color background fill — image slot shows the right color while loading
-//   F5. Content-hash dedup — same image used on 20 pages → one file in dist
+//   F4. Dominant-color background fill - image slot shows the right color while loading
+//   F5. Content-hash dedup - same image used on 20 pages → one file in dist
 //
 // `sharp` is loaded via optional require. Without it, the pipeline is a no-op and
 // the compiler still emits a working <img> tag.
@@ -23,7 +23,7 @@ try { sharp = require('sharp') } catch { /* optional; pipeline becomes a no-op *
 const DEFAULT_WIDTHS = [400, 800, 1200, 1600]
 const DEFAULT_FORMATS = ['avif', 'webp', 'original']
 // If AVIF isn't at least this much smaller than WebP at the same width,
-// drop AVIF from the picture sources — the decode cost (~50–100 ms on slower
+// drop AVIF from the picture sources - the decode cost (~50–100 ms on slower
 // devices for large images) doesn't repay the wire savings.
 const AVIF_BENEFIT_THRESHOLD = 0.20
 
@@ -100,7 +100,7 @@ class ImagePipeline {
       await Promise.all(allTasks)
 
       // Smart format selection: if AVIF isn't meaningfully smaller than WebP at
-      // every width, drop AVIF — its decode cost outweighs the wire savings.
+      // every width, drop AVIF - its decode cost outweighs the wire savings.
       let useAvif = wantAvif
       if (wantAvif && wantWebp) {
         const benefit = widths.every(w =>
@@ -108,7 +108,7 @@ class ImagePipeline {
         )
         if (!benefit) {
           useAvif = false
-          // Clean up AVIF files we just wrote — they won't be referenced
+          // Clean up AVIF files we just wrote - they won't be referenced
           for (const w of widths) {
             await fs.promises.unlink(path.join(this.outDir, variants.avif[w])).catch(() => {})
           }

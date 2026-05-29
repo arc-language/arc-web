@@ -46,7 +46,7 @@ async function installDeps(dir, pm) {
 }
 
 // ── Lazy template factory ──────────────────────────────────────────────────
-// Only the selected template is instantiated — O(1) space for unchosen templates.
+// Only the selected template is instantiated - O(1) space for unchosen templates.
 
 function getTemplate(name, template, pm = 'bun') {
   const safeName = name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
@@ -1001,7 +1001,7 @@ async function runWizard(presets = {}) {
     ])
   }
 
-  // Step 3: package manager — detected one floats to the top
+  // Step 3: package manager - detected one floats to the top
   let pm = presets.pm
   if (!pm) {
     const available = detectAvailablePMs()

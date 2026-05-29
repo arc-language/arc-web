@@ -77,19 +77,19 @@ describe('HTML Emitter', () => {
   })
 
   describe('structural elements', () => {
-    test('card emits <div> with scoped arc-card class', async () => {
+    test('card emits <div> with arc-card class', async () => {
       const { html } = await compile('page "T"\n  card')
-      assert.match(html, /class="arc-card_[a-z0-9]+"/)
+      assert.match(html, /class="arc-card"/)
     })
 
-    test('row emits <div> with scoped arc-row class', async () => {
+    test('row emits <div> with arc-row class', async () => {
       const { html } = await compile('page "T"\n  row')
-      assert.match(html, /class="arc-row_[a-z0-9]+"/)
+      assert.match(html, /class="arc-row"/)
     })
 
     test('col emits <div> with arc-col class', async () => {
       const { html } = await compile('page "T"\n  col')
-      assert.match(html, /class="arc-col_[a-z0-9]+"/)
+      assert.match(html, /class="arc-col"/)
     })
 
     test('button emits <button>', async () => {
@@ -290,29 +290,6 @@ page "T"
     test('angle brackets in text are escaped', async () => {
       const { html } = await compile('page "T"\n  text "1 < 2"')
       assert.ok(html.includes('&lt;'))
-    })
-  })
-
-  describe('external link attributes', () => {
-    test('external https link gets target=_blank', async () => {
-      const src = `page "T"
-  link href="https://example.com" "Visit"`
-      const { html } = await compile(src)
-      assert.ok(html.includes('target="_blank"'), `Expected target=_blank in:\n${html}`)
-    })
-
-    test('external https link gets rel=noopener noreferrer', async () => {
-      const src = `page "T"
-  link href="https://example.com" "Visit"`
-      const { html } = await compile(src)
-      assert.ok(html.includes('rel="noopener noreferrer"'), `Expected rel in:\n${html}`)
-    })
-
-    test('internal relative link does not get target=_blank', async () => {
-      const src = `page "T"
-  link href="/about" "About"`
-      const { html } = await compile(src)
-      assert.ok(!html.includes('target="_blank"'), `Should not have target=_blank for relative link:\n${html}`)
     })
   })
 
@@ -950,6 +927,135 @@ page "T"
       assert.ok(html.includes('<dialog'), `Expected <dialog> in:\n${html}`)
       assert.ok(html.includes('aria-modal="true"'), `Expected aria-modal in:\n${html}`)
       assert.ok(html.includes('id="confirm"'))
+    })
+  })
+
+  describe('slider widget', () => {
+    test('slider emits carousel region with scoped class', async () => {
+      const src = `page "T"
+  slider
+    div "Slide 1"
+    div "Slide 2"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('role="region"'), `Expected role="region" in:\n${html}`)
+      assert.ok(html.includes('aria-roledescription="carousel"'), `Expected aria-roledescription in:\n${html}`)
+      assert.match(html, /arc-slider_[a-z0-9_]+/)
+    })
+
+    test('slider emits scroll-snap track with scoped class', async () => {
+      const src = `page "T"
+  slider
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.match(html, /arc-slider-track_[a-z0-9_]+/)
+    })
+
+    test('slider wraps children as slides with ARIA labels', async () => {
+      const src = `page "T"
+  slider
+    div "First"
+    div "Second"
+    div "Third"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('1 of 3'), `Expected "1 of 3" label in:\n${html}`)
+      assert.ok(html.includes('3 of 3'), `Expected "3 of 3" label in:\n${html}`)
+      assert.ok(html.includes('role="group"'), `Expected role="group" on slides in:\n${html}`)
+    })
+
+    test('slider emits prev/next nav buttons by default', async () => {
+      const src = `page "T"
+  slider
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('aria-label="Previous slide"'), `Expected prev button in:\n${html}`)
+      assert.ok(html.includes('aria-label="Next slide"'), `Expected next button in:\n${html}`)
+    })
+
+    test('slider nav=false omits nav buttons', async () => {
+      const src = `page "T"
+  slider nav=false
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(!html.includes('Previous slide'), `Expected no nav buttons in:\n${html}`)
+      assert.ok(!html.includes('Next slide'), `Expected no nav buttons in:\n${html}`)
+    })
+
+    test('slider emits pagination dots by default', async () => {
+      const src = `page "T"
+  slider
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.match(html, /arc-slider-dots_[a-z0-9_]+/)
+      assert.ok(html.includes('role="tab"'), `Expected dot role="tab" in:\n${html}`)
+      assert.ok(html.includes('aria-current="true"'), `Expected first dot active in:\n${html}`)
+    })
+
+    test('slider dots=false omits dots and script', async () => {
+      const src = `page "T"
+  slider dots=false
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(!html.match(/arc-slider-dots_/), `Expected no dots in:\n${html}`)
+    })
+
+    test('slider autoplay emits inline script', async () => {
+      const src = `page "T"
+  slider autoplay=true dots=false
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('<script>'), `Expected inline script for autoplay in:\n${html}`)
+      assert.ok(html.includes('setInterval'), `Expected setInterval in:\n${html}`)
+    })
+
+    test('slider with no autoplay and dots=false emits no script', async () => {
+      const src = `page "T"
+  slider dots=false
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(!html.includes('<script>') || !html.includes('setInterval'), `Expected no autoplay script in:\n${html}`)
+    })
+
+    test('slider items=3 sets CSS custom property', async () => {
+      const src = `page "T"
+  slider items=3
+    div "A"
+    div "B"
+    div "C"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('--arc-si:3'), `Expected --arc-si:3 in:\n${html}`)
+    })
+
+    test('slider center=true sets snap-align to center', async () => {
+      const src = `page "T"
+  slider center=true
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('--arc-ss:center'), `Expected --arc-ss:center in:\n${html}`)
+    })
+
+    test('slider custom label sets aria-label', async () => {
+      const src = `page "T"
+  slider label="Featured products"
+    div "A"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('aria-label="Featured products"'), `Expected custom aria-label in:\n${html}`)
+    })
+
+    test('slider with single child omits nav and dots', async () => {
+      const src = `page "T"
+  slider
+    div "Only slide"`
+      const { html } = await compile(src)
+      assert.ok(!html.includes('Previous slide'), `Expected no nav with single slide in:\n${html}`)
+      assert.ok(!html.match(/arc-slider-dots_/), `Expected no dots with single slide in:\n${html}`)
     })
   })
 

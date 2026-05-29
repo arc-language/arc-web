@@ -17,7 +17,7 @@ const { compileRoutes, emitBunRoutesObject } = require('../compilers/route-compi
 const { emitAuthPreamble } = require('./auth-helpers')
 const { emitQueuePreamble, emitEmailPreamble, emitJobEnqueueWrapper } = require('./queue-helpers')
 const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
-const { routeHandlerName } = require('./route-utils')
+const { routeHandlerName, isValidRoute } = require('./route-utils')
 const { SHARED_RESPONSE_HELPERS } = require('./emitter-preamble')
 const { emitRouteBody } = require('./route-body-emitter')
 const { profilerPreamble, profilerDbWrapper } = require('../profiler/hooks')
@@ -39,7 +39,7 @@ class BunServerEmitter {
   get isPg() { return this.db === 'postgres' }
 
   emitProgram(program) {
-    const routes = program.declarations.filter(d => d.type === 'RouteDecl')
+    const routes = program.declarations.filter(d => d.type === 'RouteDecl' && isValidRoute(d))
     const schemas = program.declarations.filter(d => d.type === 'ModelDecl')
     const jobs = program.declarations.filter(d => d.type === 'JobDecl')
     const hasAuth = routes.some(r => r.annotations?.find(a => a === '@auth' || a.startsWith('@auth(')))
@@ -60,7 +60,7 @@ class BunServerEmitter {
     parts.push(emitEmailPreamble())
 
     if (this.isPg && schemas.length > 0) {
-      // PG: emit a single awaited startup block — prevents fire-and-forget race and
+      // PG: emit a single awaited startup block - prevents fire-and-forget race and
       // globalThis.db overwrite if multiple schemas' IIFEs run concurrently
       parts.push(this.emitPgSchemaInit(schemas))
     } else {
@@ -90,9 +90,9 @@ class BunServerEmitter {
       // Build map of handlerName → staticConstName for sync wrapper optimization (Item 4)
       const staticHandlers = new Map()
       for (const route of routes) {
-        const info = this._staticResponseConst(route)
-        if (info && !route.annotations?.find(a => a === '@auth' || a.startsWith('@auth('))) {
-          staticHandlers.set(routeHandlerName(route), info.constName)
+        const staticConst = this._staticResponseConst(route)
+        if (staticConst && !route.annotations?.find(a => a === '@auth' || a.startsWith('@auth('))) {
+          staticHandlers.set(routeHandlerName(route), staticConst.constName)
         }
       }
       parts.push(emitBunRoutesObject(routeSpecs, { noRateLimit: this.noRateLimit, noTracing: this.noTracing, staticHandlers }))
@@ -113,7 +113,7 @@ class BunServerEmitter {
 
     const rateLimiter = this.noRateLimit ? '' : `
 
-// In-memory rate limiter — 60 POST requests per IP per minute (sliding window)
+// In-memory rate limiter - 60 POST requests per IP per minute (sliding window)
 // Applies to all mutating requests. Resets hourly to prevent unbounded Map growth.
 // Set TRUSTED_PROXY_IPS (comma-separated) to opt-in to X-Forwarded-For trust.
 // Without it, X-Forwarded-For is ignored to prevent IP spoofing.
@@ -129,7 +129,7 @@ function _checkRateLimit(req) {
   // can be spoofed; the correct client IP when behind trusted proxies is the rightmost entry
   // that is NOT in the trusted proxy set.
   // Without trusted proxies configured, all client-supplied IP headers (x-forwarded-for,
-  // x-real-ip) are spoofable — fall back to 'unknown' so the limiter applies globally.
+  // x-real-ip) are spoofable - fall back to 'unknown' so the limiter applies globally.
   const ip = (_TRUSTED_PROXIES && xff)
     ? (xff.split(',').map(s => s.trim()).reverse().find(i => !_TRUSTED_PROXIES.has(i)) ?? xff.split(',')[0].trim())
     : 'unknown'
@@ -144,12 +144,37 @@ function _checkRateLimit(req) {
 }`
 
     const corsDecl = `const _CORS_ORIGIN = ${this.cors ? JSON.stringify(this.cors) : 'null'}`
+    const staticFallback = `
+const _path = require('path')
+const _fs = require('fs')
+const _DIST_DIR = _path.dirname(require.main?.filename ?? __filename)
+const _MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.json': 'application/json' }
+async function _serveStatic(req, pathname) {
+  // Protect /admin/* pages before dispatch - a POST route match returns 405
+  // rather than 404, which would otherwise bypass both the static fallback and auth.
+  if (req.method === 'GET' && (pathname === '/admin' || pathname.startsWith('/admin/')) && pathname !== '/admin/login') {
+    const _sess = await auth.session(req)
+    if (!_sess) return Response.redirect('/admin/login', 302)
+  }
+  const _r = _dispatch(req, pathname)
+  if (!(_r instanceof Response) || _r.status !== 404) return _r
+  // Try dist/path.html then dist/path/index.html
+  for (const _try of [pathname.replace(/\\/$/, '') + '.html', pathname.replace(/\\/$/, '') + '/index.html']) {
+    const _fp = _path.join(_DIST_DIR, _try)
+    if (_fs.existsSync(_fp)) {
+      const _ext = _path.extname(_fp)
+      return new Response(Bun.file(_fp), { headers: { 'Content-Type': _MIME[_ext] ?? 'text/plain' } })
+    }
+  }
+  return _r
+}`
     return `
-// Generated by Arc compiler — do not edit
+// Generated by Arc compiler - do not edit
 'use strict'
 ${dbSetup}
 ${corsDecl}
 ${SHARED_RESPONSE_HELPERS}
+${staticFallback}
 ${rateLimiter}`.trim()
   }
 
@@ -193,7 +218,7 @@ const _db = {
   _emitModelHelpersSqlite(schema) {
     const { lc, fields, colList, colDefs } = this._schemaVars(schema, 'sqlite')
     const placeholders = fields.map((_, i) => `?${i + 1}`).join(', ')
-    const updates = fields.map((f, i) => `${f.name} = ?${i + 1}`).join(', ')
+    const updates = fields.map((f, i) => `"${f.name}" = ?${i + 1}`).join(', ')
     const selectCols = colList ? `id, ${colList}` : 'id'
 
     const fieldNames = JSON.stringify(fields.map(f => f.name))
@@ -219,22 +244,26 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
   ${lc}: {
     findMany: (opts = {}) => {
       const _w = opts?.where
-      if (!_w || !Object.keys(_w).length) return _q_${lc}_findMany.all(Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
+      const _ob = opts?.orderBy ? Object.entries(opts.orderBy).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
+      const _order = _ob ? \` ORDER BY \${_ob}\` : ''
+      if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${lc}\${_order} LIMIT ? OFFSET ?\`).all(Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
       const _fs = new Set(_${lc}_fields)
-      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${lc}.findMany: unknown field: \${k}\`); return \`\${k} = ?\` })
-      return _db.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')} LIMIT ? OFFSET ?\`).all(...Object.values(_w), Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
+      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${lc}.findMany: unknown field: \${k}\`); return \`"\${k}" = ?\` })
+      return _db.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')}\${_order} LIMIT ? OFFSET ?\`).all(...Object.values(_w), Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
     },
     findFirst: (opts = {}) => {
       const _w = opts?.where
-      if (!_w || !Object.keys(_w).length) return _q_${lc}_findMany.all(1, 0)[0] ?? null
+      const _ob = opts?.orderBy ? Object.entries(opts.orderBy).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
+      const _order = _ob ? \` ORDER BY \${_ob}\` : ''
+      if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${lc}\${_order} LIMIT 1\`).get() ?? null
       const _fs = new Set(_${lc}_fields)
-      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${lc}.findFirst: unknown field: \${k}\`); return \`\${k} = ?\` })
-      return _db.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')} LIMIT 1\`).get(...Object.values(_w)) ?? null
+      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${lc}.findFirst: unknown field: \${k}\`); return \`"\${k}" = ?\` })
+      return _db.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')}\${_order} LIMIT 1\`).get(...Object.values(_w)) ?? null
     },
     findUnique: (opts = {}) => {
       const _w = opts?.where; if (!_w) throw new Error('${lc}.findUnique: where is required')
       const _fs = new Set(_${lc}_fields)
-      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${lc}.findUnique: unknown field: \${k}\`); return \`\${k} = ?\` })
+      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${lc}.findUnique: unknown field: \${k}\`); return \`"\${k}" = ?\` })
       const _rs = _db.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')} LIMIT 2\`).all(...Object.values(_w))
       if (_rs.length > 1) throw Object.assign(new Error('${lc}.findUnique: multiple rows'), { status: 400 })
       return _rs[0] ?? null
@@ -299,7 +328,7 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
     }).join('\n')
 
     return `
-// Schema init — promise-based startup; awaited in Bun.serve fetch handler before first dispatch
+// Schema init - promise-based startup; awaited in Bun.serve fetch handler before first dispatch
 // (top-level await is invalid in CJS; this pattern is equivalent and CJS-safe)
 let db = null
 let _schemaInitErr = null
@@ -323,7 +352,9 @@ ${dbEntries}
     for (const f of fields) {
       if (!_SAFE_IDENT.test(f.name)) throw new Error(`Arc codegen: unsafe field name: ${JSON.stringify(f.name)}`)
     }
-    const colList = fields.map(f => f.name).join(', ')
+    // Quote all column names to handle SQL reserved words (e.g. "order", "group", "type")
+    const q = n => `"${n}"`
+    const colList = fields.map(f => q(f.name)).join(', ')
     const idDef = dialect === 'postgres' ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'
     const colDefs = [
       `id ${idDef}`,
@@ -334,7 +365,7 @@ ${dbEntries}
         const notNull = isOptional ? '' : ' NOT NULL'
         const unique = f.decorators?.includes('@unique') ? ' UNIQUE' : ''
         const defaultVal = this._fieldDefaultSql(f, dialect)
-        return `${f.name} ${sqlType}${notNull}${defaultVal}${unique}`
+        return `${q(f.name)} ${sqlType}${notNull}${defaultVal}${unique}`
       })
     ].join(', ')
     return { lc, fields, colList, colDefs }
@@ -426,16 +457,16 @@ async function _job_${job.name}(${params}) {
     if (node.type === 'Literal') return node.value
     if (node.type === 'ArrayLiteral') return (node.elements ?? []).map(e => this._evalLiteral(e))
     if (node.type === 'ObjectLiteral') {
-      const obj = {}
+      const evaluated = {}
       for (const prop of (node.properties ?? [])) {
-        obj[String(prop.key)] = this._evalLiteral(prop.value)
+        evaluated[String(prop.key)] = this._evalLiteral(prop.value)
       }
-      return obj
+      return evaluated
     }
     throw new Error(`Cannot statically evaluate node type: ${node.type}`)
   }
 
-  // Detects the echo pattern: exactly 2 statements —
+  // Detects the echo pattern: exactly 2 statements -
   //   const <name> = parseBody(request)
   //   json(<name>)
   // Used to emit a raw arrayBuffer passthrough instead of parse+stringify.
@@ -465,7 +496,7 @@ async function _job_${job.name}(${params}) {
     const name = routeHandlerName(route)
     const pathParams = (route.params ?? []).map(p => `const ${p} = params['${p}']`).join('\n    ')
 
-    // Item 11: RBAC — parse optional role from @auth(role)
+    // Item 11: RBAC - parse optional role from @auth(role)
     const authAnnotation = route.annotations?.find(a => a === '@auth' || a.startsWith('@auth('))
     const requiresAuth = !!authAnnotation
     let authRole = null
@@ -521,10 +552,10 @@ async function ${name}(req, params) {
     // Item 11: RBAC auth guard
     let authGuard = ''
     if (requiresAuth) {
-      authGuard = `const _sess = await auth.session(req); if (!_sess) return _json({ error: 'Unauthorized' }, 401);\n    const session = _sess;`
+      authGuard = `const _sess = await auth.session(req); if (!_sess) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Unauthorized' }, 401) : Response.redirect('/admin/login', 302); }\n    const session = _sess;`
       if (authRole) {
         const roles = authRole.split(',').map(r => r.trim()).filter(Boolean)
-        authGuard += `\n    if (!${JSON.stringify(roles)}.includes(session.role)) return _json({ error: 'Forbidden' }, 403);`
+        authGuard += `\n    if (!${JSON.stringify(roles)}.includes(session.role)) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Forbidden' }, 403) : Response.redirect('/admin/login', 302); }`
       }
     }
 
@@ -644,7 +675,7 @@ const _TRACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/`
     }
     const envBlock = envChecks.length > 0 ? envChecks.join('\n') + '\n\n' : ''
 
-    // Item 9: CORS preflight response (lean server only — bun-routes handles it per-route)
+    // Item 9: CORS preflight response (lean server only - bun-routes handles it per-route)
     const corsOriginLiteral = this.cors ? JSON.stringify(this.cors) : null
     const corsOptionsHandler = corsOriginLiteral ? `
     if (req.method === 'OPTIONS') {
@@ -698,9 +729,9 @@ _printBanner(_server.port)
       resHeaders: _arc_p_rsh
     }))
     return _arc_p_resp`
-      : `return _dispatch(req, _pathname)`
+      : `return await _serveStatic(req, _pathname)`
 
-    const fetchKeyword = this.profile ? 'async fetch' : 'fetch'
+    const fetchKeyword = 'async fetch'
 
     return `
 ${traceHoist}
