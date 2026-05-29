@@ -42,6 +42,8 @@ These live in this repo under `examples/` and demonstrate specific patterns:
 | [`examples/live`](../examples/live) | `@live` streaming render | Pre-rendered HTML, no flash |
 | [`examples/chat`](../examples/chat) | `@realtime` WebSocket | Binary frames, auto-reconnect |
 | [`examples/patterns`](../examples/patterns) | Native `<dialog>` / Popover / `<details>` | 0 JS using browser primitives |
+| [`examples/qrcode`](../examples/qrcode) | `QRCode` stdlib widget | Zero-dep inline SVG, single `<path>` |
+| [`examples/packages`](../examples/packages) | All stdlib widgets showcase | Live demos + usage snippets |
 
 ---
 
