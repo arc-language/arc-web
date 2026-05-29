@@ -933,37 +933,37 @@ class HtmlEmitter {
     const id = rawId
       ? (rawId.type ? this.evalStaticExpr(rawId) : rawId)
       : 'modal'
-    const rawLabel = node.attrs?.label
-    const label = rawLabel ? (rawLabel.type ? this.evalStaticExpr(rawLabel) : rawLabel) : null
-    let labelAttr
-    if (label) {
-      labelAttr = ` aria-label="${this.escape(String(label))}"`
-    } else {
-      // Look for the first heading child; use aria-labelledby pointing to it.
-      // Clone heading node to inject the id without mutating the original AST
-      // (emitModal can be called multiple times on the same AST for widget reuse).
-      const headingIdx = (node.children ?? []).findIndex(c =>
-        c.type === 'Element' && (c.tag === 'heading' || /^h[1-6]$/.test(c.tag))
-      )
-      if (headingIdx >= 0) {
-        const orig = node.children[headingIdx]
-        const existingId = orig.id ?? orig.attrs?.id
-        const actualId = existingId ?? `${id}-title`
-        labelAttr = ` aria-labelledby="${this.escape(String(actualId))}"`
-        if (!existingId) {
-          // Clone to avoid mutating the shared AST node
-          const patchedChildren = [...node.children]
-          patchedChildren[headingIdx] = { ...orig, attrs: { ...(orig.attrs ?? {}), id: actualId } }
-          node = { ...node, children: patchedChildren }
-        }
-      } else {
-        // No heading found - keep id-based aria-label as last resort
-        labelAttr = ` aria-label="${this.escape(String(id))}"`
-      }
-    }
+    const { labelAttr, resolvedNode } = this._resolveModalLabel(node, id)
     // Note: autofocus is intentionally omitted: autofocus on <dialog> is ignored by spec.
     // The trigger= onclick handler focuses the first focusable child after showModal().
-    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${labelAttr}>${this.emitChildren(node.children)}</dialog>`
+    return `<dialog id="${this.escape(String(id))}" aria-modal="true"${labelAttr}>${this.emitChildren(resolvedNode.children)}</dialog>`
+  }
+
+  // Resolve aria-label or aria-labelledby for a modal node.
+  // When no explicit label= is given, looks for a heading child and clones the node
+  // to inject an id without mutating the shared AST (emitModal may run multiple times).
+  _resolveModalLabel(node, id) {
+    const rawLabel = node.attrs?.label
+    const label = rawLabel ? (rawLabel.type ? this.evalStaticExpr(rawLabel) : rawLabel) : null
+    if (label) {
+      return { labelAttr: ` aria-label="${this.escape(String(label))}"`, resolvedNode: node }
+    }
+    const headingIdx = (node.children ?? []).findIndex(c =>
+      c.type === 'Element' && (c.tag === 'heading' || /^h[1-6]$/.test(c.tag))
+    )
+    if (headingIdx >= 0) {
+      const orig = node.children[headingIdx]
+      const existingId = orig.id ?? orig.attrs?.id
+      const actualId = existingId ?? `${id}-title`
+      const labelAttr = ` aria-labelledby="${this.escape(String(actualId))}"`
+      if (!existingId) {
+        const patchedChildren = [...node.children]
+        patchedChildren[headingIdx] = { ...orig, attrs: { ...(orig.attrs ?? {}), id: actualId } }
+        return { labelAttr, resolvedNode: { ...node, children: patchedChildren } }
+      }
+      return { labelAttr, resolvedNode: node }
+    }
+    return { labelAttr: ` aria-label="${this.escape(String(id))}"`, resolvedNode: node }
   }
 
   emitTooltip(node) {

@@ -397,7 +397,20 @@ class BuildExecutor {
       }
     }
 
-    const _attempt = (attempt) => new Promise((resolve, reject) => {
+    const MAX_ATTEMPTS = 3
+    let lastErr
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      try { return await this._attemptFetch(url, parsed) } catch (e) {
+        lastErr = e
+        if (e._noRetry || i === MAX_ATTEMPTS - 1) throw e
+        await new Promise(r => setTimeout(r, 500 * Math.pow(2, i)))
+      }
+    }
+    throw lastErr
+  }
+
+  _attemptFetch(url, parsed) {
+    return new Promise((resolve, reject) => {
       // settled must be hoisted to executor scope: error/timeout handlers fire
       // before the response callback when connect-phase failures happen.
       let settled = false
@@ -450,17 +463,6 @@ class BuildExecutor {
         if (!settled) { settled = true; req.destroy(); reject(Object.assign(new Error(`@build fetch: timeout after 10s: ${url}`), { _noRetry: true })) }
       })
     })
-
-    const MAX_ATTEMPTS = 3
-    let lastErr
-    for (let i = 0; i < MAX_ATTEMPTS; i++) {
-      try { return await _attempt(i) } catch (e) {
-        lastErr = e
-        if (e._noRetry || i === MAX_ATTEMPTS - 1) throw e
-        await new Promise(r => setTimeout(r, 500 * Math.pow(2, i)))
-      }
-    }
-    throw lastErr
   }
 
   // Sensitive filename patterns that @build readFile must never expose

@@ -527,14 +527,15 @@ async function build(projectDir) {
     process.exit(1)
   }
 
-  // Stats
+  _printBuildStats(result, finalHtml, finalCss, distDir, filename, Date.now() - _t0)
+}
+
+function _printBuildStats(result, finalHtml, finalCss, distDir, filename, elapsed) {
   const htmlSize = Buffer.byteLength(finalHtml)
   const cssSize = finalCss ? Buffer.byteLength(finalCss) : 0
   const jsSize = Buffer.byteLength(result.js)
   const edgeSize = result.edgeFunctions ? Buffer.byteLength(result.edgeFunctions) : 0
   const liveSize = result.liveEdgeFunction ? Buffer.byteLength(result.liveEdgeFunction) : 0
-
-  const _elapsed = Date.now() - _t0
   if (_TTY) {
     const _rel = path.relative(process.cwd(), distDir) || 'dist'
     console.log(`\n  ${_OCYAN}⚡ arc${_ORST}  →  ${_rel}/\n`)
@@ -543,7 +544,7 @@ async function build(projectDir) {
     console.log(`  ${_ODIM}JS  ${_ORST}    ${jsSize === 0 ? `${_ODIM}0 B  (static)${_ORST}` : fmt(jsSize)}`)
     if (edgeSize > 0) console.log(`  ${_ODIM}Edge${_ORST}    ${fmt(edgeSize)}  ${_ODIM}(@server)${_ORST}`)
     if (liveSize > 0) console.log(`  ${_ODIM}Live${_ORST}    ${fmt(liveSize)}  ${_ODIM}(@live)${_ORST}`)
-    console.log(`\n  ${_OGREEN}✓${_ORST}  built in ${_ODIM}${_elapsed}ms${_ORST}\n`)
+    console.log(`\n  ${_OGREEN}✓${_ORST}  built in ${_ODIM}${elapsed}ms${_ORST}\n`)
   } else {
     console.log(`arc: built ${filename}`)
     console.log(`  HTML  ${fmt(htmlSize)}`)
