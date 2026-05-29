@@ -25,7 +25,7 @@ function validateName(name) {
 function detectAvailablePMs() {
   const found = []
   for (const pm of ['bun', 'pnpm', 'yarn', 'npm']) {
-    try { execSync(`${pm} --version`, { stdio: 'ignore' }); found.push(pm) } catch {}
+    try { execSync(`${pm} --version`, { stdio: 'ignore' }); found.push(pm) } catch (_e) { /* PM not installed - skip */ }
   }
   return found.length > 0 ? found : ['npm']
 }

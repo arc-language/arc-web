@@ -48,7 +48,7 @@ const _queue = {
             console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: _jobName, event: 'dlq', msg: '[arc:queue] job permanently failed after 3 retries — moved to dead letter queue', error: _e?.message ?? String(_e) }))
             if (this._dead.length >= 1000) { this._dead.shift(); console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'dlq_cap_reached', msg: '[arc:queue] DLQ cap reached — oldest entry evicted' })) }
             // Store job name + serialized args for inspectability; keep _fn reference for in-process replay
-            let _serializedArgs; try { _serializedArgs = JSON.parse(JSON.stringify(args)) } catch { _serializedArgs = null }
+            let _serializedArgs; try { _serializedArgs = JSON.parse(JSON.stringify(args)) } catch (_e) { _serializedArgs = null /* args not JSON-serializable */ }
             this._dead.push({ name: _jobName, args: _serializedArgs, _fn: fn, error: _e?.message ?? String(_e), failedAt: new Date().toISOString() })
           }
         }

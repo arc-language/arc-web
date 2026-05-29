@@ -214,14 +214,33 @@ function _getStaticFiles() {
   } catch (_e) { /* dist may not exist yet - ENOENT is expected at first build */ }
   return _staticFiles
 }
-async function _serveStatic(req, pathname) {
-  // Protect /admin/* paths before dispatch - applies to all HTTP methods so that
-  // non-GET requests to unmatched admin paths can't bypass the auth check via 404/405.
-  if ((pathname === '/admin' || pathname.startsWith('/admin/')) && pathname !== '/admin/login') {
-    const _sess = await auth.session(req)
-    if (!_sess) return Response.redirect('/admin/login', 302)
+// Cached path -> required role table from server/admin-roles.json (arc-cms config).
+// null = no config (fall back to session-only guard).
+let _adminRoles = undefined
+function _getAdminRoles() {
+  if (_adminRoles !== undefined) return _adminRoles
+  const _p = _path.join(process.cwd(), 'server', 'admin-roles.json')
+  try {
+    _adminRoles = JSON.parse(_fs.readFileSync(_p, 'utf8'))
+  } catch { _adminRoles = null }
+  return _adminRoles
+}
+function _requiredRole(pathname) {
+  const cfg = _getAdminRoles()
+  if (!cfg) return null
+  if ((cfg.exempt ?? []).includes(pathname)) return 'exempt'
+  for (const rule of (cfg.rules ?? [])) {
+    if (pathname === rule.prefix || pathname.startsWith(rule.prefix + '/')) return rule.role
   }
-  // Serve user-uploaded media from public/uploads/ with safe headers
+  return cfg.default ?? 'viewer'
+}
+function _roleOk(have, need) {
+  if (need === 'exempt' || need == null) return true
+  const ranks = { viewer: 1, editor: 2, admin: 3 }
+  return (ranks[have] ?? 0) >= (ranks[need] ?? 0)
+}
+async function _serveStatic(req, pathname) {
+  // Serve user-uploaded media from public/uploads/ with safe headers (no auth — public assets).
   if (req.method === 'GET' && pathname.startsWith('/uploads/')) {
     const _uf = _path.join(process.cwd(), 'public', pathname)
     if (_getStaticFiles().has(_uf)) {
@@ -232,8 +251,21 @@ async function _serveStatic(req, pathname) {
     }
     return new Response('Not found', { status: 404 })
   }
+  // Dispatch @route handlers FIRST so routes with their own @auth(...) annotations
+  // run with their own auth logic. Only unmatched paths (returns 404) fall through
+  // to the static-page admin guard below.
   const _r = _dispatch(req, pathname)
   if (!(_r instanceof Response) || _r.status !== 404) return _r
+  // Guard unmatched /admin/* paths (these resolve to static admin HTML pages).
+  // Routes that exist as @route handlers are already past us by this point.
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+    if (pathname !== '/admin/login') {
+      const _sess = await auth.session(req)
+      if (!_sess) return Response.redirect('/admin/login', 302)
+      const _need = _requiredRole(pathname)
+      if (!_roleOk(_sess.role, _need)) return Response.redirect('/admin/403', 302)
+    }
+  }
   // Try dist/path.html then dist/path/index.html
   const _sf = _getStaticFiles()
   for (const _try of [pathname.replace(/\\/$/, '') + '.html', pathname.replace(/\\/$/, '') + '/index.html']) {

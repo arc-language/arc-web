@@ -73,7 +73,7 @@ function _resolveImportPath(src, projectDir, filename, topLevelRoot) {
     return null
   }
   let realImportPath
-  try { realImportPath = fs.realpathSync(importPath) } catch { realImportPath = importPath }
+  try { realImportPath = fs.realpathSync(importPath) } catch (_e) { realImportPath = importPath /* realpathSync failed - symlink or permissions issue */ }
   const realTopLevelRoot = (() => { try { return fs.realpathSync(topLevelRoot) } catch { return topLevelRoot } })()
   if (!realImportPath.startsWith(realTopLevelRoot + path.sep) && realImportPath !== realTopLevelRoot) {
     console.warn(`arc: warning: import escapes project root, skipping: ${src}`)
@@ -88,7 +88,7 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
   if (imports.length === 0) return program
 
   const merged = program.declarations.filter(d => d.type !== 'ImportDecl')
-  // O(1) dedup tracking sets — updated alongside merged to avoid O(D×M) .some() scans
+  // O(1) dedup tracking sets - updated alongside merged to avoid O(D*M) .some() scans
   const mergedWidgetNames = new Set(merged.filter(d => d.type === 'WidgetDecl').map(d => d.name))
   const mergedFnNames = new Set(merged.filter(d => d.type === 'FnDecl').map(d => d.name))
   const mergedStateNames = new Set(merged.filter(d => d.type === 'StateDecl').map(d => d.name))
@@ -104,7 +104,7 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
     let importedProgram
     if (visited.has(importPath)) {
       importedProgram = visited.get(importPath)
-      if (!importedProgram) continue  // circular import in progress — skip
+      if (!importedProgram) continue  // circular import in progress - skip
     } else {
       // Mark as in-progress (null) before recursing to catch circular imports
       visited.set(importPath, null)
@@ -244,7 +244,7 @@ function _resolveCssPackages(pkgs, rootDir) {
           const pkgJson = JSON.parse(fs.readFileSync(path.join(candidate, 'package.json'), 'utf8'))
           entry = pkgJson.style ?? pkgJson.main ?? null
           if (entry && !entry.endsWith('.css')) entry = null
-        } catch {}
+        } catch (_e) { /* package.json missing or malformed - fall back to index.css */ }
         if (!entry) entry = 'index.css'
         cssPath = path.join(candidate, entry)
         break
@@ -698,7 +698,7 @@ async function buildSite(projectDir) {
   const sharedImgPipeline = new ImagePipeline({ srcDir: absDir, outDir: distDir })
   const rootDir = _findProjectRoot(absDir)
 
-  const compiled = await Promise.all(pageFiles.map(async ({ absPath, src }) => {
+  const compiled = await _withConcurrency(require('os').cpus().length, pageFiles, async ({ absPath, src }) => {
     // slug preserves directory structure: "index", "packages/index", "docs/quickstart"
     const relPath = path.relative(absDir, absPath)
     const slug = relPath.replace(/\.arc$/, '').replace(/\\/g, '/')
@@ -720,7 +720,7 @@ async function buildSite(projectDir) {
       html: result.html, css: result.css, js: result.js,
       edgeFunctions: result.edgeFunctions, liveEdgeFunction: result.liveEdgeFunction,
     }
-  }))
+  })
 
   const failed = pageFiles.filter((_, i) => compiled[i] === null)
   if (failed.length > 0) {
@@ -730,6 +730,20 @@ async function buildSite(projectDir) {
   }
 
   const pp = new PostProcessor()
+
+  // Warn on routing collisions: foo.arc and foo/index.arc both serve /foo.
+  // _serveStatic tries `<path>.html` before `<path>/index.html`, so the flat
+  // form silently wins. Surface this at build time.
+  {
+    const slugs = new Set(compiled.map(c => c.slug))
+    for (const c of compiled) {
+      if (c.slug.endsWith('/index') && slugs.has(c.slug.slice(0, -'/index'.length))) {
+        const flat = c.slug.slice(0, -'/index'.length) + '.arc'
+        const nested = c.slug + '.arc'
+        console.warn(`arc: warning: route collision — both ${flat} and ${nested} serve /${c.slug.slice(0, -'/index'.length)}. The flat form wins; delete one.`)
+      }
+    }
+  }
 
   for (let i = 0; i < compiled.length; i++) {
     const c = compiled[i]
@@ -1146,7 +1160,7 @@ async function dev(projectDir) {
         if (!_depMap.has(dep)) _depMap.set(dep, new Set())
         _depMap.get(dep).add(slug)
       }
-    } catch { /* ignore scan errors — full rebuild is the fallback */ }
+    } catch { /* ignore scan errors - full rebuild is the fallback */ }
   }
 
   // Populate _depMap, _slugFile, _prevHtml from the just-written dist files.

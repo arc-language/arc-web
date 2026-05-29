@@ -46,43 +46,37 @@ describe('stdlib: parse without errors', () => {
 })
 
 describe('stdlib/router.arc', () => {
+  const src = fs.readFileSync(path.join(STDLIB_DIR, 'router.arc'), 'utf8')
+
   test('defines parseRoute function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'router.arc'), 'utf8')
     assert.ok(src.includes('fn parseRoute'), 'parseRoute not found')
   })
 
   test('defines matchRoute function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'router.arc'), 'utf8')
     assert.ok(src.includes('fn matchRoute'), 'matchRoute not found')
   })
 
   test('defines navigate function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'router.arc'), 'utf8')
     assert.ok(src.includes('fn navigate'), 'navigate not found')
   })
 
   test('uses @state for reactive path', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'router.arc'), 'utf8')
     assert.ok(src.includes('@state let _routerPath'), '_routerPath @state not found')
   })
 
   test('handles popstate for browser back/forward', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'router.arc'), 'utf8')
     assert.ok(src.includes('popstate'), 'popstate handler not found')
   })
 
   test('uses View Transitions API when available', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'router.arc'), 'utf8')
     assert.ok(src.includes('startViewTransition'), 'View Transitions API not used')
   })
 
   test('defines Router widget', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'router.arc'), 'utf8')
     assert.ok(src.includes('widget Router'), 'Router widget not found')
   })
 
   test('defines Link widget', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'router.arc'), 'utf8')
     assert.ok(src.includes('widget Link'), 'Link widget not found')
   })
 })
@@ -127,128 +121,111 @@ describe('stdlib/store.arc', () => {
 })
 
 describe('stdlib/form.arc', () => {
+  const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
+
   test('defines createForm function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('fn createForm'), 'createForm not found')
   })
 
   test('has required validator', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('fn _required'), '_required validator not found')
   })
 
   test('has email validator', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('fn _email'), '_email validator not found')
   })
 
   test('has minLength validator', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('fn _minLength'), '_minLength validator not found')
   })
 
   test('form has submit handler that prevents default', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('e.preventDefault()'), 'preventDefault not found in submit')
   })
 
   test('form has reset function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('fn reset()'), 'reset not found')
   })
 
   test('form tracks touched fields', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('@state let touched'), 'touched state not found')
   })
 
   test('form tracks submission state', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('@state let isSubmitting'), 'isSubmitting state not found')
   })
 
   test('defines Field widget', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('widget Field'), 'Field widget not found')
   })
 
   test('defines FormError widget', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('widget FormError'), 'FormError widget not found')
   })
 
   test('Field has on:blur for touch tracking', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'form.arc'), 'utf8')
     assert.ok(src.includes('on:blur'), 'on:blur not found in Field')
   })
 })
 
 describe('stdlib/fetch.arc', () => {
+  const src = fs.readFileSync(path.join(STDLIB_DIR, 'fetch.arc'), 'utf8')
+
   test('defines get function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'fetch.arc'), 'utf8')
     assert.ok(src.includes('fn get(url'), 'get not found')
   })
 
   test('defines post function', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'fetch.arc'), 'utf8')
     assert.ok(src.includes('fn post(url'), 'post not found')
   })
 
   test('defines put, patch, del functions', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'fetch.arc'), 'utf8')
     assert.ok(src.includes('fn put('), 'put not found')
     assert.ok(src.includes('fn patch('), 'patch not found')
     assert.ok(src.includes('fn del('), 'del not found')
   })
 
   test('returns Ok/Err Result type', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'fetch.arc'), 'utf8')
     assert.ok(src.includes('Ok('), 'Ok() not used')
     assert.ok(src.includes('Err('), 'Err() not used')
   })
 
   test('defines api object with adp sub-object', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'fetch.arc'), 'utf8')
     assert.ok(src.includes('const api ='), 'api object not found')
     assert.ok(src.includes('adp') && src.includes('adpRequest'), 'adp support not found')
   })
 
   test('ADP uses application/x-adp content type', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'fetch.arc'), 'utf8')
     assert.ok(src.includes('application/x-adp'), 'ADP content type not found')
   })
 
   test('defines useFetch reactive hook', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'fetch.arc'), 'utf8')
     assert.ok(src.includes('fn useFetch'), 'useFetch not found')
   })
 
   test('useFetch has loading/data/error state', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'fetch.arc'), 'utf8')
     assert.ok(src.includes('@state let loading'), 'loading state not found')
     assert.ok(src.includes('@state let data'), 'data state not found')
     assert.ok(src.includes('@state let error'), 'error state not found')
   })
 
   test('useFetch supports AbortController for cancellation', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'fetch.arc'), 'utf8')
     assert.ok(src.includes('AbortController'), 'AbortController not found')
   })
 })
 
 describe('stdlib/icons.arc', () => {
+  const src = fs.readFileSync(path.join(STDLIB_DIR, 'icons.arc'), 'utf8')
+
   test('defines Icon widget', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'icons.arc'), 'utf8')
     assert.ok(src.includes('widget Icon'), 'Icon widget not found')
   })
 
   test('defines icons map', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'icons.arc'), 'utf8')
     assert.ok(src.includes('const icons ='), 'icons map not found')
   })
 
   test('has commonly needed icons', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'icons.arc'), 'utf8')
     const required = ['search', 'home', 'user', 'settings', 'check', 'x', 'plus', 'arrow-right', 'heart', 'star']
     for (const icon of required) {
       assert.ok(src.includes(`"${icon}"`), `Icon "${icon}" not found in icons map`)
@@ -256,29 +233,23 @@ describe('stdlib/icons.arc', () => {
   })
 
   test('has at least 40 icons', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'icons.arc'), 'utf8')
-    // Count quoted icon name keys
     const matches = src.match(/"[a-z][a-z-]+": "</g) ?? []
     assert.ok(matches.length >= 40, `Expected 40+ icons, found ${matches.length}`)
   })
 
   test('Icon widget accepts size attr', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'icons.arc'), 'utf8')
     assert.ok(src.includes('@size'), 'size attr not found')
   })
 
   test('Icon widget accepts color attr', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'icons.arc'), 'utf8')
     assert.ok(src.includes('@color'), 'color attr not found')
   })
 
   test('Icon has aria-label support for accessibility', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'icons.arc'), 'utf8')
     assert.ok(src.includes('aria-label'), 'aria-label not found')
   })
 
   test('Icon falls back gracefully for unknown names', () => {
-    const src = fs.readFileSync(path.join(STDLIB_DIR, 'icons.arc'), 'utf8')
     assert.ok(src.includes('if svgPath'), 'missing guard for unknown icon name')
   })
 })

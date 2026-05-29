@@ -135,7 +135,7 @@ main().catch(e => { console.error('[arc:seed] failed:', e.message); process.exit
   }
 
   // Register exit cleanup before spawning so the temp file is removed even on SIGKILL
-  const cleanupTmp = () => { try { fs.unlinkSync(tmpFile) } catch {} }
+  const cleanupTmp = () => { try { fs.unlinkSync(tmpFile) } catch (_e) { /* best-effort temp cleanup */ } }
   process.on('exit', cleanupTmp)
 
   const bunCheck = spawnSync('bun', ['--version'], { stdio: 'pipe' })

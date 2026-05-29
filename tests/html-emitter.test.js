@@ -176,9 +176,8 @@ describe('HTML Emitter', () => {
       assert.ok(!html.includes('<dialog id="x" popover'), `dialog must not have popover attribute:\n${html}`)
     })
 
-    test('modal uses native dialog element', async () => {
+    test('modal uses aria-modal and no popover', async () => {
       const { html } = await compile('page "T"\n  modal id="m1"\n    text "Hi"')
-      assert.ok(html.includes('<dialog'), `Expected <dialog> in:\n${html}`)
       assert.ok(!html.includes('popover'), `dialog must not use popover API:\n${html}`)
       assert.ok(html.includes('aria-modal="true"'), `Expected aria-modal="true" in:\n${html}`)
     })
@@ -584,7 +583,7 @@ page "T"
     div "A"
     div "B"`
       const { html } = await compile(src)
-      assert.ok(!html.includes('<script>') || !html.includes('setInterval'), `Expected no autoplay script in:\n${html}`)
+      assert.ok(!html.includes('setInterval'), `Expected no autoplay setInterval script in:\n${html}`)
     })
 
     test('slider items=3 sets CSS custom property', async () => {

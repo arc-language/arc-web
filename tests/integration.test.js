@@ -120,9 +120,9 @@ describe('integration: dashboard example', () => {
     assert.ok(result.html.includes('</html>'))
   })
 
-  test('dashboard HTML and CSS are non-empty', () => {
-    assert.ok(result.html.length > 0)
-    assert.ok(result.css.length > 0)
+  test('dashboard HTML and CSS have structural content', () => {
+    assert.ok(result.html.includes('<body'), `Expected <body> in html output`)
+    assert.ok(result.css.includes('{'), `Expected CSS rules in css output`)
   })
 })
 

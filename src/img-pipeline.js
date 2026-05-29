@@ -18,7 +18,7 @@ const path = require('path')
 const crypto = require('crypto')
 
 let sharp = null
-try { sharp = require('sharp') } catch { /* optional; pipeline becomes a no-op */ }
+try { sharp = require('sharp') } catch (_e) { /* optional - pipeline becomes a no-op. Install sharp for AVIF/WebP support. */ }
 
 const DEFAULT_WIDTHS = [400, 800, 1200, 1600]
 const DEFAULT_FORMATS = ['avif', 'webp', 'original']
@@ -36,7 +36,7 @@ class ImagePipeline {
     this.sharp = sharpLib
     this.hashByPath = new Map()      // src path → sha8
     this.processed = new Map()       // sha8 → { widths, variants, color, w, h, useAvif }
-    this._inFlight = new Map()       // sha8 → Promise — coalesces concurrent calls for same image
+    this._inFlight = new Map()       // sha8 → Promise - coalesces concurrent calls for same image
     // Cap Sharp's internal worker threads to avoid saturating libuv's thread pool
     // (default 4 threads) when many images are processed in parallel across pages.
     if (this.sharp?.concurrency) {
