@@ -686,6 +686,35 @@ async function ${name}(req, params) {
     return 'handler'
   }
 
+  _buildRouteTable(routes) {
+    const rows = routes.map(r => ({
+      method: (r.method ?? 'GET').toUpperCase(),
+      path: r.path ?? '/',
+      type: this._routeTypeLabel(r),
+    }))
+    rows.push({ method: 'GET', path: '/health', type: 'built-in' })
+    const maxPath = Math.max(...rows.map(r => r.path.length), 6)
+    return rows.map(r => `  ${r.method.padEnd(6)}  ${r.path.padEnd(maxPath)}  ${r.type}`).join('\\n')
+  }
+
+  _buildBannerFn(routeTableStr, dbDisplayLabel, dbLabel) {
+    return `
+function _printBanner(port) {
+  if (process.stdout.isTTY && !process.env.NO_COLOR) {
+    const C = '\\x1b[36m', G = '\\x1b[32m', D = '\\x1b[2m', R = '\\x1b[0m'
+    process.stdout.write('\\n  ' + C + '⚡ arc server' + R + '\\n\\n')
+    process.stdout.write('  ●  http://localhost:' + port + '\\n')
+    ${dbDisplayLabel ? `process.stdout.write('  ◆  ' + D + '${dbDisplayLabel}' + R + '\\n')` : ''}
+    process.stdout.write('\\n')
+    const rows = ${JSON.stringify(routeTableStr)}.split('\\\\n')
+    for (const row of rows) process.stdout.write(D + row + R + '\\n')
+    process.stdout.write('\\n')
+  } else {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: 'arc: server started', port, db: '${dbLabel}' }))
+  }
+}`
+  }
+
   emitBunServe(routes, schemas, hasMiddleware = false) {
     const port = '+(process.env.PORT ?? 3000)'
     const hasAuth = routes.some(r => r.annotations?.find(a => a === '@auth' || a.startsWith('@auth(')))
@@ -701,34 +730,8 @@ async function ${name}(req, params) {
     const dbLabel = this.isPg ? 'postgres' : (hasDb ? 'sqlite' : 'none')
     const dbDisplayLabel = this.isPg ? 'PostgreSQL' : (hasDb ? 'SQLite (local)' : null)
 
-    // Build compile-time route table string
-    const allRouteRows = routes.map(r => {
-      const method = (r.method ?? 'GET').toUpperCase()
-      const rpath = r.path ?? '/'
-      const type = this._routeTypeLabel(r)
-      return { method, path: rpath, type }
-    })
-    allRouteRows.push({ method: 'GET', path: '/health', type: 'built-in' })
-    const maxPath = Math.max(...allRouteRows.map(r => r.path.length), 6)
-    const routeTableStr = allRouteRows.map(r =>
-      `  ${r.method.padEnd(6)}  ${r.path.padEnd(maxPath)}  ${r.type}`
-    ).join('\\n')
-
-    const bannerFn = `
-function _printBanner(port) {
-  if (process.stdout.isTTY && !process.env.NO_COLOR) {
-    const C = '\\x1b[36m', G = '\\x1b[32m', D = '\\x1b[2m', R = '\\x1b[0m'
-    process.stdout.write('\\n  ' + C + '⚡ arc server' + R + '\\n\\n')
-    process.stdout.write('  ●  http://localhost:' + port + '\\n')
-    ${dbDisplayLabel ? `process.stdout.write('  ◆  ' + D + '${dbDisplayLabel}' + R + '\\n')` : ''}
-    process.stdout.write('\\n')
-    const rows = ${JSON.stringify(routeTableStr)}.split('\\\\n')
-    for (const row of rows) process.stdout.write(D + row + R + '\\n')
-    process.stdout.write('\\n')
-  } else {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: 'arc: server started', port, db: '${dbLabel}' }))
-  }
-}`
+    const routeTableStr = this._buildRouteTable(routes)
+    const bannerFn = this._buildBannerFn(routeTableStr, dbDisplayLabel, dbLabel)
     const traceSetup = this.noTracing ? '' : `
     const _clientId = req.headers.get('x-request-id') ?? ''
     req._traceId = _TRACE_ID_RE.test(_clientId) ? _clientId : crypto.randomUUID().slice(0, 8)`

@@ -118,15 +118,7 @@ class JsEmitter {
       parts.push(code)
     }
 
-    // Pre-build computed dependency adjacency: computedName → [computeds that directly depend on it]
-    // Forward pass: build dep → Set<c.name it references> once, then invert.
-    // This keeps exprReferences calls to O(n²) but allows O(1) Set lookups for BFS in the setter loop.
-    const computedAdj = new Map()
-    for (const c of computedDecls) computedAdj.set(c.name, [])
-    for (const dep of computedDecls) {
-      const directDeps = new Set(computedDecls.filter(c => c.name !== dep.name && this.exprReferences(dep.init, c.name)).map(c => c.name))
-      for (const cName of directDeps) computedAdj.get(cName)?.push(dep)
-    }
+    const computedAdj = this._buildComputedAdj(computedDecls)
 
     // Setter functions: one per @state variable
     for (const s of stateDecls) {
@@ -197,6 +189,20 @@ class JsEmitter {
   }
 
   // ── Dependency graph ───────────────────────────────────────────────────────
+
+  // Build computed → [computeds that depend on it] adjacency map for BFS recomputation.
+  // Forward pass: build dep → Set<c.name it references> once, then invert.
+  _buildComputedAdj(computedDecls) {
+    const adj = new Map()
+    for (const c of computedDecls) adj.set(c.name, [])
+    for (const dep of computedDecls) {
+      const directDeps = new Set(
+        computedDecls.filter(c => c.name !== dep.name && this.exprReferences(dep.init, c.name)).map(c => c.name)
+      )
+      for (const cName of directDeps) adj.get(cName)?.push(dep)
+    }
+    return adj
+  }
 
   buildDeps(stateDecls, computedDecls, stateBindings) {
     const deps = new Map()

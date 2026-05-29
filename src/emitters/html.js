@@ -284,8 +284,7 @@ class HtmlEmitter {
       seo.canonical ? `<meta property="og:url" content="${this.escape(seo.canonical)}">` : '',
       seo.image ? `<meta property="og:image" content="${this.escape(seo.image)}">` : '',
       seo.siteName ? `<meta property="og:site_name" content="${this.escape(seo.siteName)}">` : '',
-      // og:locale derived from page lang (e.g. 'en' → 'en_US', 'zh-TW' → 'zh_TW')
-      (() => { const l = (this._currentLang ?? 'en').replace('-', '_'); const loc = l.includes('_') ? l : `${l}_${l.toUpperCase()}`; return `<meta property="og:locale" content="${this.escape(loc)}">` })(),
+      `<meta property="og:locale" content="${this.escape(this._ogLocale())}">`,
       // Twitter Card
       `<meta name="twitter:card" content="${seo.image ? 'summary_large_image' : 'summary'}">`,
       `<meta name="twitter:title" content="${this.escape(title)}">`,
@@ -296,6 +295,11 @@ class HtmlEmitter {
       jsonLd ? `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/&/g, '\\u0026').replace(/</g, '\\u003c').replace(/>/g, '\\u003e')}</script>` : '',
       '<link rel="stylesheet" href="styles.css">',
     ]
+  }
+
+  _ogLocale() {
+    const l = (this._currentLang ?? 'en').replace('-', '_')
+    return l.includes('_') ? l : `${l}_${l.toUpperCase()}`
   }
 
   emitWidget(node) {
@@ -1032,16 +1036,7 @@ class HtmlEmitter {
       `</div>`,
     ].join('\n') : ''
 
-    const needsScript = showDots || autoplay
-    const scriptHtml = needsScript ? `<script>(function(){var t=document.getElementById('${trackId}');if(!t)return;${
-      showDots
-        ? `var sl=t.children,dt=t.parentElement.querySelectorAll('.arc-slider-dot_${uid}');if(dt.length){var ob=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){var i=Array.prototype.indexOf.call(sl,e.target);dt.forEach(function(d,j){d.setAttribute('aria-current',i===j?'true':'false');});}});},{root:t,threshold:.5});Array.prototype.forEach.call(sl,function(s){ob.observe(s);});}`
-        : ''
-    }${
-      autoplay
-        ? `var idx=0,sl2=t.children;t.addEventListener('mouseenter',function(){clearInterval(_ap);});t.addEventListener('mouseleave',function(){_ap=setInterval(_fn,${timeout});});function _fn(){idx=(idx+1)%sl2.length;sl2[idx].scrollIntoView({behavior:'smooth',block:'nearest',inline:'start'});}var _ap=setInterval(_fn,${timeout});`
-        : ''
-    }})();</script>` : ''
+    const scriptHtml = (showDots || autoplay) ? this._sliderScript(uid, trackId, showDots, autoplay, timeout) : ''
 
     const style = [
       items !== 1 ? `--arc-si:${items}` : '',
@@ -1062,6 +1057,24 @@ class HtmlEmitter {
   }
 
   // Wrap an element that has a tooltip="" attr as a tooltip-anchor.
+  _sliderScript(uid, trackId, showDots, autoplay, timeout) {
+    const dotsJs = showDots
+      ? `var sl=t.children,dt=t.parentElement.querySelectorAll('.arc-slider-dot_${uid}');` +
+        `if(dt.length){var ob=new IntersectionObserver(function(es){es.forEach(function(e){` +
+        `if(e.isIntersecting){var i=Array.prototype.indexOf.call(sl,e.target);` +
+        `dt.forEach(function(d,j){d.setAttribute('aria-current',i===j?'true':'false');});}` +
+        `});},{root:t,threshold:.5});Array.prototype.forEach.call(sl,function(s){ob.observe(s);});}`
+      : ''
+    const autoplayJs = autoplay
+      ? `var idx=0,sl2=t.children;` +
+        `t.addEventListener('mouseenter',function(){clearInterval(_ap);});` +
+        `t.addEventListener('mouseleave',function(){_ap=setInterval(_fn,${timeout});});` +
+        `function _fn(){idx=(idx+1)%sl2.length;sl2[idx].scrollIntoView({behavior:'smooth',block:'nearest',inline:'start'});}` +
+        `var _ap=setInterval(_fn,${timeout});`
+      : ''
+    return `<script>(function(){var t=document.getElementById('${trackId}');if(!t)return;${dotsJs}${autoplayJs}})();</script>`
+  }
+
   // Add tabindex="0" so non-interactive wrapped elements (e.g. <span tooltip="...">)
   // are keyboard-focusable and can surface the tooltip via :focus styles.
   emitTooltipAttr(node, tooltipText) {
