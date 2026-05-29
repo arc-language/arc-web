@@ -276,6 +276,7 @@ class HtmlEmitter {
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
       `<meta name="robots" content="${this.escape(seo?.robots ?? 'index,follow')}">`,
+      // CSP meta tag is a fallback hint only — does not replace server-sent Content-Security-Policy headers in production
       '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'; object-src \'none\'; base-uri \'self\'; form-action \'self\';">',
       `<title>${this.escape(title)}</title>`,
       description ? `<meta name="description" content="${this.escape(description)}">` : '',

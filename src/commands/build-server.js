@@ -123,7 +123,15 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     ? path.join(absDir, 'server')
     : absDir
 
-  const arcFiles = findArcFiles(serverDir)
+  const absServerDir = path.resolve(serverDir)
+  const arcFiles = findArcFiles(serverDir).filter(f => {
+    const abs = path.resolve(f)
+    if (!abs.startsWith(absServerDir + path.sep)) {
+      console.warn(`arc: warning: skipping file outside server directory: ${f}`)
+      return false
+    }
+    return true
+  })
   if (arcFiles.length === 0) {
     console.error(`arc: no .arc files found in ${path.relative(process.cwd(), serverDir)}`)
     process.exit(1)

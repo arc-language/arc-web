@@ -243,7 +243,7 @@ async function cmsInit(projectDir, opts = {}) {
   // 3. Copy schema (block-types.json + cms.config.arc template)
   const schemaDest = path.join(absDir, 'server')
   fs.mkdirSync(schemaDest, { recursive: true })
-  for (const file of ['block-types.json']) {
+  for (const file of ['block-types.json', 'admin-roles.json']) {
     const s = path.join(_SRC_SCHEMA, file)
     const d = path.join(schemaDest, file)
     if (fs.existsSync(s) && (!fs.existsSync(d) || force)) {
@@ -281,15 +281,20 @@ async function cmsInit(projectDir, opts = {}) {
   if (_arcUiSrc && !fs.existsSync(_arcUiDest)) {
     fs.mkdirSync(path.dirname(_arcUiDest), { recursive: true })
     // Inline imports - arc-ui's index.css uses @import; resolve them recursively so the file is self-contained.
+    // Imports are bounded within the arc-ui package directory to prevent traversal.
+    const _arcUiRoot = path.dirname(path.resolve(_arcUiSrc))
     const _inlineSeen = new Set()
     const _inline = src => {
       const abs = path.resolve(src)
       if (_inlineSeen.has(abs)) return ''
       _inlineSeen.add(abs)
+      let txt
+      try { txt = fs.readFileSync(abs, 'utf8') } catch { return '' }
       const dir = path.dirname(abs)
-      const txt = fs.readFileSync(abs, 'utf8')
       return txt.replace(/@import\s+["']([^"']+)["'];?/g, (_, rel) => {
         const sub = path.resolve(dir, rel)
+        // Bound imports within the arc-ui root to prevent path traversal
+        if (!sub.startsWith(_arcUiRoot + path.sep) && sub !== path.resolve(_arcUiSrc)) return ''
         return fs.existsSync(sub) ? _inline(sub) : ''
       })
     }
