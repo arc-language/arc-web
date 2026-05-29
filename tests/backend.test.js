@@ -6,7 +6,7 @@ const { Lexer } = require('../src/lexer')
 const { Parser } = require('../src/parser')
 const { Checker } = require('../src/checker')
 const { BunServerEmitter } = require('../src/emitters/server-bun')
-const { compileRoutes } = require('../src/compilers/route-compiler')
+const { compileRoutes, emitBunRoutesObject, insertRoute, makeNode } = require('../src/compilers/route-compiler')
 
 function parse(src) {
   const tokens = new Lexer(src).tokenize()
@@ -247,14 +247,13 @@ test('BunServerEmitter: async handler preserved for routes with await', () => {
   assert.ok(out.includes('async function _route_post_echo'), 'non-static handler stays async')
 })
 
-test('BunServerEmitter: fetch handler is sync', () => {
+test('BunServerEmitter: fetch handler is async', () => {
   const prog = parse(`
 @route get "/" -> Response
   json({ ok: true })
 `)
   const out = new BunServerEmitter({}).emitProgram(prog)
-  assert.ok(out.includes('fetch(req) {'), 'fetch handler is sync')
-  assert.ok(!out.includes('async fetch(req)'), 'fetch handler is not async')
+  assert.ok(out.includes('async fetch(req)'), 'fetch handler is async')
 })
 
 test('BunServerEmitter: emits CREATE TABLE for model declarations', () => {
@@ -404,4 +403,100 @@ test('BunServerEmitter: non-echo post route uses normal handler', () => {
   const out = new BunServerEmitter({}).emitProgram(prog)
   assert.ok(!out.includes('[echo]'), 'non-echo route not tagged as echo')
   assert.ok(out.includes('_parseBody'), 'normal handler uses _parseBody')
+})
+
+// ── route-compiler: catch-all and advanced features ───────────────────────────
+
+test('route-compiler: catch-all *param route matches remaining path', () => {
+  const js = compileRoutes([
+    { method: 'GET', path: '/files/*path', handlerName: '_route_get_files' },
+  ])
+  assert.ok(js.includes('_route_get_files'), 'catch-all handler referenced')
+})
+
+test('route-compiler: insertRoute with catch-all segment sets catchAll property', () => {
+  const root = makeNode()
+  insertRoute(root, 'GET', '/assets/*file', '_handler')
+  // The catch-all is on the assets child node
+  const assetsNode = root.children.get('assets')
+  assert.ok(assetsNode, 'assets child node should exist')
+  assert.strictEqual(assetsNode.catchAll, 'file', 'catchAll should be set to param name')
+})
+
+test('route-compiler: insertRoute conflicting param names throws', () => {
+  const root = makeNode()
+  insertRoute(root, 'GET', '/users/:id/posts', '_handler1')
+  assert.throws(
+    () => insertRoute(root, 'GET', '/users/:userId/comments', '_handler2'),
+    /conflicting param names/,
+  )
+})
+
+test('route-compiler: compileRoutes with extraParam threads through handlers', () => {
+  const js = compileRoutes([
+    { method: 'GET', path: '/things', handlerName: '_route_get_things' },
+  ], { extraParam: 'env' })
+  assert.ok(js.includes('env'), 'extra param should appear in dispatch fn')
+  assert.ok(js.includes('_dispatch(req, _pathname, env)'), 'extra param in function signature')
+})
+
+test('route-compiler: multiple methods on same path both dispatched', () => {
+  const js = compileRoutes([
+    { method: 'GET', path: '/items', handlerName: '_route_get_items' },
+    { method: 'POST', path: '/items', handlerName: '_route_post_items' },
+    { method: 'DELETE', path: '/items/:id', handlerName: '_route_delete_items_id' },
+  ])
+  assert.ok(js.includes("case 'GET'"))
+  assert.ok(js.includes("case 'POST'"))
+  assert.ok(js.includes("case 'DELETE'"))
+})
+
+// ── emitBunRoutesObject ───────────────────────────────────────────────────────
+
+test('emitBunRoutesObject: generates _arcRoutes object', () => {
+  const js = emitBunRoutesObject([
+    { method: 'GET', path: '/posts', handlerName: '_route_get_posts' },
+  ])
+  assert.ok(js.includes('_arcRoutes'), 'should emit _arcRoutes object')
+  assert.ok(js.includes('/posts'), 'should include the route path')
+  assert.ok(js.includes('_route_get_posts'), 'should reference handler')
+})
+
+test('emitBunRoutesObject: always includes /health route', () => {
+  const js = emitBunRoutesObject([
+    { method: 'GET', path: '/api', handlerName: '_route_get_api' },
+  ])
+  assert.ok(js.includes('/health'), 'should always include /health route')
+})
+
+test('emitBunRoutesObject: multiple methods on same path grouped together', () => {
+  const js = emitBunRoutesObject([
+    { method: 'GET', path: '/posts', handlerName: '_route_get_posts' },
+    { method: 'POST', path: '/posts', handlerName: '_route_post_posts' },
+  ])
+  const postsCount = (js.match(/\/posts/g) ?? []).length
+  assert.ok(postsCount >= 1, 'should have posts path in output')
+  assert.ok(js.includes('GET') && js.includes('POST'), 'both methods should appear')
+})
+
+test('emitBunRoutesObject: noTracing option skips tracing preamble', () => {
+  const js = emitBunRoutesObject([
+    { method: 'GET', path: '/items', handlerName: '_handler' },
+  ], { noTracing: true })
+  assert.ok(!js.includes('_traceId'), 'no tracing header when noTracing=true')
+})
+
+test('emitBunRoutesObject: noRateLimit option skips rate-limit check', () => {
+  const js = emitBunRoutesObject([
+    { method: 'GET', path: '/items', handlerName: '_handler' },
+  ], { noRateLimit: true })
+  assert.ok(!js.includes('_checkRateLimit'), 'no rate-limit when noRateLimit=true')
+})
+
+test('emitBunRoutesObject: default emits both tracing and rate-limit preamble', () => {
+  const js = emitBunRoutesObject([
+    { method: 'GET', path: '/items', handlerName: '_handler' },
+  ])
+  assert.ok(js.includes('_traceId') || js.includes('_clientId'), 'default includes tracing preamble')
+  assert.ok(js.includes('_checkRateLimit'), 'default includes rate-limit check')
 })
