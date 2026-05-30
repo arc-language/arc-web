@@ -1259,3 +1259,210 @@ page "T"
     assert.ok(cls.fields[0].isStatic)
   })
 })
+
+// ── Job annotations ────────────────────────────────────────────────────────────
+
+describe('Parser - Job annotations', () => {
+  test('@schedule sets cron string on JobDecl', () => {
+    const prog = parse(`
+@schedule "0 9 * * *"
+job DailyDigest(userId: Int)
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.ok(job, 'JobDecl parsed')
+    assert.strictEqual(job.schedule, '0 9 * * *')
+    assert.strictEqual(job.name, 'DailyDigest')
+  })
+
+  test('@queue sets queue name on JobDecl', () => {
+    const prog = parse(`
+@queue email
+job SendEmail(userId: Int)
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.queueName, 'email')
+  })
+
+  test('@priority sets priority on JobDecl', () => {
+    const prog = parse(`
+@priority high
+job UrgentTask()
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.priority, 'high')
+  })
+
+  test('@retries sets maxRetries on JobDecl', () => {
+    const prog = parse(`
+@retries 5
+job RetryableJob()
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.maxRetries, 5)
+  })
+
+  test('@backoff sets backoffMs on JobDecl', () => {
+    const prog = parse(`
+@backoff 2000
+job BackoffJob()
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.backoffMs, 2000)
+  })
+
+  test('@timeout sets timeoutMs on JobDecl', () => {
+    const prog = parse(`
+@timeout 30000
+job SlowJob()
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.timeoutMs, 30000)
+  })
+
+  test('@concurrency sets concurrency on JobDecl', () => {
+    const prog = parse(`
+@concurrency 3
+job WorkerJob()
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.concurrency, 3)
+  })
+
+  test('@unique sets unique flag on JobDecl', () => {
+    const prog = parse(`
+@unique
+job UniqueJob()
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.unique, true)
+  })
+
+  test('@unique with timeout and strategy params', () => {
+    const prog = parse(`
+@unique timeout=3600000 strategy=replace
+job DedupeJob()
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.unique, true)
+    assert.strictEqual(job.uniqueTimeout, 3600000)
+    assert.strictEqual(job.uniqueStrategy, 'replace')
+  })
+
+  test('@progress sets hasProgress on JobDecl', () => {
+    const prog = parse(`
+@progress
+job ProgressJob()
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.hasProgress, true)
+  })
+
+  test('@then sets thenJob on JobDecl', () => {
+    const prog = parse(`
+@then NotifyUser
+job ProcessPayment(orderId: Int)
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.thenJob, 'NotifyUser')
+  })
+
+  test('multiple job annotations stack correctly', () => {
+    const prog = parse(`
+@queue email
+@priority high
+@retries 5
+@backoff 2000
+@timeout 30000
+@concurrency 3
+@unique timeout=3600000 strategy=replace
+@progress
+@then OtherJob
+job SendEmail(userId: Int)
+  return 1
+`)
+    const job = prog.declarations.find(d => d.type === 'JobDecl')
+    assert.strictEqual(job.queueName, 'email')
+    assert.strictEqual(job.priority, 'high')
+    assert.strictEqual(job.maxRetries, 5)
+    assert.strictEqual(job.backoffMs, 2000)
+    assert.strictEqual(job.timeoutMs, 30000)
+    assert.strictEqual(job.concurrency, 3)
+    assert.strictEqual(job.unique, true)
+    assert.strictEqual(job.uniqueTimeout, 3600000)
+    assert.strictEqual(job.uniqueStrategy, 'replace')
+    assert.strictEqual(job.hasProgress, true)
+    assert.strictEqual(job.thenJob, 'OtherJob')
+  })
+})
+
+// ── Route group ────────────────────────────────────────────────────────────────
+
+describe('Parser - RouteGroupDecl', () => {
+  test('@group parses prefix and routes', () => {
+    const prog = parse(`
+@group "/admin"
+  @route GET "/users" -> JSON
+    return json([])
+`)
+    const group = prog.declarations.find(d => d.type === 'RouteGroupDecl')
+    assert.ok(group, 'RouteGroupDecl parsed')
+    assert.strictEqual(group.prefix, '/admin')
+    assert.strictEqual(group.routes.length, 1)
+    assert.strictEqual(group.annotations.length, 0)
+  })
+
+  test('@group with @auth annotation on group', () => {
+    const prog = parse(`
+@group "/admin" @auth(admin)
+  @route GET "/users" -> JSON
+    return json([])
+`)
+    const group = prog.declarations.find(d => d.type === 'RouteGroupDecl')
+    assert.ok(group.annotations.includes('@auth(admin)'))
+  })
+
+  test('@group routes inherit prefix path', () => {
+    const prog = parse(`
+@group "/api"
+  @route GET "/items" -> JSON
+    return json([])
+  @route POST "/items" -> JSON
+    return json({ok:true})
+`)
+    const group = prog.declarations.find(d => d.type === 'RouteGroupDecl')
+    assert.strictEqual(group.routes.length, 2)
+    assert.strictEqual(group.routes[0].method, 'GET')
+    assert.strictEqual(group.routes[1].method, 'POST')
+  })
+
+  test('@group route with per-route @auth annotation', () => {
+    const prog = parse(`
+@group "/api"
+  @route @auth(superadmin) DELETE "/item" -> JSON
+    return json({ok:true})
+`)
+    const group = prog.declarations.find(d => d.type === 'RouteGroupDecl')
+    assert.ok(group.routes[0].annotations?.includes('@auth(superadmin)'))
+  })
+
+  test('@group arcTag is "group"', () => {
+    const prog = parse(`
+@group "/v1"
+  @route GET "/ping" -> JSON
+    return json({pong:true})
+`)
+    const group = prog.declarations.find(d => d.type === 'RouteGroupDecl')
+    assert.strictEqual(group.arcTag, 'group')
+  })
+})

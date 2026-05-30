@@ -2,11 +2,16 @@
 
 const test = require('node:test')
 const assert = require('node:assert')
+const fs = require('fs')
+const path = require('path')
+const os = require('os')
 const {
   validateName,
   getTemplate,
   detectAvailablePMs,
   detectPackageManager,
+  newProject,
+  runWizard,
 } = require('../src/new-command')
 
 // ── validateName ──────────────────────────────────────────────────────────────
@@ -143,5 +148,104 @@ test('detectPackageManager: returns a valid package manager string', () => {
   assert.ok(typeof pm === 'string', 'should return a string')
   const valid = new Set(['bun', 'npm', 'pnpm', 'yarn'])
   assert.ok(valid.has(pm), `unexpected PM: ${pm}`)
+})
+
+// ── newProject ────────────────────────────────────────────────────────────────
+
+test('newProject: throws on unknown template', () => {
+  assert.throws(
+    () => newProject('my-test-app', 'not-a-template'),
+    /Unknown template/
+  )
+})
+
+test('newProject: throws when target directory is non-empty', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-new-test-'))
+  try {
+    fs.writeFileSync(path.join(tmp, 'existing.txt'), 'content')
+    assert.throws(
+      () => newProject(tmp, 'default'),
+      /already exists and is not empty/
+    )
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('newProject: creates project files in temp dir', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-new-test-'))
+  fs.rmdirSync(tmp)
+  try {
+    newProject(tmp, 'default', { pm: 'npm', install: false })
+    assert.ok(fs.existsSync(path.join(tmp, 'index.arc')), 'should create index.arc')
+    assert.ok(fs.existsSync(path.join(tmp, 'package.json')), 'should create package.json')
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('newProject: creates counter template project in temp dir', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-counter-test-'))
+  fs.rmdirSync(tmp)
+  try {
+    newProject(tmp, 'counter', { pm: 'npm', install: false })
+    assert.ok(fs.existsSync(path.join(tmp, 'index.arc')))
+    const src = fs.readFileSync(path.join(tmp, 'index.arc'), 'utf8')
+    assert.ok(src.includes('@state'), 'counter template should have @state')
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('newProject: install=true with invalid pm rejects', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-install-test-'))
+  fs.rmdirSync(tmp)
+  try {
+    await assert.rejects(
+      () => newProject(tmp, 'default', { pm: 'ruby', install: true }),
+      /Unknown package manager/
+    )
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('newProject: install=true with valid pm returns promise', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-install2-test-'))
+  fs.rmdirSync(tmp)
+  try {
+    const result = newProject(tmp, 'default', { pm: 'npm', install: true })
+    assert.ok(result && typeof result.then === 'function', 'should return a promise')
+    await result.catch(() => {})
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+// ── runWizard ─────────────────────────────────────────────────────────────────
+
+test('runWizard: creates project when all presets are provided', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-wizard-test-'))
+  fs.rmdirSync(tmp)
+  try {
+    await runWizard({ name: tmp, template: 'default', pm: 'npm', install: false })
+    assert.ok(fs.existsSync(path.join(tmp, 'index.arc')), 'wizard should create index.arc')
+    assert.ok(fs.existsSync(path.join(tmp, 'package.json')), 'wizard should create package.json')
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('runWizard: creates api template project with presets', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-wizard-api-test-'))
+  fs.rmdirSync(tmp)
+  try {
+    await runWizard({ name: tmp, template: 'api', pm: 'bun', install: false })
+    assert.ok(fs.existsSync(path.join(tmp, 'package.json')))
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf8'))
+    assert.ok(pkg.scripts.dev, 'api template should have dev script')
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
 })
 
