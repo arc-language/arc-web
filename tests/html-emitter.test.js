@@ -1053,3 +1053,140 @@ describe('HtmlEmitter — avatar a11y warning', () => {
     assert.ok(stderrMsgs.some(m => m.includes('a11y') && m.includes('avatar')), 'Expected a11y warning for avatar without alt')
   })
 })
+
+// ── HtmlEmitter — exprToString branches ──────────────────────────────────────
+
+describe('HtmlEmitter — exprToString', () => {
+  function makeEmitter() { return new HtmlEmitter({ hash: 'test' }) }
+  const N = require('../src/ast')
+
+  test('OptionalChain emits ?. accessor', () => {
+    const e = makeEmitter()
+    const expr = { type: 'OptionalChain', object: N.Identifier('user', 0), property: N.Identifier('name', 0) }
+    assert.equal(e.exprToString(expr), 'user?.name')
+  })
+
+  test('LogicalExpr emits with operator', () => {
+    const e = makeEmitter()
+    const expr = { type: 'LogicalExpr', op: '||', left: N.Identifier('a', 0), right: N.Identifier('b', 0) }
+    assert.equal(e.exprToString(expr), '(a||b)')
+  })
+
+  test('NullCoalesce emits ??', () => {
+    const e = makeEmitter()
+    const expr = { type: 'NullCoalesce', left: N.Identifier('val', 0), right: N.Literal('default', 0) }
+    assert.equal(e.exprToString(expr), '(val??"default")')
+  })
+
+  test('TernaryExpr emits ternary string', () => {
+    const e = makeEmitter()
+    const expr = {
+      type: 'TernaryExpr',
+      condition: N.Identifier('x', 0),
+      consequent: N.Literal('a', 0),
+      alternate: N.Literal('b', 0),
+    }
+    assert.equal(e.exprToString(expr), '(x?"a":"b")')
+  })
+
+  test('CallExpr emits function call with args', () => {
+    const e = makeEmitter()
+    const expr = {
+      type: 'CallExpr',
+      callee: N.Identifier('fn', 0),
+      args: [N.Literal(1, 0), N.Literal(2, 0)],
+    }
+    assert.equal(e.exprToString(expr), 'fn(1,2)')
+  })
+
+  test('TemplateLiteral emits backtick string', () => {
+    const e = makeEmitter()
+    const expr = {
+      type: 'TemplateLiteral',
+      parts: [N.Literal('Hello ', 0), N.Identifier('name', 0)],
+    }
+    assert.equal(e.exprToString(expr), '`Hello ${name}`')
+  })
+
+  test('ArrayLiteral emits bracket array', () => {
+    const e = makeEmitter()
+    const expr = { type: 'ArrayLiteral', elements: [N.Literal(1, 0), N.Literal(2, 0)] }
+    assert.equal(e.exprToString(expr), '[1,2]')
+  })
+
+  test('AwaitExpr emits await', () => {
+    const e = makeEmitter()
+    const expr = { type: 'AwaitExpr', argument: N.Identifier('p', 0) }
+    assert.equal(e.exprToString(expr), 'await p')
+  })
+
+  test('unknown expr type returns undefined', () => {
+    const e = makeEmitter()
+    const expr = { type: 'SomeUnknownType' }
+    assert.equal(e.exprToString(expr), 'undefined')
+  })
+
+  test('MemberExpr computed emits bracket access', () => {
+    const e = makeEmitter()
+    const expr = {
+      type: 'MemberExpr',
+      computed: true,
+      object: N.Identifier('arr', 0),
+      property: N.Literal(0, 0),
+    }
+    assert.equal(e.exprToString(expr), 'arr[0]')
+  })
+})
+
+// ── HtmlEmitter — _blank link without aria-label gets sr-only notice ──────────
+
+describe('HtmlEmitter — _blank link accessibility', () => {
+  test('external link without aria-label gets screen-reader notice', async () => {
+    const { html } = await compile(`page "T"
+  a href: "https://example.com" target: "_blank"
+    text "Visit"`)
+    assert.ok(html.includes('arc-sr-only'), `Expected sr-only notice in:\n${html}`)
+  })
+})
+
+// ── HtmlEmitter — emitInterpolation in for-template context ──────────────────
+
+describe('HtmlEmitter — reactive interpolation inside for-loop', () => {
+  function makeEmitter() { return new HtmlEmitter({ hash: 'test' }) }
+
+  test('interpolation inside for-template context emits inline template string', () => {
+    const e = makeEmitter()
+    e._inForTemplate = true
+    const node = { type: 'InterpolationNode', expr: N.Identifier('item', 0), line: 1 }
+    const out = e.emitInterpolation(node)
+    assert.ok(out.includes('${_esc('), `Expected template string in: ${out}`)
+  })
+})
+
+// ── HtmlEmitter — emitWidgetInvocation with param defaults ────────────────────
+
+describe('HtmlEmitter — emitWidgetInvocation', () => {
+  function makeEmitter() { return new HtmlEmitter({ hash: 'test' }) }
+
+  test('widget invocation with bool=true attr resolves correctly', () => {
+    const e = makeEmitter()
+    const widgetDecl = {
+      body: [N.TextNode('content', 0)],
+      params: [],
+    }
+    const out = e.emitWidgetInvocation(widgetDecl, { visible: true }, [])
+    assert.equal(out, 'content')
+  })
+
+  test('widget invocation with missing param uses Literal default', () => {
+    const e = makeEmitter()
+    const widgetDecl = {
+      body: [{ type: 'TextNode', value: 'hi', line: 0 }],
+      params: [{ name: 'color', defaultValue: N.Literal('blue', 0) }],
+    }
+    const out = e.emitWidgetInvocation(widgetDecl, {}, [])
+    // Output contains widget body and currentAttrs is restored after the call
+    assert.equal(out, 'hi', 'widget body rendered')
+    assert.deepEqual(e.currentAttrs, {}, 'currentAttrs restored after call')
+  })
+})
