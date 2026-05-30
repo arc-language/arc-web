@@ -839,3 +839,217 @@ describe('HtmlEmitter — SEO JSON-LD schemaType', () => {
     }
   })
 })
+
+// ── HtmlEmitter — CSS shorthand attrs expand to inline style ──────────────────
+
+describe('HtmlEmitter — CSS shorthand attribute expansion', () => {
+  function makeEmitter() { return new HtmlEmitter({ hash: 'test' }) }
+
+  test('p-x expands to padding-left and padding-right', () => {
+    const e = makeEmitter()
+    const node = { type: 'Element', tag: 'div', attrs: { 'p-x': '10px' }, children: [], line: 1 }
+    const out = e.emitElement(node)
+    assert.ok(out.includes('padding-left:10px'), `Expected padding-left in: ${out}`)
+    assert.ok(out.includes('padding-right:10px'), `Expected padding-right in: ${out}`)
+  })
+
+  test('m-x expands to margin-left and margin-right', () => {
+    const e = makeEmitter()
+    const node = { type: 'Element', tag: 'div', attrs: { 'm-x': '8px' }, children: [], line: 1 }
+    const out = e.emitElement(node)
+    assert.ok(out.includes('margin-left:8px'), `Expected margin-left in: ${out}`)
+    assert.ok(out.includes('margin-right:8px'), `Expected margin-right in: ${out}`)
+  })
+
+  test('p-y expands to padding-top and padding-bottom', () => {
+    const e = makeEmitter()
+    const node = { type: 'Element', tag: 'div', attrs: { 'p-y': '5px' }, children: [], line: 1 }
+    const out = e.emitElement(node)
+    assert.ok(out.includes('padding-top:5px'), `Expected padding-top in: ${out}`)
+    assert.ok(out.includes('padding-bottom:5px'), `Expected padding-bottom in: ${out}`)
+  })
+
+  test('m-y expands to margin-top and margin-bottom', () => {
+    const e = makeEmitter()
+    const node = { type: 'Element', tag: 'div', attrs: { 'm-y': '12px' }, children: [], line: 1 }
+    const out = e.emitElement(node)
+    assert.ok(out.includes('margin-top:12px'), `Expected margin-top in: ${out}`)
+    assert.ok(out.includes('margin-bottom:12px'), `Expected margin-bottom in: ${out}`)
+  })
+
+  test('other CSS shorthand (p) expands to single property', () => {
+    const e = makeEmitter()
+    const node = { type: 'Element', tag: 'div', attrs: { p: '20px' }, children: [], line: 1 }
+    const out = e.emitElement(node)
+    assert.ok(out.includes('padding:20px'), `Expected padding in: ${out}`)
+  })
+
+  test('existing style attr merges with shorthand expansions', () => {
+    const e = makeEmitter()
+    const node = {
+      type: 'Element', tag: 'div',
+      attrs: { style: 'color:red', 'p-x': '5px' }, children: [], line: 1,
+    }
+    const out = e.emitElement(node)
+    assert.ok(out.includes('color:red'), `Expected existing style in: ${out}`)
+    assert.ok(out.includes('padding-left:5px'), `Expected padding-left in: ${out}`)
+  })
+})
+
+// ── HtmlEmitter — dialog attrs ────────────────────────────────────────────────
+
+describe('HtmlEmitter — dialog: attributes', () => {
+  function makeEmitter() { return new HtmlEmitter({ hash: 'test' }) }
+
+  test('dialog:open attr emits data-arc-dialog-open', () => {
+    const e = makeEmitter()
+    const node = { type: 'Element', tag: 'button', attrs: { 'dialog:open': 'my-modal' }, children: [], line: 1 }
+    const out = e.emitElement(node)
+    assert.ok(out.includes('data-arc-dialog-open="my-modal"'), `Expected data-arc-dialog-open in: ${out}`)
+  })
+
+  test('dialog:close attr emits data-arc-dialog-close', () => {
+    const e = makeEmitter()
+    const node = { type: 'Element', tag: 'button', attrs: { 'dialog:close': true }, children: [], line: 1 }
+    const out = e.emitElement(node)
+    assert.ok(out.includes('data-arc-dialog-close'), `Expected data-arc-dialog-close in: ${out}`)
+  })
+
+  test('dialog:cancel attr emits data-arc-dialog-close', () => {
+    const e = makeEmitter()
+    const node = { type: 'Element', tag: 'button', attrs: { 'dialog:cancel': true }, children: [], line: 1 }
+    const out = e.emitElement(node)
+    assert.ok(out.includes('data-arc-dialog-close'), `Expected data-arc-dialog-close in: ${out}`)
+  })
+})
+
+// ── HtmlEmitter — static emitIf / emitUnless / emitFor / emitMatchTemplate ───
+
+describe('HtmlEmitter — static conditional and loop rendering', () => {
+  function makeEmitter() { return new HtmlEmitter({ hash: 'test' }) }
+
+  test('emitIf with static true condition renders consequent only', () => {
+    const e = makeEmitter()
+    const node = {
+      type: 'IfNode',
+      condition: N.Literal(true, 0),
+      consequent: [N.TextNode('yes', 0)],
+      alternate: [N.TextNode('no', 0)],
+      line: 1,
+    }
+    const out = e.emitIf(node)
+    assert.ok(out.includes('yes'), `Expected yes in: ${out}`)
+    assert.ok(!out.includes('no'), `Expected no 'no' in: ${out}`)
+  })
+
+  test('emitIf with static false condition renders alternate', () => {
+    const e = makeEmitter()
+    const node = {
+      type: 'IfNode',
+      condition: N.Literal(false, 0),
+      consequent: [N.TextNode('yes', 0)],
+      alternate: [N.TextNode('no', 0)],
+      line: 1,
+    }
+    const out = e.emitIf(node)
+    assert.ok(!out.includes('yes'), `Expected no 'yes' in: ${out}`)
+    assert.ok(out.includes('no'), `Expected 'no' in: ${out}`)
+  })
+
+  test('emitUnless wraps to emitIf with negated condition', () => {
+    // emitUnless converts UnlessNode to IfNode with !condition.
+    // UnaryExpr is not in isStaticExpr, so goes reactive path with div+hidden.
+    const e = makeEmitter()
+    const node = {
+      type: 'UnlessNode',
+      condition: N.Literal(true, 0),
+      body: [N.TextNode('hidden', 0)],
+      line: 1,
+    }
+    const out = e.emitUnless(node)
+    assert.ok(typeof out === 'string', 'emitUnless returns a string')
+    assert.ok(out.length > 0, 'emitUnless produces non-empty output for reactive path')
+  })
+
+  test('emitFor with static array unrolls to N copies', () => {
+    const e = makeEmitter()
+    const node = {
+      type: 'ForNode',
+      collection: { type: 'ArrayLiteral', elements: [N.Literal('a', 0), N.Literal('b', 0)] },
+      itemName: 'x',
+      indexName: 'i',
+      body: [N.TextNode('item', 0)],
+      line: 1,
+    }
+    const out = e.emitFor(node)
+    assert.equal((out.match(/item/g) ?? []).length, 2, 'should repeat body 2 times')
+  })
+
+  test('emitFor with static non-array collection returns empty', () => {
+    const e = makeEmitter()
+    const node = {
+      type: 'ForNode',
+      collection: N.Literal('not-an-array', 0),
+      body: [N.TextNode('item', 0)],
+      line: 1,
+    }
+    const out = e.emitFor(node)
+    assert.equal(out, '', 'non-array static collection → empty string')
+  })
+
+  test('emitMatchTemplate with static subject resolves matching arm', () => {
+    const e = makeEmitter()
+    const node = {
+      type: 'MatchTemplateNode',
+      subject: N.Literal('b', 0),
+      arms: [
+        { pattern: N.Literal('a', 0), body: N.TextNode('first', 0) },
+        { pattern: N.Literal('b', 0), body: N.TextNode('second', 0) },
+      ],
+      line: 1,
+    }
+    const out = e.emitMatchTemplate(node)
+    assert.ok(out.includes('second'), `Expected 'second' in: ${out}`)
+    assert.ok(!out.includes('first'), `Expected no 'first' in: ${out}`)
+  })
+
+  test('emitMatchTemplate wildcard arm matches when no literal matches', () => {
+    const e = makeEmitter()
+    const node = {
+      type: 'MatchTemplateNode',
+      subject: N.Literal('z', 0),
+      arms: [
+        { pattern: N.Literal('a', 0), body: N.TextNode('first', 0) },
+        { pattern: { type: 'Wildcard' }, body: N.TextNode('fallback', 0) },
+      ],
+      line: 1,
+    }
+    const out = e.emitMatchTemplate(node)
+    assert.ok(out.includes('fallback'), `Expected fallback in: ${out}`)
+  })
+
+  test('emitInterpolation with static expr returns escaped string', () => {
+    const e = makeEmitter()
+    const node = { type: 'InterpolationNode', expr: N.Literal('<b>bold</b>', 0), line: 1 }
+    const out = e.emitInterpolation(node)
+    assert.ok(out.includes('&lt;'), `Expected escaped HTML in: ${out}`)
+    assert.ok(!out.includes('data-arc-live'), 'no reactive span for static expr')
+  })
+})
+
+// ── HtmlEmitter — avatar a11y warning ─────────────────────────────────────────
+
+describe('HtmlEmitter — avatar a11y warning', () => {
+  test('avatar element without alt= emits accessibility warning', () => {
+    const stderrMsgs = []
+    const origWrite = process.stderr.write.bind(process.stderr)
+    process.stderr.write = (s) => { stderrMsgs.push(s); return true }
+    try {
+      const e = new HtmlEmitter({ hash: 'test' })
+      e.emitElement({ type: 'Element', tag: 'avatar', attrs: { src: '/me.jpg' }, children: [], line: 5 })
+    } finally {
+      process.stderr.write = origWrite
+    }
+    assert.ok(stderrMsgs.some(m => m.includes('a11y') && m.includes('avatar')), 'Expected a11y warning for avatar without alt')
+  })
+})
