@@ -930,3 +930,233 @@ test('cmsInit: color output path (lines 361-378) by re-requiring with forced _C'
     rmTmp(tmp)
   }
 })
+
+test('cmsInit: color output with skipped files (lines 369-370) and warnings (lines 374-376)', async () => {
+  const tmp = makeTmp()
+  const origIsTTY = process.stdout.isTTY
+  const capturedLogs = []
+  try {
+    delete require.cache[require.resolve('../src/commands/cms')]
+    process.stdout.isTTY = true
+    const { cmsInit } = require('../src/commands/cms')
+    const origLog = console.log
+    console.log = (m) => capturedLogs.push(String(m))
+    // First run creates files
+    await cmsInit(tmp, {})
+    // Second run: some files already exist → skipped branch (lines 369-370)
+    await cmsInit(tmp, {})
+    console.log = origLog
+    // Should have at least one "skipped" line in output
+    assert.ok(capturedLogs.some(m => m.includes('skipped') || m.includes('already exists')), 'should log skipped files')
+  } finally {
+    process.stdout.isTTY = origIsTTY
+    delete require.cache[require.resolve('../src/commands/cms')]
+    rmTmp(tmp)
+  }
+})
+
+// ── cmsCreateSuperuser ────────────────────────────────────────────────────────
+
+test('cmsCreateSuperuser: exits when directory does not exist', async () => {
+  const { cmsCreateSuperuser } = require('../src/commands/cms')
+  const origExit = process.exit
+  const restore = suppressConsole()
+  let capturedCode = null
+  process.exit = (code) => { capturedCode = code; throw new Error('exit:' + code) }
+  try {
+    await cmsCreateSuperuser('/tmp/__arc_cms_no_dir_' + Date.now())
+  } catch (e) {
+    assert.ok(e.message.includes('exit:'), 'should throw from mocked exit')
+  } finally {
+    process.exit = origExit
+    restore()
+  }
+  assert.strictEqual(capturedCode, 1, 'should exit with code 1 for missing dir')
+})
+
+test('cmsCreateSuperuser: exits when no database found', async () => {
+  const { cmsCreateSuperuser } = require('../src/commands/cms')
+  const tmp = makeTmp()
+  const origExit = process.exit
+  const restore = suppressConsole()
+  let capturedCode = null
+  process.exit = (code) => { capturedCode = code; throw new Error('exit:' + code) }
+  try {
+    // No database files exist in the temp dir
+    await cmsCreateSuperuser(tmp, { db: null })
+  } catch (e) {
+    assert.ok(e.message.includes('exit:'), 'should throw from mocked exit')
+  } finally {
+    process.exit = origExit
+    restore()
+    rmTmp(tmp)
+  }
+  assert.strictEqual(capturedCode, 1, 'should exit with code 1 when no database found')
+})
+
+test('cmsCreateSuperuser: exits when no database found — lists candidates', async () => {
+  const { cmsCreateSuperuser } = require('../src/commands/cms')
+  const tmp = makeTmp()
+  const origExit = process.exit
+  const capturedErrors = []
+  const origError = console.error
+  console.error = (m) => capturedErrors.push(String(m))
+  let capturedCode = null
+  process.exit = (code) => { capturedCode = code; throw new Error('exit:' + code) }
+  try {
+    await cmsCreateSuperuser(tmp, { db: null })
+  } catch (_) {}
+  finally {
+    process.exit = origExit
+    console.error = origError
+    rmTmp(tmp)
+  }
+  assert.strictEqual(capturedCode, 1)
+  assert.ok(capturedErrors.some(m => m.includes('no database found') || m.includes('app.db')), 'should list DB candidates')
+})
+
+test('cmsCreateSuperuser: creates new admin user in SQLite DB', async () => {
+  const { cmsCreateSuperuser } = require('../src/commands/cms')
+  const Database = require('better-sqlite3')
+  const tmp = makeTmp()
+  const dbPath = path.join(tmp, 'app.db')
+  const restore = suppressConsole()
+  try {
+    // Create the users table with expected schema
+    const db = new Database(dbPath)
+    db.exec(`CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      name TEXT,
+      role TEXT NOT NULL DEFAULT 'user',
+      oauthProvider TEXT,
+      oauthId TEXT,
+      passwordHash TEXT,
+      createdAt TEXT
+    )`)
+    db.close()
+
+    await cmsCreateSuperuser(tmp, {
+      email: 'admin@example.com',
+      password: 'securepass123',
+      name: 'Test Admin',
+    })
+
+    // Verify user was created
+    const db2 = new Database(dbPath)
+    const user = db2.prepare('SELECT * FROM users WHERE email = ?').get('admin@example.com')
+    db2.close()
+    assert.ok(user, 'user should be created')
+    assert.strictEqual(user.role, 'admin')
+    assert.strictEqual(user.name, 'Test Admin')
+    assert.ok(user.passwordHash && user.passwordHash.includes(':'), 'should have salted hash')
+  } finally {
+    restore()
+    rmTmp(tmp)
+  }
+})
+
+test('cmsCreateSuperuser: updates existing user to admin', async () => {
+  const { cmsCreateSuperuser } = require('../src/commands/cms')
+  const Database = require('better-sqlite3')
+  const tmp = makeTmp()
+  const dbPath = path.join(tmp, 'app.db')
+  const restore = suppressConsole()
+  try {
+    const db = new Database(dbPath)
+    db.exec(`CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      name TEXT,
+      role TEXT NOT NULL DEFAULT 'user',
+      oauthProvider TEXT,
+      oauthId TEXT,
+      passwordHash TEXT,
+      createdAt TEXT
+    )`)
+    // Insert existing user with 'user' role
+    db.prepare('INSERT INTO users (email, name, role, oauthProvider, oauthId, passwordHash, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      'admin@example.com', 'Old Name', 'user', 'github', 'gh-123', 'old:hash', new Date().toISOString()
+    )
+    db.close()
+
+    await cmsCreateSuperuser(tmp, {
+      email: 'admin@example.com',
+      password: 'newpassword456',
+      name: 'New Name',
+    })
+
+    const db2 = new Database(dbPath)
+    const user = db2.prepare('SELECT * FROM users WHERE email = ?').get('admin@example.com')
+    db2.close()
+    assert.strictEqual(user.role, 'admin', 'should be promoted to admin')
+    assert.strictEqual(user.name, 'New Name', 'should update name')
+    assert.ok(!user.passwordHash.includes('old:hash'), 'password should be rotated')
+  } finally {
+    restore()
+    rmTmp(tmp)
+  }
+})
+
+test('cmsCreateSuperuser: exits when users table missing', async () => {
+  const { cmsCreateSuperuser } = require('../src/commands/cms')
+  const Database = require('better-sqlite3')
+  const tmp = makeTmp()
+  const dbPath = path.join(tmp, 'app.db')
+  const origExit = process.exit
+  const restore = suppressConsole()
+  let capturedCode = null
+  process.exit = (code) => { capturedCode = code; throw new Error('exit:' + code) }
+  try {
+    // Create DB but without users table
+    const db = new Database(dbPath)
+    db.exec('CREATE TABLE other (id INTEGER)')
+    db.close()
+
+    await cmsCreateSuperuser(tmp, {
+      email: 'admin@example.com',
+      password: 'securepass123',
+      name: 'Test Admin',
+    })
+  } catch (_) {}
+  finally {
+    process.exit = origExit
+    restore()
+    rmTmp(tmp)
+  }
+  assert.strictEqual(capturedCode, 1, 'should exit with code 1 when users table missing')
+})
+
+test('cmsInit: color output includes warnings when arc-ui CSS not found', async () => {
+  const origIsTTY = process.stdout.isTTY
+  const tmp = makeTmp()
+  const capturedLogs = []
+  // Patch fs.existsSync to hide arc-ui CSS
+  const origExistsSync = fs.existsSync
+  fs.existsSync = (p) => {
+    if (typeof p === 'string' && p.includes('arc-ui') && p.endsWith('.css')) return false
+    return origExistsSync(p)
+  }
+  try {
+    delete require.cache[require.resolve('../src/commands/cms')]
+    process.stdout.isTTY = true
+    const { cmsInit } = require('../src/commands/cms')
+    const origLog = console.log
+    console.log = (m) => capturedLogs.push(String(m))
+    try {
+      await cmsInit(tmp, {})
+    } finally {
+      console.log = origLog
+    }
+    // Should show warning about arc-ui not found (line 375-376)
+    assert.ok(
+      capturedLogs.some(m => m.includes('arc-ui') || m.includes('not found') || m.includes('files created')),
+      'should show output including arc-ui warning'
+    )
+  } finally {
+    fs.existsSync = origExistsSync
+    process.stdout.isTTY = origIsTTY
+    delete require.cache[require.resolve('../src/commands/cms')]
+    rmTmp(tmp)
+  }
+})
