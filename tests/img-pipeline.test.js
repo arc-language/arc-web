@@ -115,3 +115,103 @@ describe('ImagePipeline', () => {
     assert.equal(out[3].position, 'below-fold')
   })
 })
+
+describe('collectImgRefs', () => {
+  const { collectImgRefs } = require('../src/img-pipeline')
+
+  test('collectImgRefs: finds img elements in PageDecl body', () => {
+    const program = {
+      declarations: [{
+        type: 'PageDecl',
+        body: [
+          { type: 'Element', tag: 'img', attrs: { src: 'hero.png', alt: 'Hero' }, children: [] },
+          { type: 'Element', tag: 'img', attrs: { src: { type: 'Literal', value: 'logo.png' }, alt: null }, children: [] },
+        ]
+      }]
+    }
+    const refs = collectImgRefs(program)
+    assert.equal(refs.length, 2)
+    assert.equal(refs[0].src, 'hero.png')
+    assert.equal(refs[0].alt, 'Hero')
+    assert.equal(refs[1].src, 'logo.png')
+    assert.equal(refs[1].alt, '')
+  })
+
+  test('collectImgRefs: marks afterSection=true for imgs after section element', () => {
+    const program = {
+      declarations: [{
+        type: 'PageDecl',
+        body: [
+          { type: 'Element', tag: 'img', attrs: { src: 'before.png', alt: '' }, children: [] },
+          { type: 'Element', tag: 'section', attrs: {}, children: [
+            { type: 'Element', tag: 'img', attrs: { src: 'inside.png', alt: '' }, children: [] }
+          ]},
+          { type: 'Element', tag: 'img', attrs: { src: 'after.png', alt: '' }, children: [] },
+        ]
+      }]
+    }
+    const refs = collectImgRefs(program)
+    assert.equal(refs.length, 3)
+    assert.equal(refs[0].afterSection, false)
+    assert.equal(refs[1].afterSection, true)
+    assert.equal(refs[2].afterSection, true)
+  })
+
+  test('collectImgRefs: skips http/https/data URIs', () => {
+    const program = {
+      declarations: [{
+        type: 'PageDecl',
+        body: [
+          { type: 'Element', tag: 'img', attrs: { src: 'https://example.com/img.png', alt: '' }, children: [] },
+          { type: 'Element', tag: 'img', attrs: { src: 'http://cdn.example.com/img.png', alt: '' }, children: [] },
+          { type: 'Element', tag: 'img', attrs: { src: 'data:image/png;base64,abc', alt: '' }, children: [] },
+          { type: 'Element', tag: 'img', attrs: { src: 'local.png', alt: '' }, children: [] },
+        ]
+      }]
+    }
+    const refs = collectImgRefs(program)
+    assert.equal(refs.length, 1)
+    assert.equal(refs[0].src, 'local.png')
+  })
+
+  test('collectImgRefs: recurses through WidgetDecl body', () => {
+    const program = {
+      declarations: [{
+        type: 'WidgetDecl',
+        body: [
+          { type: 'Element', tag: 'img', attrs: { src: 'widget-img.png', alt: 'w' }, children: [] }
+        ]
+      }]
+    }
+    const refs = collectImgRefs(program)
+    assert.equal(refs.length, 1)
+    assert.equal(refs[0].src, 'widget-img.png')
+  })
+
+  test('collectImgRefs: skips non-Page/Widget declarations', () => {
+    const program = {
+      declarations: [
+        { type: 'RouteDecl', body: [
+          { type: 'Element', tag: 'img', attrs: { src: 'route.png', alt: '' }, children: [] }
+        ]},
+        { type: 'ModelDecl', body: [] }
+      ]
+    }
+    const refs = collectImgRefs(program)
+    assert.equal(refs.length, 0)
+  })
+
+  test('collectImgRefs: evalStatic returns null for unknown AST node type (line 218)', () => {
+    const program = {
+      declarations: [{
+        type: 'PageDecl',
+        body: [
+          { type: 'Element', tag: 'img', attrs: { src: { type: 'Identifier', name: 'dynamicSrc' }, alt: '' }, children: [] }
+        ]
+      }]
+    }
+    const refs = collectImgRefs(program)
+    // Identifier is not a Literal or string, so evalStatic returns null → skipped
+    assert.equal(refs.length, 0)
+  })
+})
