@@ -347,3 +347,316 @@ model Phantom
   })
   assert.deepStrictEqual(result, { dropped: [] })
 })
+
+// ── _fieldDefaultSql edge: non-standard literal value (line 25) ───────────────
+
+test('desiredColumns: Literal init with exotic value type produces no DEFAULT clause', () => {
+  // Construct a field with a Literal node whose value is an object (not null/bool/number/string)
+  // This exercises the final `return ''` fallback on line 25 of _fieldDefaultSql
+  const schema = {
+    name: 'Edge',
+    fields: [
+      {
+        name: 'weird',
+        typeAnnotation: { name: 'String' },
+        decorators: [],
+        optional: true,
+        // Literal node with an object value — none of the type guards match
+        init: { type: 'Literal', value: { foo: 'bar' } },
+      },
+    ],
+  }
+  const cols = desiredColumns(schema, 'sqlite')
+  const col = cols.find(c => c.name === 'weird')
+  assert.ok(col, 'column should exist')
+  assert.ok(!col.sql.includes('DEFAULT'), `should have no DEFAULT clause, got: ${col.sql}`)
+})
+
+test('desiredColumns: Literal init with null value produces DEFAULT NULL', () => {
+  const schema = {
+    name: 'Nulled',
+    fields: [
+      {
+        name: 'maybeVal',
+        typeAnnotation: { name: 'String' },
+        decorators: [],
+        optional: true,
+        init: { type: 'Literal', value: null },
+      },
+    ],
+  }
+  const cols = desiredColumns(schema, 'sqlite')
+  const col = cols.find(c => c.name === 'maybeVal')
+  assert.ok(col, 'column should exist')
+  assert.ok(col.sql.includes('DEFAULT NULL'), `should have DEFAULT NULL, got: ${col.sql}`)
+})
+
+// ── migrate: real SQLite — creates table, detects up-to-date, alters ──────────
+
+const fs = require('fs')
+const path = require('path')
+const os = require('os')
+
+// Detect if better-sqlite3 is available (symlinked or installed)
+let hasSqlite = false
+try {
+  require('better-sqlite3')
+  hasSqlite = true
+} catch {}
+
+function skipIfNoSqlite(name, fn) {
+  if (!hasSqlite) {
+    test(name, { skip: 'better-sqlite3 not available' }, () => {})
+  } else {
+    test(name, fn)
+  }
+}
+
+skipIfNoSqlite('migrate: creates table in a real SQLite DB and is upToDate on second run', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-migrate-'))
+  const dbPath = path.join(tmpDir, 'test.db')
+  try {
+    const schema = parseModel(`
+model Widget
+  @id let id = autoincrement()
+  let name: String
+  let count: Int
+`)
+    // First run: table is new, should apply
+    const result = await migrate([schema], { db: 'sqlite', url: dbPath })
+    assert.strictEqual(result.upToDate, false)
+    assert.strictEqual(result.applied, true)
+    assert.strictEqual(result.report.length, 1)
+    assert.ok(result.report[0].isNew)
+    assert.strictEqual(result.report[0].table, 'widgets')
+
+    // Second run: table already matches, should be upToDate
+    const result2 = await migrate([schema], { db: 'sqlite', url: dbPath })
+    assert.strictEqual(result2.upToDate, true)
+    assert.strictEqual(result2.applied, false)
+    assert.deepStrictEqual(result2.report, [])
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+skipIfNoSqlite('migrate: adds new column to existing table (ALTER TABLE)', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-migrate-alter-'))
+  const dbPath = path.join(tmpDir, 'test.db')
+  try {
+    const v1 = parseModel(`
+model Product
+  @id let id = autoincrement()
+  let name: String
+`)
+    await migrate([v1], { db: 'sqlite', url: dbPath })
+
+    const v2 = parseModel(`
+model Product
+  @id let id = autoincrement()
+  let name: String
+  let price: Int?
+`)
+    const result = await migrate([v2], { db: 'sqlite', url: dbPath })
+    assert.strictEqual(result.upToDate, false)
+    assert.strictEqual(result.applied, true)
+    assert.strictEqual(result.report.length, 1)
+    assert.ok(!result.report[0].isNew, 'should not be a new table')
+    assert.ok(result.report[0].statements[0].includes('ADD COLUMN price'), `expected ADD COLUMN price in: ${result.report[0].statements[0]}`)
+
+    // Third run: now up to date
+    const result3 = await migrate([v2], { db: 'sqlite', url: dbPath })
+    assert.strictEqual(result3.upToDate, true)
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+skipIfNoSqlite('migrate: non-dry apply writes to disk — DB file exists afterward', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-migrate-disk-'))
+  const dbPath = path.join(tmpDir, 'app.db')
+  try {
+    const schema = parseModel(`
+model Order
+  @id let id = autoincrement()
+  let ref: String
+`)
+    assert.ok(!fs.existsSync(dbPath), 'DB should not exist before migrate')
+    await migrate([schema], { db: 'sqlite', url: dbPath })
+    assert.ok(fs.existsSync(dbPath), 'DB file should exist after migrate')
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+skipIfNoSqlite('migrate: returns correct sql string when applied', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-migrate-sql-'))
+  const dbPath = path.join(tmpDir, 'test.db')
+  try {
+    const schema = parseModel(`
+model Invoice
+  @id let id = autoincrement()
+  let amount: Int
+`)
+    const result = await migrate([schema], { db: 'sqlite', url: dbPath })
+    assert.ok(typeof result.sql === 'string', 'should have sql string')
+    assert.ok(result.sql.includes('CREATE TABLE IF NOT EXISTS invoices'), `sql: ${result.sql}`)
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+// ── dropTables: real SQLite — drops existing table ────────────────────────────
+
+skipIfNoSqlite('dropTables: drops existing table from SQLite DB', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-drop-real-'))
+  const dbPath = path.join(tmpDir, 'test.db')
+  try {
+    const schema = parseModel(`
+model Foo
+  @id let id = autoincrement()
+  let bar: String
+`)
+    // Create the table first
+    await migrate([schema], { db: 'sqlite', url: dbPath })
+
+    // Drop it
+    const result = await dropTables([schema], { db: 'sqlite', url: dbPath })
+    assert.ok(Array.isArray(result.dropped), 'dropped should be an array')
+    assert.ok(result.dropped.includes('foos'), `expected foos in dropped: ${JSON.stringify(result.dropped)}`)
+
+    // After drop, migrating again should create a new table
+    const result2 = await migrate([schema], { db: 'sqlite', url: dbPath })
+    assert.ok(result2.report[0].isNew, 'table should be new after drop')
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+skipIfNoSqlite('dropTables: only drops model tables, leaves others intact', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-drop-partial-'))
+  const dbPath = path.join(tmpDir, 'test.db')
+  try {
+    const s1 = parseModel(`
+model Alpha
+  @id let id = autoincrement()
+  let val: String
+`)
+    const s2 = parseModel(`
+model Beta
+  @id let id = autoincrement()
+  let val: String
+`)
+    // Create both tables
+    await migrate([s1, s2], { db: 'sqlite', url: dbPath })
+
+    // Drop only Alpha
+    const result = await dropTables([s1], { db: 'sqlite', url: dbPath })
+    assert.ok(result.dropped.includes('alphas'), 'alphas should be dropped')
+    assert.ok(!result.dropped.includes('betas'), 'betas should NOT be dropped')
+
+    // Beta should still exist (upToDate on second migrate)
+    const result2 = await migrate([s2], { db: 'sqlite', url: dbPath })
+    assert.strictEqual(result2.upToDate, true, 'betas table should still exist')
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+skipIfNoSqlite('dropTables: returns empty dropped list when table does not exist in DB', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-drop-notexist-'))
+  const dbPath = path.join(tmpDir, 'test.db')
+  try {
+    const schema = parseModel(`
+model Ghost
+  @id let id = autoincrement()
+  let name: String
+`)
+    // Create an unrelated table so the DB file exists
+    const unrelated = parseModel(`
+model Other
+  @id let id = autoincrement()
+  let x: String
+`)
+    await migrate([unrelated], { db: 'sqlite', url: dbPath })
+
+    // Drop Ghost — which was never created
+    const result = await dropTables([schema], { db: 'sqlite', url: dbPath })
+    assert.deepStrictEqual(result.dropped, [], 'should drop nothing since ghosts table was never created')
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+// ── generateModelMigration: throws on unsafe column name ─────────────────────
+
+test('generateModelMigration: throws on unsafe column name in CREATE TABLE', () => {
+  const schema = {
+    name: 'Safe',
+    fields: [
+      {
+        name: 'bad col!',
+        typeAnnotation: { name: 'String' },
+        decorators: [],
+      },
+    ],
+  }
+  assert.throws(
+    () => generateModelMigration(schema, new Set(), 'sqlite'),
+    /unsafe column name/,
+  )
+})
+
+test('generateModelMigration: throws on unsafe column name in ALTER TABLE', () => {
+  const schema = {
+    name: 'Safe',
+    fields: [
+      {
+        name: 'bad col!',
+        typeAnnotation: { name: 'String' },
+        decorators: [],
+      },
+    ],
+  }
+  // existingCols has one entry so we take the ALTER TABLE path
+  assert.throws(
+    () => generateModelMigration(schema, new Set(['id']), 'sqlite'),
+    /unsafe column name/,
+  )
+})
+
+// ── migrate: upToDate returns no sql field ─────────────────────────────────────
+
+test('migrate: upToDate result has no sql field', async () => {
+  // Use dry + pre-existing nonexistent path so it's always new in dry mode
+  // Then use a real DB to get the upToDate path
+  const s = parseModel(`
+model Stable
+  @id let id = autoincrement()
+  let val: String
+`)
+  // First dry run: not upToDate, has sql
+  const r1 = await migrate([s], { db: 'sqlite', url: '/tmp/arc-stable-' + Date.now() + '.db', dry: true })
+  assert.ok('sql' in r1, 'should have sql when not upToDate')
+  // When upToDate, the early return has no sql field
+  // Simulate by using a real DB with two runs
+})
+
+skipIfNoSqlite('migrate: upToDate early return path has no sql field', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-uptod-'))
+  const dbPath = path.join(tmpDir, 'test.db')
+  try {
+    const schema = parseModel(`
+model Steady
+  @id let id = autoincrement()
+  let label: String
+`)
+    await migrate([schema], { db: 'sqlite', url: dbPath })
+    const result = await migrate([schema], { db: 'sqlite', url: dbPath })
+    assert.strictEqual(result.upToDate, true)
+    assert.strictEqual(result.applied, false)
+    assert.ok(!('sql' in result), 'upToDate result should not have a sql field')
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
