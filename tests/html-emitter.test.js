@@ -1396,3 +1396,228 @@ describe('HtmlEmitter — _resolveModalLabel', () => {
     assert.ok(labelAttr.includes('aria-label="fallback-id"'))
   })
 })
+
+// ── HtmlEmitter — _hasH1 traversal into nested control nodes ─────────────────
+
+describe('HtmlEmitter — _hasH1 traversal (IfNode/ForNode/MatchTemplateNode)', () => {
+  function makeEmitter() { return new HtmlEmitter({ hash: 'h1test' }) }
+
+  test('page with main > IfNode with h1 in consequent does not warn', () => {
+    const e = makeEmitter()
+    const warnMsgs = []
+    const origWarn = console.warn
+    console.warn = m => warnMsgs.push(m)
+    try {
+      const page = {
+        type: 'PageDecl',
+        title: N.Literal('Test', 0),
+        meta: {},
+        body: [{
+          type: 'Element', tag: 'main', attrs: {}, classes: [], children: [
+            {
+              type: 'IfNode',
+              condition: { type: 'Literal', value: true },
+              consequent: [{ type: 'Element', tag: 'h1', attrs: {}, classes: [], children: [] }],
+              alternate: [],
+              line: 1,
+            }
+          ], line: 0
+        }]
+      }
+      e.emitPage(page)
+      assert.ok(!warnMsgs.some(m => m.includes('no <h1>')), 'no a11y warning when h1 is inside IfNode')
+    } finally { console.warn = origWarn }
+  })
+
+  test('page with main > ForNode with h1 body does not warn', () => {
+    const e = makeEmitter()
+    const warnMsgs = []
+    const origWarn = console.warn
+    console.warn = m => warnMsgs.push(m)
+    try {
+      const page = {
+        type: 'PageDecl',
+        title: N.Literal('Test', 0),
+        meta: {},
+        body: [{
+          type: 'Element', tag: 'main', attrs: {}, classes: [], children: [
+            {
+              type: 'ForNode',
+              body: [{ type: 'Element', tag: 'h1', attrs: {}, classes: [], children: [] }],
+              line: 1,
+            }
+          ], line: 0
+        }]
+      }
+      e.emitPage(page)
+      assert.ok(!warnMsgs.some(m => m.includes('no <h1>')), 'no warning when h1 is inside ForNode')
+    } finally { console.warn = origWarn }
+  })
+
+  test('page with main > MatchTemplateNode with h1 arm body does not warn', () => {
+    const e = makeEmitter()
+    const warnMsgs = []
+    const origWarn = console.warn
+    console.warn = m => warnMsgs.push(m)
+    try {
+      const page = {
+        type: 'PageDecl',
+        title: N.Literal('Test', 0),
+        meta: {},
+        body: [{
+          type: 'Element', tag: 'main', attrs: {}, classes: [], children: [
+            {
+              type: 'MatchTemplateNode',
+              subject: { type: 'Identifier', name: 'x' },
+              arms: [
+                { pattern: { type: 'Wildcard' }, body: { type: 'Element', tag: 'h1', attrs: {}, classes: [], children: [] } }
+              ],
+              line: 1,
+            }
+          ], line: 0
+        }]
+      }
+      e.emitPage(page)
+      assert.ok(!warnMsgs.some(m => m.includes('no <h1>')), 'no warning when h1 is inside MatchTemplateNode arm')
+    } finally { console.warn = origWarn }
+  })
+})
+
+// ── HtmlEmitter — _hasRealLabel with AST node value ──────────────────────────
+
+describe('HtmlEmitter — _hasRealLabel (lines 71-73)', () => {
+  test('_blank link with raw string aria-label skips sr-only notice', () => {
+    const e = new HtmlEmitter({ hash: 'rl1' })
+    const node = {
+      type: 'Element', tag: 'a',
+      attrs: { href: 'https://example.com', target: '_blank', 'aria-label': 'Visit example' },
+      children: [], classes: [], line: 1,
+    }
+    const result = e.emitElement(node)
+    assert.ok(!result.includes('arc-sr-only'), 'should not add sr-only when aria-label is present')
+  })
+
+  test('_blank link with static AST aria-label (type+isStatic) skips sr-only notice', () => {
+    const e = new HtmlEmitter({ hash: 'rl2' })
+    const node = {
+      type: 'Element', tag: 'a',
+      attrs: { href: 'https://example.com', target: '_blank', 'aria-label': N.Literal('Open site', 0) },
+      children: [], classes: [], line: 1,
+    }
+    const result = e.emitElement(node)
+    assert.ok(!result.includes('arc-sr-only'), 'should not add sr-only when aria-label is a static AST node')
+  })
+
+  test('_blank link without aria-label gets sr-only notice via direct element', () => {
+    const e = new HtmlEmitter({ hash: 'rl3' })
+    const node = {
+      type: 'Element', tag: 'a',
+      attrs: { target: '_blank' },
+      children: [N.TextNode('Go', 0)], classes: [], line: 1,
+    }
+    const result = e.emitElement(node)
+    assert.ok(result.includes('arc-sr-only'), 'should add sr-only when no aria-label')
+  })
+})
+
+// ── HtmlEmitter — emitWidgetInvocation with non-static expr attr ─────────────
+
+describe('HtmlEmitter — emitWidgetInvocation non-static expr attr (line 334)', () => {
+  test('widget attr with non-static expr emits via emitExpr', () => {
+    const e = new HtmlEmitter({ hash: 'nse1' })
+    const widgetDecl = {
+      body: [N.TextNode('body', 0)],
+      params: [],
+    }
+    // Pass a non-static Identifier value (will call emitExpr)
+    const out = e.emitWidgetInvocation(widgetDecl, {
+      label: { type: 'Identifier', name: 'dynamicVal' }
+    }, [])
+    assert.equal(out, 'body', 'widget body rendered even with non-static attr')
+  })
+
+  test('widget attr with plain string value goes through else branch', () => {
+    const e = new HtmlEmitter({ hash: 'nse2' })
+    let capturedAttrs = null
+    const widgetDecl = {
+      body: [N.TextNode('body', 0)],
+      params: [],
+    }
+    const origEmitChildren = e.emitChildren.bind(e)
+    e.emitChildren = (children) => { capturedAttrs = { ...e.currentAttrs }; return origEmitChildren(children) }
+    const out = e.emitWidgetInvocation(widgetDecl, { size: 'large' }, [])
+    assert.equal(out, 'body')
+    assert.equal(capturedAttrs?.size, 'large', 'plain string attr in currentAttrs during render')
+  })
+})
+
+// ── HtmlEmitter — reactive match with non-Literal pattern ────────────────────
+
+describe('HtmlEmitter — reactive match with Identifier pattern (line 937)', () => {
+  test('reactive match with Identifier pattern uses exprToString for comparison', () => {
+    const e = new HtmlEmitter({ hash: 'rm3' })
+    const node = {
+      type: 'MatchTemplateNode',
+      subject: { type: 'Identifier', name: 'status' },
+      arms: [
+        {
+          pattern: { type: 'Identifier', name: 'ACTIVE' },
+          body: N.TextNode('Active', 0),
+        }
+      ],
+      line: 1,
+    }
+    e.emitMatchTemplate(node)
+    const binding = e.stateBindings[0]
+    assert.ok(binding.expr.includes('ACTIVE'), 'should use exprToString for non-literal pattern')
+  })
+})
+
+// ── HtmlEmitter — imgPipeline path (lines 416-425) ───────────────────────────
+
+describe('HtmlEmitter — imgPipeline integration', () => {
+  test('img element with imgPipeline uses pipeline when src is a string', () => {
+    const mockPicture = '<picture><img src="/processed.webp" alt="Photo"></picture>'
+    const imgPipeline = {
+      emitPicture: (src, alt, position) => {
+        if (src === '/photo.jpg') return mockPicture
+        return null
+      }
+    }
+    const e = new HtmlEmitter({ hash: 'img1', imgPipeline })
+    const node = {
+      type: 'Element', tag: 'img',
+      attrs: { src: '/photo.jpg', alt: 'Photo' },
+      children: [], classes: [], line: 1,
+    }
+    const result = e.emitElement(node)
+    assert.equal(result, mockPicture, 'should return pipeline result')
+  })
+
+  test('img element with imgPipeline falls through when pipeline returns null', () => {
+    const imgPipeline = { emitPicture: () => null }
+    const e = new HtmlEmitter({ hash: 'img2', imgPipeline })
+    const node = {
+      type: 'Element', tag: 'img',
+      attrs: { src: '/photo.jpg', alt: 'x' },
+      children: [], classes: [], line: 1,
+    }
+    const result = e.emitElement(node)
+    assert.ok(result.includes('<img'), 'should fall through to normal img emit')
+  })
+
+  test('img element with imgPipeline and AST src node evaluates src', () => {
+    let capturedSrc = null
+    const imgPipeline = {
+      emitPicture: (src, alt, pos) => { capturedSrc = src; return null }
+    }
+    const e = new HtmlEmitter({ hash: 'img3', imgPipeline })
+    const node = {
+      type: 'Element', tag: 'img',
+      attrs: { src: { type: 'Literal', value: '/hero.png' } },
+      children: [], classes: [], line: 1,
+    }
+    e.emitElement(node)
+    assert.equal(capturedSrc, '/hero.png', 'should evaluate AST src Literal')
+  })
+})
