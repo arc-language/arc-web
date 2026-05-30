@@ -840,16 +840,26 @@ describe('Checker: RouteGroupDecl and JobDecl', () => {
     assert.equal(result.errors.length, 0, 'JobDecl with valid body should have no errors')
   })
 
-  test('ModelDecl registers type in scope for later use', () => {
+  test('ModelDecl registers type via direct checkModelDecl call (lines 138-140)', () => {
+    // checker.check() hoists names before calling checkModelDecl, so the
+    // `declared.hasLocal` guard at line 138 is always true during check().
+    // Call checkModelDecl directly with a fresh scope to exercise the register path.
     const { Checker } = require('../src/checker')
     const checker = new Checker('test.arc')
-    const prog = {
-      declarations: [
-        { type: 'ModelDecl', name: 'User', fields: [] },
-      ],
-    }
-    const result = checker.check(prog)
-    assert.equal(result.errors.length, 0, 'ModelDecl should register without errors')
+    // Simulate: declared scope does NOT yet have 'User'
+    const declared = { hasLocal: () => false, set: (k, v) => { declared[k] = v } }
+    const decl = { type: 'ModelDecl', name: 'User', fields: [] }
+    checker.checkModelDecl(decl, declared)
+    assert.equal(declared['User'], 'model', 'ModelDecl name registered as model')
+  })
+
+  test('JobDecl registers type via direct checkJobDecl call (lines 144-146)', () => {
+    const { Checker } = require('../src/checker')
+    const checker = new Checker('test.arc')
+    const declared = { hasLocal: () => false, set: (k, v) => { declared[k] = v } }
+    const decl = { type: 'JobDecl', name: 'SendEmail', params: [], body: null }
+    checker.checkJobDecl(decl, declared)
+    assert.equal(declared['SendEmail'], 'job', 'JobDecl name registered as job')
   })
 })
 

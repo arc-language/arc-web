@@ -557,3 +557,64 @@ test('BunServerEmitter: middleware declarations are emitted (null body → retur
   assert.ok(out.includes('_middleware'), 'should emit middleware function')
   assert.ok(out.includes('return null'), 'null body emits return null')
 })
+
+// ── BunServerEmitter: uncovered branches ─────────────────────────────────────
+
+test('BunServerEmitter: @auth(role) on individual route emits role check', () => {
+  // Direct AST to avoid parser limitations on @auth placement
+  const prog = {
+    declarations: [{
+      type: 'RouteDecl',
+      method: 'get',
+      path: '/admin',
+      annotations: ['@auth(admin)'],
+      body: { type: 'BlockStatement', body: [] },
+    }],
+  }
+  const e = new BunServerEmitter({ hash: 'test', bunRoutes: false })
+  const out = e.emitProgram(prog)
+  assert.ok(out.includes('Forbidden'), 'should include Forbidden for role check')
+  assert.ok(out.includes('admin'), 'should include role name')
+})
+
+test('BunServerEmitter: cors option emits OPTIONS preflight handler', () => {
+  const prog = {
+    declarations: [{
+      type: 'RouteDecl',
+      method: 'get',
+      path: '/',
+      annotations: [],
+      body: { type: 'BlockStatement', body: [] },
+    }],
+  }
+  const e = new BunServerEmitter({ hash: 'test', bunRoutes: false, cors: 'https://example.com' })
+  const out = e.emitProgram(prog)
+  assert.ok(out.includes('OPTIONS'), 'should include OPTIONS handler')
+  assert.ok(out.includes('https://example.com'), 'should include cors origin')
+})
+
+test('BunServerEmitter: _fieldDefaultSql with non-Literal init returns empty', () => {
+  const e = new BunServerEmitter({})
+  // init is a CallExpr, not a Literal
+  const field = { init: { type: 'CallExpr', callee: { type: 'Identifier', name: 'autoincrement' }, args: [] } }
+  assert.equal(e._fieldDefaultSql(field, 'sqlite'), '', 'non-Literal init → empty string')
+})
+
+test('BunServerEmitter: _fieldDefaultSql with null init returns empty', () => {
+  const e = new BunServerEmitter({})
+  const field = { init: null }
+  assert.equal(e._fieldDefaultSql(field, 'sqlite'), '', 'null init → empty string')
+})
+
+test('BunServerEmitter: _isPureLiteral returns false for unrecognized node type', () => {
+  const e = new BunServerEmitter({})
+  // A type not in the recognized set triggers the fallback `return false`
+  const node = { type: 'TemplateLiteral', parts: [] }
+  assert.equal(e._isPureLiteral(node), false, 'unrecognized type → false')
+})
+
+test('BunServerEmitter: _evalLiteral throws for unrecognized node type', () => {
+  const e = new BunServerEmitter({})
+  const node = { type: 'TemplateLiteral', parts: [] }
+  assert.throws(() => e._evalLiteral(node), /Cannot statically evaluate/)
+})
