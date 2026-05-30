@@ -215,18 +215,21 @@ function _collectCssImports(program) {
   return pkgs
 }
 
+const _cssFileCache = new Map()
 function _resolveCssFile(cssPath, visited = new Set()) {
   if (visited.has(cssPath)) return ''
   visited.add(cssPath)
+  if (_cssFileCache.has(cssPath)) return _cssFileCache.get(cssPath)
   let src
   try { src = fs.readFileSync(cssPath, 'utf8') } catch { return '' }
   const dir = path.dirname(cssPath)
   // Resolve @import "..." or @import './...' statements inline
-  return src.replace(/@import\s+["']([^"']+)["'];?/g, (_, imp) => {
+  const resolved = src.replace(/@import\s+["']([^"']+)["'];?/g, (_, imp) => {
     if (imp.startsWith('http://') || imp.startsWith('https://')) return ''
-    const resolved = path.resolve(dir, imp)
-    return _resolveCssFile(resolved, visited)
+    return _resolveCssFile(path.resolve(dir, imp), visited)
   })
+  _cssFileCache.set(cssPath, resolved)
+  return resolved
 }
 
 function _resolveCssPackages(pkgs, rootDir) {
@@ -955,6 +958,44 @@ function _handleDevReload(req, res, reloadClients) {
   const _cleanup = () => { _clients.delete(res); if (_clients.size === 0) reloadClients.delete(page) }
   req.on('close', _cleanup)
   res.on('error', _cleanup)
+}
+
+// H3: Read a file, optionally inject the dev reload script, and send the response.
+async function _serveDevFile(filePath, ext, injectScript, res) {
+  let content = await fs.promises.readFile(filePath)
+  const mime = _MIME_TYPES[ext] ?? 'application/octet-stream'
+
+  if (ext === '.html') {
+    content = Buffer.from(
+      content.toString()
+        .replace(_CSP_META_RE, '')
+        .replace(/<\/body>/i, `${injectScript}\n</body>`)
+    )
+  }
+
+  res.writeHead(200, {
+    'Content-Type': mime,
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+  })
+  res.end(content)
+}
+
+// H3: Send a 500 error page for unexpected read errors in the dev server.
+function _handleDevError(e, filePath, req, res) {
+  const msg = `${e.code ?? 'ERROR'}: ${e.message}`
+  console.error(`arc: dev: ${req.method} ${req.url} — ${msg}`)
+  res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' })
+  res.end(`<!doctype html><html><head><title>500 — arc dev</title>
+<style>body{font:14px/1.6 system-ui,sans-serif;max-width:600px;margin:60px auto;padding:0 16px;color:#111}
+h1{font-size:1.5rem;color:#c00}code{background:#f3f3f3;padding:2px 6px;border-radius:4px;font-size:13px}
+pre{background:#f3f3f3;padding:16px;border-radius:8px;overflow:auto;font-size:13px}</style></head>
+<body><h1>500 — Server Error</h1>
+<p><code>${msg.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</code></p>
+<p>File: <code>${filePath.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</code></p>
+<p>Check the terminal for details, then run <code>arc build-site .</code> to rebuild.</p>
+</body></html>`)
 }
 
 // H1 / H3: HTTP request handler for the dev server (module-scope helper)

@@ -196,10 +196,11 @@ class JsEmitter {
     const adj = new Map()
     for (const c of computedDecls) adj.set(c.name, [])
     for (const dep of computedDecls) {
-      const directDeps = new Set(
-        computedDecls.filter(c => c.name !== dep.name && this.exprReferences(dep.init, c.name)).map(c => c.name)
-      )
-      for (const cName of directDeps) adj.get(cName)?.push(dep)
+      for (const c of computedDecls) {
+        if (c.name !== dep.name && this.exprReferences(dep.init, c.name)) {
+          adj.get(c.name)?.push(dep)
+        }
+      }
     }
     return adj
   }
@@ -484,7 +485,15 @@ class JsEmitter {
         return `(${this.emitExpr(expr.left)}??${this.emitExpr(expr.right)})`
 
       case 'CallExpr': {
-        const args = (expr.args ?? []).map(a => this.emitExpr(a)).join(',')
+        const argList = (expr.args ?? []).map((a, i) => {
+          const out = this.emitExpr(a)
+          if (out === '' || out == null) {
+            const name = a?.name ?? a?.type ?? 'unknown'
+            throw new Error(`Arc codegen: CallExpr argument ${i} emitted as empty (AST: ${JSON.stringify(name)}). Likely an identifier collides with an Arc reserved word (e.g. group, route, auth, page) — rename the variable.`)
+          }
+          return out
+        })
+        const args = argList.join(',')
         // new ClassName(args) is encoded as CallExpr(MemberExpr(null, Identifier(name)), args)
         if (expr.callee?.type === 'MemberExpr' && expr.callee.object === null) {
           const className = expr.callee.property?.name ?? expr.callee.property?.value ?? ''

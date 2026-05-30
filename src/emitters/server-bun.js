@@ -298,7 +298,8 @@ const _rlMap = new Map()
 const _TRUSTED_PROXIES = process.env.TRUSTED_PROXY_IPS
   ? new Set(process.env.TRUSTED_PROXY_IPS.split(',').map(s => s.trim()).filter(Boolean))
   : null
-setInterval(() => _rlMap.clear(), 60 * 60 * 1000).unref()
+// Sweep expired entries every minute so burst-then-silent IPs don't accumulate between hourly resets
+setInterval(() => { const _n = Date.now(); for (const [_k, _v] of _rlMap) if (_n > _v.resetAt) _rlMap.delete(_k) }, 60000).unref()
 function _checkRateLimit(req) {
   if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'DELETE' && req.method !== 'PATCH') return null
   const xff = req.headers.get('x-forwarded-for')
@@ -363,7 +364,7 @@ const _db = {
   }
 
   _emitModelHelpersSqlite(schema) {
-    const { lc, fields, colList, colDefs } = this._schemaVars(schema, 'sqlite')
+    const { tableName, fields, colList, colDefs } = this._schemaVars(schema, 'sqlite')
     const placeholders = fields.map((_, i) => `?${i + 1}`).join(', ')
     const updates = fields.map((f, i) => `"${f.name}" = ?${i + 1}`).join(', ')
     const selectCols = colList ? `id, ${colList}` : 'id'
@@ -372,50 +373,50 @@ const _db = {
     const requiredFieldNames = JSON.stringify(fields.filter(f => this._isRequiredField(f)).map(f => f.name))
     return `
 // Schema: ${schema.name}
-_db.run(\`CREATE TABLE IF NOT EXISTS ${lc} (${colDefs})\`)
+_db.run(\`CREATE TABLE IF NOT EXISTS ${tableName} (${colDefs})\`)
 
-const _q_${lc}_findMany = _db.query('SELECT ${selectCols} FROM ${lc} LIMIT ?1 OFFSET ?2')
-const _q_${lc}_find = _db.query('SELECT ${selectCols} FROM ${lc} WHERE id = ?1')
-${colList ? `const _q_${lc}_create = _db.query('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *')` : ''}
-${colList ? `const _q_${lc}_update = _db.query('UPDATE ${lc} SET ${updates} WHERE id = ?${fields.length + 1} RETURNING *')` : ''}
-const _q_${lc}_delete = _db.query('DELETE FROM ${lc} WHERE id = ?1')
-const _q_${lc}_count = _db.query('SELECT COUNT(*) as count FROM ${lc}')
-const _${lc}_fields = ${fieldNames}
-const _${lc}_required = ${requiredFieldNames}
+const _q_${tableName}_findMany = _db.query('SELECT ${selectCols} FROM ${tableName} LIMIT ?1 OFFSET ?2')
+const _q_${tableName}_find = _db.query('SELECT ${selectCols} FROM ${tableName} WHERE id = ?1')
+${colList ? `const _q_${tableName}_create = _db.query('INSERT INTO ${tableName} (${colList}) VALUES (${placeholders}) RETURNING *')` : ''}
+${colList ? `const _q_${tableName}_update = _db.query('UPDATE ${tableName} SET ${updates} WHERE id = ?${fields.length + 1} RETURNING *')` : ''}
+const _q_${tableName}_delete = _db.query('DELETE FROM ${tableName} WHERE id = ?1')
+const _q_${tableName}_count = _db.query('SELECT COUNT(*) as count FROM ${tableName}')
+const _${tableName}_fields = ${fieldNames}
+const _${tableName}_required = ${requiredFieldNames}
 
 Object.assign(globalThis.db ?? (globalThis.db = {}), {
-  ${lc}: {
+  ${tableName}: {
     findMany: (opts = {}) => {
       const _w = opts?.where
       const _ob = opts?.orderBy ? Object.entries(opts.orderBy).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
       const _order = _ob ? \` ORDER BY \${_ob}\` : ''
-      if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${lc}\${_order} LIMIT ? OFFSET ?\`).all(Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
-      const _fs = new Set(_${lc}_fields)
-      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${lc}.findMany: unknown field: \${k}\`); return \`"\${k}" = ?\` })
-      return _db.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')}\${_order} LIMIT ? OFFSET ?\`).all(...Object.values(_w), Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
+      if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT ? OFFSET ?\`).all(Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
+      const _fs = new Set(_${tableName}_fields)
+      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${tableName}.findMany: unknown field: \${k}\`); return \`"\${k}" = ?\` })
+      return _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')}\${_order} LIMIT ? OFFSET ?\`).all(...Object.values(_w), Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
     },
     findFirst: (opts = {}) => {
       const _w = opts?.where
       const _ob = opts?.orderBy ? Object.entries(opts.orderBy).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
       const _order = _ob ? \` ORDER BY \${_ob}\` : ''
-      if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${lc}\${_order} LIMIT 1\`).get() ?? null
-      const _fs = new Set(_${lc}_fields)
-      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${lc}.findFirst: unknown field: \${k}\`); return \`"\${k}" = ?\` })
-      return _db.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')}\${_order} LIMIT 1\`).get(...Object.values(_w)) ?? null
+      if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT 1\`).get() ?? null
+      const _fs = new Set(_${tableName}_fields)
+      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${tableName}.findFirst: unknown field: \${k}\`); return \`"\${k}" = ?\` })
+      return _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')}\${_order} LIMIT 1\`).get(...Object.values(_w)) ?? null
     },
     findUnique: (opts = {}) => {
-      const _w = opts?.where; if (!_w) throw new Error('${lc}.findUnique: where is required')
-      const _fs = new Set(_${lc}_fields)
-      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${lc}.findUnique: unknown field: \${k}\`); return \`"\${k}" = ?\` })
-      const _rs = _db.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')} LIMIT 2\`).all(...Object.values(_w))
-      if (_rs.length > 1) throw Object.assign(new Error('${lc}.findUnique: multiple rows'), { status: 400 })
+      const _w = opts?.where; if (!_w) throw new Error('${tableName}.findUnique: where is required')
+      const _fs = new Set(_${tableName}_fields)
+      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${tableName}.findUnique: unknown field: \${k}\`); return \`"\${k}" = ?\` })
+      const _rs = _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')} LIMIT 2\`).all(...Object.values(_w))
+      if (_rs.length > 1) throw Object.assign(new Error('${tableName}.findUnique: multiple rows'), { status: 400 })
       return _rs[0] ?? null
     },
-    find: (id) => _q_${lc}_find.get(id) ?? null,
-    ${colList ? `create: (data) => { const _d = _pick(data, _${lc}_fields); const _miss = _${lc}_required.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${lc}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _q_${lc}_create.get(${fields.map(f => `_d.${f.name}`).join(', ')}) },` : ''}
-    ${colList ? `update: (id, data) => { const _d = _pick(data, _${lc}_fields); return _q_${lc}_update.get(${fields.map(f => `_d.${f.name}`).join(', ')}, id) },` : ''}
-    delete: (id) => (_q_${lc}_delete.run(id), true),
-    count: () => _q_${lc}_count.get()?.count ?? 0,
+    find: (id) => _q_${tableName}_find.get(id) ?? null,
+    ${colList ? `create: (data) => { const _d = _pick(data, _${tableName}_fields); const _miss = _${tableName}_required.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${tableName}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _q_${tableName}_create.get(${fields.map(f => `_d.${f.name}`).join(', ')}) },` : ''}
+    ${colList ? `update: (id, data) => { const _d = _pick(data, _${tableName}_fields); return _q_${tableName}_update.get(${fields.map(f => `_d.${f.name}`).join(', ')}, id) },` : ''}
+    delete: (id) => (_q_${tableName}_delete.run(id), true),
+    count: () => _q_${tableName}_count.get()?.count ?? 0,
   }
 })`.trim()
   }
@@ -424,45 +425,45 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
   // Keeps CREATE TABLE in sequence (no concurrent-IIFE race) and assembles globalThis.db once.
   emitPgSchemaInit(schemas) {
     const tableInits = schemas.map(schema => {
-      const { lc, colDefs } = this._schemaVars(schema, 'postgres')
-      return `  await _db.run(\`CREATE TABLE IF NOT EXISTS ${lc} (${colDefs})\`)`
+      const { tableName, colDefs } = this._schemaVars(schema, 'postgres')
+      return `  await _db.run(\`CREATE TABLE IF NOT EXISTS ${tableName} (${colDefs})\`)`
     }).join('\n')
 
     const dbEntries = schemas.map(schema => {
-      const { lc, fields, colList } = this._schemaVars(schema, 'postgres')
+      const { tableName, fields, colList } = this._schemaVars(schema, 'postgres')
       const placeholders = fields.map((_, i) => `$${i + 1}`).join(', ')
       const updates = fields.map((f, i) => `${f.name} = $${i + 1}`).join(', ')
       const selectCols = colList ? `id, ${colList}` : 'id'
       const fieldNames = JSON.stringify(fields.map(f => f.name))
       const requiredFieldNames = JSON.stringify(fields.filter(f => this._isRequiredField(f)).map(f => f.name))
-      return `  ${lc}: (() => { const _flds = ${fieldNames}; const _req = ${requiredFieldNames}; return {
+      return `  ${tableName}: (() => { const _flds = ${fieldNames}; const _req = ${requiredFieldNames}; return {
     findMany: async (opts = {}) => {
       const _w = opts?.where
-      if (!_w || !Object.keys(_w).length) return _pool.query('SELECT ${selectCols} FROM ${lc} LIMIT $1 OFFSET $2', [Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows)
+      if (!_w || !Object.keys(_w).length) return _pool.query('SELECT ${selectCols} FROM ${tableName} LIMIT $1 OFFSET $2', [Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows)
       const _fs = new Set(_flds); const _ks = Object.keys(_w)
-      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${lc}.findMany: unknown field: \${k}\`); return \`"\${k}" = $\${i+1}\` })
-      return _pool.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')} LIMIT $\${_ks.length+1} OFFSET $\${_ks.length+2}\`, [...Object.values(_w), Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows)
+      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${tableName}.findMany: unknown field: \${k}\`); return \`"\${k}" = $\${i+1}\` })
+      return _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')} LIMIT $\${_ks.length+1} OFFSET $\${_ks.length+2}\`, [...Object.values(_w), Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows)
     },
     findFirst: async (opts = {}) => {
       const _w = opts?.where
-      if (!_w || !Object.keys(_w).length) return _pool.query('SELECT ${selectCols} FROM ${lc} LIMIT 1 OFFSET 0').then(r => r.rows[0] ?? null)
+      if (!_w || !Object.keys(_w).length) return _pool.query('SELECT ${selectCols} FROM ${tableName} LIMIT 1 OFFSET 0').then(r => r.rows[0] ?? null)
       const _fs = new Set(_flds); const _ks = Object.keys(_w)
-      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${lc}.findFirst: unknown field: \${k}\`); return \`"\${k}" = $\${i+1}\` })
-      return _pool.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')} LIMIT 1\`, Object.values(_w)).then(r => r.rows[0] ?? null)
+      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${tableName}.findFirst: unknown field: \${k}\`); return \`"\${k}" = $\${i+1}\` })
+      return _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')} LIMIT 1\`, Object.values(_w)).then(r => r.rows[0] ?? null)
     },
     findUnique: async (opts = {}) => {
-      const _w = opts?.where; if (!_w) throw new Error('${lc}.findUnique: where is required')
+      const _w = opts?.where; if (!_w) throw new Error('${tableName}.findUnique: where is required')
       const _fs = new Set(_flds); const _ks = Object.keys(_w)
-      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${lc}.findUnique: unknown field: \${k}\`); return \`\${k} = $\${i+1}\` })
-      const _rs = await _pool.query(\`SELECT ${selectCols} FROM ${lc} WHERE \${_cl.join(' AND ')} LIMIT 2\`, Object.values(_w)).then(r => r.rows)
-      if (_rs.length > 1) throw Object.assign(new Error('${lc}.findUnique: multiple rows'), { status: 400 })
+      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${tableName}.findUnique: unknown field: \${k}\`); return \`\${k} = $\${i+1}\` })
+      const _rs = await _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')} LIMIT 2\`, Object.values(_w)).then(r => r.rows)
+      if (_rs.length > 1) throw Object.assign(new Error('${tableName}.findUnique: multiple rows'), { status: 400 })
       return _rs[0] ?? null
     },
-    find: async (id) => _pool.query('SELECT ${selectCols} FROM ${lc} WHERE id = $1', [id]).then(r => r.rows[0] ?? null),
-    ${colList ? `create: async (data) => { const _d = _pick(data, _flds); const _miss = _req.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${lc}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _pool.query('INSERT INTO ${lc} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}]).then(r => r.rows[0]) },` : ''}
-    ${colList ? `update: async (id, data) => { const _d = _pick(data, _flds); return _pool.query('UPDATE ${lc} SET ${updates} WHERE id = $${fields.length + 1} RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}, id]).then(r => r.rows[0]) },` : ''}
-    delete: async (id) => { await _pool.query('DELETE FROM ${lc} WHERE id = $1', [id]); return true },
-    count: async () => _pool.query('SELECT COUNT(*) as count FROM ${lc}').then(r => +r.rows[0].count),
+    find: async (id) => _pool.query('SELECT ${selectCols} FROM ${tableName} WHERE id = $1', [id]).then(r => r.rows[0] ?? null),
+    ${colList ? `create: async (data) => { const _d = _pick(data, _flds); const _miss = _req.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${tableName}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _pool.query('INSERT INTO ${tableName} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}]).then(r => r.rows[0]) },` : ''}
+    ${colList ? `update: async (id, data) => { const _d = _pick(data, _flds); return _pool.query('UPDATE ${tableName} SET ${updates} WHERE id = $${fields.length + 1} RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}, id]).then(r => r.rows[0]) },` : ''}
+    delete: async (id) => { await _pool.query('DELETE FROM ${tableName} WHERE id = $1', [id]); return true },
+    count: async () => _pool.query('SELECT COUNT(*) as count FROM ${tableName}').then(r => +r.rows[0].count),
   }})(),`
     }).join('\n')
 
@@ -486,7 +487,7 @@ ${dbEntries}
   }
 
   _schemaVars(schema, dialect) {
-    const lc = schema.name.toLowerCase() + 's'
+    const tableName = schema.name.toLowerCase() + 's'
     const fields = (schema.fields ?? []).filter(f => f.name && !f.decorators?.includes('@id'))
     for (const f of fields) {
       if (!_SAFE_IDENT.test(f.name)) throw new Error(`Arc codegen: unsafe field name: ${JSON.stringify(f.name)}`)
@@ -507,7 +508,7 @@ ${dbEntries}
         return `${q(f.name)} ${sqlType}${notNull}${defaultVal}${unique}`
       })
     ].join(', ')
-    return { lc, fields, colList, colDefs }
+    return { tableName, fields, colList, colDefs }
   }
 
   _fieldDefaultSql(field, dialect) {
