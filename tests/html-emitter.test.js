@@ -1190,3 +1190,209 @@ describe('HtmlEmitter — emitWidgetInvocation', () => {
     assert.deepEqual(e.currentAttrs, {}, 'currentAttrs restored after call')
   })
 })
+
+// ── HtmlEmitter — _hasH1 with IfNode/ForNode/MatchTemplateNode ────────────────
+
+describe('HtmlEmitter — page seo schemaType', () => {
+  test('page with schemaType meta emits JSON-LD script tag', () => {
+    const e = new HtmlEmitter({ hash: 'seo1' })
+    const page = {
+      type: 'PageDecl',
+      title: N.Literal('My Post', 0),
+      meta: {
+        schemaType: N.Literal('Article', 0),
+        author: N.Literal('Alice', 0),
+        published: N.Literal('2024-01-01', 0),
+        modified: N.Literal('2024-06-01', 0),
+        image: N.Literal('https://example.com/img.jpg', 0),
+        canonical: N.Literal('https://example.com/post', 0),
+        description: N.Literal('A test post', 0),
+      },
+      body: [],
+    }
+    const html = e.emitPage(page)
+    assert.ok(html.includes('application/ld+json'), 'should emit JSON-LD script')
+    assert.ok(html.includes('"@type":"Article"'), 'should include schema type')
+    assert.ok(html.includes('"datePublished"'), 'should include datePublished')
+    assert.ok(html.includes('"dateModified"'), 'should include dateModified')
+    assert.ok(html.includes('"author"'), 'should include author')
+  })
+})
+
+// ── HtmlEmitter — emitWidget ──────────────────────────────────────────────────
+
+describe('HtmlEmitter — emitWidget direct call', () => {
+  test('emitWidget renders body children', () => {
+    const e = new HtmlEmitter({ hash: 'w1' })
+    const node = { type: 'Widget', body: [N.TextNode('hello', 0)] }
+    const result = e.emitWidget(node)
+    assert.equal(result, 'hello')
+  })
+})
+
+// ── HtmlEmitter — emitExpr with TemplateLiteral parts ────────────────────────
+
+describe('HtmlEmitter — emitExpr', () => {
+  test('emitExpr with Literal escapes HTML', () => {
+    const e = new HtmlEmitter({ hash: 'ex1' })
+    const result = e.emitExpr({ type: 'Literal', value: '<b>bold</b>' })
+    assert.equal(result, '&lt;b&gt;bold&lt;/b&gt;')
+  })
+
+  test('emitExpr with TemplateLiteral concatenates literal parts', () => {
+    const e = new HtmlEmitter({ hash: 'ex2' })
+    const result = e.emitExpr({
+      type: 'TemplateLiteral',
+      parts: [
+        { type: 'Literal', value: 'Hello ' },
+        { type: 'Identifier', name: 'name' },
+        { type: 'Literal', value: '!' },
+      ]
+    })
+    assert.equal(result, 'Hello !')
+  })
+
+  test('emitExpr with null/undefined returns empty string', () => {
+    const e = new HtmlEmitter({ hash: 'ex3' })
+    assert.equal(e.emitExpr(null), '')
+    assert.equal(e.emitExpr(undefined), '')
+  })
+
+  test('emitExpr with unknown type returns empty string', () => {
+    const e = new HtmlEmitter({ hash: 'ex4' })
+    assert.equal(e.emitExpr({ type: 'Identifier', name: 'x' }), '')
+  })
+})
+
+// ── HtmlEmitter — reactive interpolation (non-for-loop) ───────────────────────
+
+describe('HtmlEmitter — reactive interpolation span', () => {
+  test('reactive identifier interpolation emits span placeholder', () => {
+    const e = new HtmlEmitter({ hash: 'ri1' })
+    const node = { type: 'Interpolation', expr: { type: 'Identifier', name: 'count' }, line: 1 }
+    const result = e.emitInterpolation(node)
+    assert.ok(result.includes('<span'), 'should emit span')
+    assert.ok(result.includes('data-arc-live'), 'should have data-arc-live attribute')
+    assert.ok(e.stateBindings.some(b => b.expr === 'count'), 'should register count binding')
+  })
+})
+
+// ── HtmlEmitter — reactive match template ─────────────────────────────────────
+
+describe('HtmlEmitter — reactive match template', () => {
+  test('reactive match emits all arms as hidden divs', () => {
+    const e = new HtmlEmitter({ hash: 'rm1' })
+    const node = {
+      type: 'MatchTemplateNode',
+      subject: { type: 'Identifier', name: 'status' },
+      arms: [
+        { pattern: { type: 'Literal', value: 'ok' }, body: N.TextNode('OK', 0) },
+        { pattern: { type: 'Wildcard' }, body: N.TextNode('Other', 0) },
+      ],
+      line: 1,
+    }
+    const result = e.emitMatchTemplate(node)
+    assert.ok(result.includes('<div'), 'should emit wrapper div')
+    assert.ok(result.includes('hidden'), 'arms should be hidden')
+    assert.ok(result.includes('OK'), 'first arm body rendered')
+    assert.ok(result.includes('Other'), 'wildcard arm body rendered')
+    assert.ok(e.stateBindings.length >= 2, 'should register stateBindings for each arm')
+  })
+
+  test('reactive match with non-wildcard pattern emits equality check', () => {
+    const e = new HtmlEmitter({ hash: 'rm2' })
+    const node = {
+      type: 'MatchTemplateNode',
+      subject: { type: 'Identifier', name: 'mode' },
+      arms: [
+        { pattern: { type: 'Literal', value: 'dark' }, body: N.TextNode('Dark', 0) },
+      ],
+      line: 1,
+    }
+    e.emitMatchTemplate(node)
+    assert.ok(e.stateBindings.some(b => b.expr.includes('===')), 'should use === comparison')
+  })
+})
+
+// ── HtmlEmitter — isStaticExpr TemplateLiteral ────────────────────────────────
+
+describe('HtmlEmitter — isStaticExpr TemplateLiteral and ArrayLiteral', () => {
+  test('isStaticExpr TemplateLiteral: all Literal parts → true', () => {
+    const e = new HtmlEmitter({ hash: 'is1' })
+    assert.equal(e.isStaticExpr({
+      type: 'TemplateLiteral',
+      parts: [{ type: 'Literal', value: 'a' }, { type: 'Literal', value: 'b' }]
+    }), true)
+  })
+
+  test('isStaticExpr TemplateLiteral: Identifier part → false', () => {
+    const e = new HtmlEmitter({ hash: 'is2' })
+    assert.equal(e.isStaticExpr({
+      type: 'TemplateLiteral',
+      parts: [{ type: 'Literal', value: 'a' }, { type: 'Identifier', name: 'x' }]
+    }), false)
+  })
+
+  test('evalStaticExpr ArrayLiteral returns mapped array', () => {
+    const e = new HtmlEmitter({ hash: 'es1' })
+    const result = e.evalStaticExpr({
+      type: 'ArrayLiteral',
+      elements: [
+        { type: 'Literal', value: 1 },
+        { type: 'Literal', value: 2 },
+      ]
+    })
+    assert.deepEqual(result, [1, 2])
+  })
+
+  test('evalStaticExpr with unknown type returns undefined', () => {
+    const e = new HtmlEmitter({ hash: 'es2' })
+    assert.equal(e.evalStaticExpr({ type: 'CallExpr', callee: 'fn', args: [] }), undefined)
+  })
+})
+
+// ── HtmlEmitter — modal label resolution ─────────────────────────────────────
+
+describe('HtmlEmitter — _resolveModalLabel', () => {
+  test('modal with label= attr uses aria-label', () => {
+    const e = new HtmlEmitter({ hash: 'ml1' })
+    const node = {
+      attrs: { label: 'Dialog Title' },
+      children: [],
+    }
+    const { labelAttr } = e._resolveModalLabel(node, 'my-modal')
+    assert.ok(labelAttr.includes('aria-label="Dialog Title"'))
+  })
+
+  test('modal with heading child uses aria-labelledby', () => {
+    const e = new HtmlEmitter({ hash: 'ml2' })
+    const node = {
+      attrs: {},
+      children: [
+        { type: 'Element', tag: 'heading', attrs: {}, children: [N.TextNode('My Title', 0)] },
+      ],
+    }
+    const { labelAttr } = e._resolveModalLabel(node, 'dlg')
+    assert.ok(labelAttr.includes('aria-labelledby='), 'should use aria-labelledby when heading found')
+  })
+
+  test('modal with heading child having existing id does not patch', () => {
+    const e = new HtmlEmitter({ hash: 'ml3' })
+    const node = {
+      attrs: {},
+      children: [
+        { type: 'Element', tag: 'h2', id: 'existing-id', attrs: {}, children: [N.TextNode('Title', 0)] },
+      ],
+    }
+    const { labelAttr, resolvedNode } = e._resolveModalLabel(node, 'dlg2')
+    assert.ok(labelAttr.includes('aria-labelledby="existing-id"'))
+    assert.equal(resolvedNode, node, 'should return original node when id already exists')
+  })
+
+  test('modal with no label or heading falls back to id', () => {
+    const e = new HtmlEmitter({ hash: 'ml4' })
+    const node = { attrs: {}, children: [] }
+    const { labelAttr } = e._resolveModalLabel(node, 'fallback-id')
+    assert.ok(labelAttr.includes('aria-label="fallback-id"'))
+  })
+})
