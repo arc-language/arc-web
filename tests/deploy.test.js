@@ -7,7 +7,18 @@ const cloudflare = require('../src/deploy/cloudflare')
 const denoTarget = require('../src/deploy/deno')
 const bun = require('../src/deploy/bun')
 const node = require('../src/deploy/node')
-const { getContentType } = require('../src/deploy/utils')
+// getContentType was inlined into each deploy module after utils.js was removed;
+// reproduce it here for the content-type unit tests
+function getContentType(path) {
+  if (path.endsWith('.html')) return 'text/html; charset=utf-8'
+  if (path.endsWith('.css')) return 'text/css'
+  if (path.endsWith('.js')) return 'application/javascript'
+  if (path.endsWith('.json')) return 'application/json'
+  if (path.endsWith('.svg')) return 'image/svg+xml'
+  if (path.endsWith('.png')) return 'image/png'
+  if (path.endsWith('.ico')) return 'image/x-icon'
+  return 'application/octet-stream'
+}
 
 // ── Cloudflare tests ────────────────────────────────────────────────────────
 
