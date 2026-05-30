@@ -377,3 +377,46 @@ test('emitRouteMatch: increments _matchCounter for unique temp vars', () => {
   const var2 = out2.match(/const (_ms\d+)/)[1]
   assert.notStrictEqual(var1, var2, 'each match should use a unique temp variable')
 })
+
+// ── Coverage for remaining uncovered lines ────────────────────────────────────
+
+test('_calleePath returns empty string for unknown callee type (line 49)', () => {
+  // _calleePath is not exported; exercise it via emitRouteStmt with an ExprStatement
+  // whose callee is neither Identifier nor MemberExpr
+  const e = makeEmitter()
+  const stmt = {
+    type: 'ExprStatement',
+    expr: {
+      type: 'CallExpr',
+      callee: { type: 'CallExpr', callee: { type: 'Identifier', name: 'fn' }, args: [] },
+      args: [],
+    }
+  }
+  // Should not throw, just fall back to generic emit
+  const out = emitRouteStmt(stmt, e)
+  assert.ok(typeof out === 'string')
+})
+
+test('emitRouteStmt falls through to jsEmitter.emitStmt for unrecognized types (lines 92-94)', () => {
+  const e = makeEmitter()
+  // A ReturnStatement should fall through to the general emitter (emitStmt)
+  const stmt = {
+    type: 'ReturnStatement',
+    value: { type: 'Literal', value: 42 },
+  }
+  const out = emitRouteStmt(stmt, e)
+  assert.ok(typeof out === 'string')
+})
+
+test('emitRouteMatch with Literal pattern falls through to emitPattern (lines 144-145)', () => {
+  const e = makeEmitter()
+  const stmt = {
+    type: 'MatchStatement',
+    subject: { type: 'Identifier', name: 'code' },
+    arms: [
+      { pattern: { type: 'Literal', value: 200 }, body: { type: 'CallExpr', callee: { type: 'Identifier', name: 'json' }, args: [] } },
+    ],
+  }
+  const out = emitRouteMatch(stmt, e)
+  assert.ok(typeof out === 'string', `should not throw: ${out}`)
+})

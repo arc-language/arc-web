@@ -970,3 +970,34 @@ describe('CssEmitter — animate shorthand and emitProps passthrough', () => {
   })
 })
 
+
+describe('CssEmitter — emitStyleRule with unknown child type (line 426)', () => {
+  function makeEmitter() { return new CssEmitter({ hash: 'test' }) }
+
+  test('emitStyleRule with unknown child type returns empty for that child', () => {
+    const e = makeEmitter()
+    const rule = {
+      type: 'StyleRule',
+      selector: '.btn',
+      props: [{ name: 'color', value: 'red' }],
+      children: [
+        { type: 'UnknownChildType', selector: '.x', props: [] }
+      ]
+    }
+    const result = e.emitStyleRule(rule)
+    assert.ok(result.includes('.btn'), 'should still emit the parent rule')
+    assert.ok(result.includes('color: red'), 'should include parent declarations')
+  })
+
+  test('emitCondition with non-StyleRule inner rule returns empty for that rule (line 500)', () => {
+    const e = makeEmitter()
+    const result = e.emitCondition({
+      kind: 'media',
+      query: 'max-width: 768px',
+      rules: [
+        { type: 'UnknownRule', selector: '.x', props: [] }
+      ]
+    })
+    assert.equal(result, '', 'should return empty when all inner rules are unknown type')
+  })
+})

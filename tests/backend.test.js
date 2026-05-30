@@ -618,3 +618,55 @@ test('BunServerEmitter: _evalLiteral throws for unrecognized node type', () => {
   const node = { type: 'TemplateLiteral', parts: [] }
   assert.throws(() => e._evalLiteral(node), /Cannot statically evaluate/)
 })
+
+test('BunServerEmitter: _fieldDefaultSql null/undefined/boolean/number/string/unknown', () => {
+  const e = new BunServerEmitter({})
+
+  // null value
+  const f1 = { init: { type: 'Literal', value: null } }
+  assert.equal(e._fieldDefaultSql(f1, 'sqlite'), ' DEFAULT NULL')
+
+  // undefined value
+  const f2 = { init: { type: 'Literal', value: undefined } }
+  assert.equal(e._fieldDefaultSql(f2, 'sqlite'), ' DEFAULT NULL')
+
+  // boolean sqlite
+  const f3 = { init: { type: 'Literal', value: true } }
+  assert.equal(e._fieldDefaultSql(f3, 'sqlite'), ' DEFAULT 1')
+
+  // boolean postgres
+  const f4 = { init: { type: 'Literal', value: false } }
+  assert.equal(e._fieldDefaultSql(f4, 'postgres'), ' DEFAULT false')
+
+  // number
+  const f5 = { init: { type: 'Literal', value: 42 } }
+  assert.equal(e._fieldDefaultSql(f5, 'sqlite'), ' DEFAULT 42')
+
+  // string
+  const f6 = { init: { type: 'Literal', value: 'hello' } }
+  assert.equal(e._fieldDefaultSql(f6, 'sqlite'), " DEFAULT 'hello'")
+
+  // unknown type (object) — line 524
+  const f7 = { init: { type: 'Literal', value: { nested: true } } }
+  assert.equal(e._fieldDefaultSql(f7, 'sqlite'), '')
+})
+
+// ── route-compiler: staticHandlers and paramChild coverage ───────────────────
+
+test('route-compiler: emitBunRoutesObject with staticHandlers and noTracing+noRateLimit (line 149)', () => {
+  const routes = [{ method: 'GET', path: '/', handlerName: '_handler_home' }]
+  const staticHandlers = new Map([['_handler_home', '_STATIC_HOME']])
+  const out = emitBunRoutesObject(routes, { staticHandlers, noTracing: true, noRateLimit: true })
+  assert.ok(out.includes('(_req, _ctx) => _STATIC_HOME'), 'should use sync static handler wrapper')
+})
+
+test('route-compiler: compileRoutes with static+param children at same level (lines 215-220)', () => {
+  const routes = [
+    { method: 'GET', path: '/api/users', handlerName: '_h_users' },
+    { method: 'GET', path: '/api/:id', handlerName: '_h_detail' },
+  ]
+  const out = compileRoutes(routes)
+  assert.ok(out.includes('params['), 'should include param assignment')
+  assert.ok(out.includes('_h_users'), 'should include static route handler')
+  assert.ok(out.includes('_h_detail'), 'should include param route handler')
+})
