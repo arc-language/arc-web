@@ -968,3 +968,28 @@ describe('BuildExecutor.evalCall — fetch URL evaluation', () => {
     await assert.rejects(() => e.evalExpr(call), /only http\/https allowed/)
   })
 })
+
+// ── exprName fallback ─────────────────────────────────────────────────────────
+
+describe('BuildExecutor.exprName', () => {
+  const { BuildExecutor } = require('../src/build-exec')
+
+  test('returns expr.type for unknown expression types', () => {
+    const e = new BuildExecutor('.')
+    assert.strictEqual(e.exprName({ type: 'Literal', value: 42 }), 'Literal')
+    assert.strictEqual(e.exprName({ type: 'CallExpr' }), 'CallExpr')
+  })
+
+  test('returns identifier name for Identifier nodes', () => {
+    const e = new BuildExecutor('.')
+    assert.strictEqual(e.exprName({ type: 'Identifier', name: 'myVar' }), 'myVar')
+  })
+
+  test('returns dotted path for MemberExpr nodes', () => {
+    const e = new BuildExecutor('.')
+    assert.strictEqual(
+      e.exprName({ type: 'MemberExpr', object: { type: 'Identifier', name: 'obj' }, property: { type: 'Identifier', name: 'prop' } }),
+      'obj.prop'
+    )
+  })
+})
