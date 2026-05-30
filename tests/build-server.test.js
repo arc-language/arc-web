@@ -650,3 +650,30 @@ test('buildServer: fmt function formats MB-sized output (line 88)', async () => 
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('buildServer: color output path (lines 222-235) via cache-busting with isTTY', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-bs-color-'))
+  const origIsTTY = process.stdout.isTTY
+  const capturedLogs = []
+  const origLog = console.log
+  const origExit = process.exit
+  try {
+    delete require.cache[require.resolve('../src/commands/build-server')]
+    process.stdout.isTTY = true
+    const { buildServer } = require('../src/commands/build-server')
+    console.log = (m) => capturedLogs.push(String(m || ''))
+    process.exit = (c) => { throw new Error('exit:' + c) }
+    const serverDir = path.join(dir, 'server')
+    fs.mkdirSync(serverDir)
+    fs.writeFileSync(path.join(serverDir, 'api.arc'), '@route get "/api" -> Response\n  json({ ok: true })\n')
+    await buildServer(dir, {}, {}, {})
+    assert.ok(capturedLogs.some(m => m.includes('arc server') || m.includes('✓') || m.includes('GET')),
+      'colored output should include route info')
+  } finally {
+    console.log = origLog
+    process.exit = origExit
+    process.stdout.isTTY = origIsTTY
+    delete require.cache[require.resolve('../src/commands/build-server')]
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

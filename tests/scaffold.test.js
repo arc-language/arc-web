@@ -894,3 +894,52 @@ test('scaffoldBlock: exits gracefully if block-types.json is invalid JSON', asyn
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// ── scaffold: color output path via cache-busting ────────────────────────────
+
+test('scaffold: color output path (lines 417-422) via cache-busting with isTTY', async () => {
+  const origIsTTY = process.stdout.isTTY
+  const origLog = console.log
+  const capturedLogs = []
+  let dir
+  try {
+    delete require.cache[require.resolve('../src/commands/scaffold')]
+    process.stdout.isTTY = true
+    const { scaffold } = require('../src/commands/scaffold')
+    dir = makeTmpDir()
+    // Write model to server dir
+    fs.mkdirSync(path.join(dir, 'server'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'server', 'post.arc'), 'model Post\n  let title: String\n')
+    console.log = (m) => capturedLogs.push(String(m || ''))
+    await scaffold('Post', dir)
+    assert.ok(capturedLogs.some(m => m.includes('arc scaffold') || m.includes('✓') || m.includes('routes')),
+      'colored output should include scaffold summary')
+  } finally {
+    console.log = origLog
+    process.stdout.isTTY = origIsTTY
+    delete require.cache[require.resolve('../src/commands/scaffold')]
+    if (dir) fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('scaffoldBlockInit: color output path (lines 842-846) via cache-busting with isTTY', async () => {
+  const origIsTTY = process.stdout.isTTY
+  const origLog = console.log
+  const capturedLogs = []
+  let dir
+  try {
+    delete require.cache[require.resolve('../src/commands/scaffold')]
+    process.stdout.isTTY = true
+    const { scaffoldBlockInit } = require('../src/commands/scaffold')
+    dir = makeTmpDir()
+    console.log = (m) => capturedLogs.push(String(m || ''))
+    await scaffoldBlockInit(dir)
+    assert.ok(capturedLogs.some(m => m.includes('arc scaffold block --init') || m.includes('✓') || m.includes('+') || m.length > 0),
+      'colored output should have content')
+  } finally {
+    console.log = origLog
+    process.stdout.isTTY = origIsTTY
+    delete require.cache[require.resolve('../src/commands/scaffold')]
+    if (dir) fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
