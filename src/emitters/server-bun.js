@@ -17,7 +17,7 @@ const { compileRoutes, emitBunRoutesObject } = require('../compilers/route-compi
 const { emitAuthPreamble } = require('./auth-helpers')
 const { emitQueuePreamble, emitEmailPreamble, emitJobEnqueueWrapper } = require('./queue-helpers')
 const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
-const { routeHandlerName, isValidRoute } = require('./route-utils')
+const { routeHandlerName, isValidRoute, routeTypeLabel } = require('./route-utils')
 const { SHARED_RESPONSE_HELPERS } = require('./emitter-preamble')
 const { emitRouteBody, emitCatchBlock } = require('./route-body-emitter')
 const { profilerPreamble, profilerDbWrapper } = require('../profiler/hooks')
@@ -771,32 +771,11 @@ async function ${name}(req, params) {
     }`
   }
 
-  _routeTypeLabel(route) {
-    const stmts = route.body?.body
-    if (!stmts) return 'handler'
-    if (stmts.length === 1) {
-      const s = stmts[0]
-      const e = s.type === 'ExprStatement' ? (s.expr ?? s.expression) : null
-      if (e?.type === 'CallExpr' && (e.callee?.name === 'json' || e.callee?.name === 'html') && e.args?.length === 1) {
-        const a = e.args[0]
-        if (a.type === 'StringLiteral' || a.type === 'NumberLiteral' || a.type === 'ObjectLiteral' || a.type === 'ArrayLiteral' || a.type === 'ObjectExpr' || a.type === 'ArrayExpr') return 'static'
-      }
-    }
-    if (stmts.length === 2) {
-      const [s0, s1] = stmts
-      if (s0.type === 'VarDecl' && s0.init?.type === 'CallExpr' && s0.init.callee?.name === 'parseBody') {
-        const e = s1.expr ?? s1.expression
-        if (e?.type === 'CallExpr' && e.callee?.name === 'json' && e.args?.[0]?.name === s0.name) return 'echo'
-      }
-    }
-    return 'handler'
-  }
-
   _buildRouteTable(routes) {
     const rows = routes.map(r => ({
       method: (r.method ?? 'GET').toUpperCase(),
       path: r.path ?? '/',
-      type: this._routeTypeLabel(r),
+      type: routeTypeLabel(r),
     }))
     rows.push({ method: 'GET', path: '/health', type: 'built-in' })
     const maxPath = Math.max(...rows.map(r => r.path.length), 6)

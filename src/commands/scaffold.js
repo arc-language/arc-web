@@ -58,13 +58,13 @@ function _primaryField(model) {
   return (strField ?? fields[0])?.name ?? 'id'
 }
 
-function _findModel(modelName, absDir) {
+async function _findModel(modelName, absDir) {
   const serverDir = fs.existsSync(path.join(absDir, 'server'))
     ? path.join(absDir, 'server')
     : absDir
   for (const file of findArcFiles(serverDir)) {
     let src
-    try { src = fs.readFileSync(file, 'utf8') }
+    try { src = await fs.promises.readFile(file, 'utf8') }
     catch { continue }
     try {
       const tokens = new Lexer(src, file).tokenize()
@@ -78,14 +78,14 @@ function _findModel(modelName, absDir) {
   return null
 }
 
-function _findAllModels(absDir) {
+async function _findAllModels(absDir) {
   const serverDir = fs.existsSync(path.join(absDir, 'server'))
     ? path.join(absDir, 'server')
     : absDir
   const models = []
   for (const file of findArcFiles(serverDir)) {
     let src
-    try { src = fs.readFileSync(file, 'utf8') }
+    try { src = await fs.promises.readFile(file, 'utf8') }
     catch { continue }
     try {
       const tokens = new Lexer(src, file).tokenize()
@@ -95,6 +95,50 @@ function _findAllModels(absDir) {
   }
   return models
 }
+
+const _ADMIN_BASE_DESIGN = `  design
+    :root
+      --bg: #ffffff
+      --bg-2: #f5f5f5
+      --bg-3: #efefef
+      --fg: #0a0a0a
+      --fg-2: #525252
+      --fg-3: #a3a3a3
+      --border: #e5e5e5
+      --invert-bg: #0a0a0a
+      --invert-fg: #ffffff
+      @dark
+        --bg: #0d0d0d
+        --bg-2: #161616
+        --bg-3: #1f1f1f
+        --fg: #f0f0f0
+        --fg-2: rgba(255,255,255,0.55)
+        --fg-3: rgba(255,255,255,0.28)
+        --border: rgba(255,255,255,0.08)
+        --invert-bg: #ffffff
+        --invert-fg: #0a0a0a
+    body
+      background-color: var(--bg)
+      color: var(--fg)
+      font: system-ui, -apple-system, sans-serif
+      m: 0
+      size: 14px
+    .topnav
+      height: 52px
+      background-color: var(--bg-2)
+      border-bottom: 1px solid var(--border)
+      flex-shrink: 0
+    .nav-logo
+      size: 18px
+      weight: 700
+    .card
+      background-color: var(--bg-2)
+      border: 1px solid var(--border)
+      radius: 14px
+      overflow: hidden
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05)
+      @dark
+        box-shadow: 0 1px 3px rgba(0,0,0,0.35)`
 
 // ── Generators ────────────────────────────────────────────────────────────────
 
@@ -173,53 +217,11 @@ ${cells}
               link href="/admin/${plural}/{item.id}/edit"
                 button class="btn-ghost" "Edit"
 
-  design
-    :root
-      --bg: #ffffff
-      --bg-2: #f5f5f5
-      --bg-3: #efefef
-      --fg: #0a0a0a
-      --fg-2: #525252
-      --fg-3: #a3a3a3
-      --border: #e5e5e5
-      --invert-bg: #0a0a0a
-      --invert-fg: #ffffff
-      @dark
-        --bg: #0d0d0d
-        --bg-2: #161616
-        --bg-3: #1f1f1f
-        --fg: #f0f0f0
-        --fg-2: rgba(255,255,255,0.55)
-        --fg-3: rgba(255,255,255,0.28)
-        --border: rgba(255,255,255,0.08)
-        --invert-bg: #ffffff
-        --invert-fg: #0a0a0a
-    body
-      background-color: var(--bg)
-      color: var(--fg)
-      font: system-ui, -apple-system, sans-serif
-      m: 0
-      size: 14px
-    .topnav
-      height: 52px
-      background-color: var(--bg-2)
-      border-bottom: 1px solid var(--border)
-      flex-shrink: 0
-    .nav-logo
-      size: 18px
-      weight: 700
+${_ADMIN_BASE_DESIGN}
     .nav-brand
       size: 15px
       weight: 600
       letter-spacing: -0.01em
-    .card
-      background-color: var(--bg-2)
-      border: 1px solid var(--border)
-      radius: 14px
-      overflow: hidden
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05)
-      @dark
-        box-shadow: 0 1px 3px rgba(0,0,0,0.35)
     .data-table
       w: 100%
       border-collapse: collapse
@@ -311,41 +313,7 @@ ${formInputs}
               button type="button" class="btn-cancel" "Cancel"
             button type="submit" class="btn-submit" "Create ${name}"
 
-  design
-    :root
-      --bg: #ffffff
-      --bg-2: #f5f5f5
-      --bg-3: #efefef
-      --fg: #0a0a0a
-      --fg-2: #525252
-      --fg-3: #a3a3a3
-      --border: #e5e5e5
-      --invert-bg: #0a0a0a
-      --invert-fg: #ffffff
-      @dark
-        --bg: #0d0d0d
-        --bg-2: #161616
-        --bg-3: #1f1f1f
-        --fg: #f0f0f0
-        --fg-2: rgba(255,255,255,0.55)
-        --fg-3: rgba(255,255,255,0.28)
-        --border: rgba(255,255,255,0.08)
-        --invert-bg: #ffffff
-        --invert-fg: #0a0a0a
-    body
-      background-color: var(--bg)
-      color: var(--fg)
-      font: system-ui, -apple-system, sans-serif
-      m: 0
-      size: 14px
-    .topnav
-      height: 52px
-      background-color: var(--bg-2)
-      border-bottom: 1px solid var(--border)
-      flex-shrink: 0
-    .nav-logo
-      size: 18px
-      weight: 700
+${_ADMIN_BASE_DESIGN}
     .nav-title
       size: 14px
       weight: 600
@@ -356,14 +324,6 @@ ${formInputs}
       text-decoration: none
     .back-link:hover
       color: var(--fg)
-    .card
-      background-color: var(--bg-2)
-      border: 1px solid var(--border)
-      radius: 14px
-      overflow: hidden
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05)
-      @dark
-        box-shadow: 0 1px 3px rgba(0,0,0,0.35)
     .field-label
       size: 11px
       weight: 600
@@ -420,7 +380,7 @@ async function scaffold(modelName, projectDir, opts = {}) {
   const absDir = path.resolve(projectDir)
   const _t0 = Date.now()
 
-  const model = _findModel(modelName, absDir)
+  const model = await _findModel(modelName, absDir)
   if (!model) {
     console.error(`arc scaffold: model "${modelName}" not found in ${path.relative(process.cwd(), absDir)}`)
     console.error(`  Define it in server/schemas/${modelName.toLowerCase()}.arc first`)
@@ -469,7 +429,7 @@ async function scaffold(modelName, projectDir, opts = {}) {
 
 async function scaffoldAll(projectDir, opts = {}) {
   const absDir = path.resolve(projectDir)
-  const models = _findAllModels(absDir)
+  const models = await _findAllModels(absDir)
   if (models.length === 0) {
     console.error(`arc scaffold: no model declarations found in ${path.relative(process.cwd(), absDir)}`)
     process.exit(1)

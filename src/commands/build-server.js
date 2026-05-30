@@ -58,6 +58,7 @@ async function parseArcFile(file, src, formatError) {
 }
 const { BunServerEmitter } = require('../emitters/server-bun')
 const { CloudflareEmitter } = require('../emitters/server-cloudflare')
+const { routeTypeLabel } = require('../emitters/route-utils')
 const { generateWranglerToml } = require('../compilers/wrangler-compiler')
 const { findArcFiles } = require('../utils/fs')
 
@@ -92,27 +93,6 @@ const _SCYAN  = _C ? '\x1b[36m' : ''
 const _SGREEN = _C ? '\x1b[32m' : ''
 const _SDIM   = _C ? '\x1b[2m'  : ''
 const _SRST   = _C ? '\x1b[0m'  : ''
-
-function _routeType(route) {
-  const stmts = route.body?.body
-  if (!stmts) return 'handler'
-  if (stmts.length === 1) {
-    const s = stmts[0]
-    const e = s.type === 'ExprStatement' ? (s.expr ?? s.expression) : null
-    if (e?.type === 'CallExpr' && (e.callee?.name === 'json' || e.callee?.name === 'html') && e.args?.length === 1) {
-      const a = e.args[0]
-      if (a.type === 'StringLiteral' || a.type === 'NumberLiteral' || a.type === 'ObjectLiteral' || a.type === 'ArrayLiteral' || a.type === 'ObjectExpr' || a.type === 'ArrayExpr') return 'static'
-    }
-  }
-  if (stmts.length === 2) {
-    const [s0, s1] = stmts
-    if (s0.type === 'VarDecl' && s0.init?.type === 'CallExpr' && s0.init.callee?.name === 'parseBody') {
-      const e = s1.expr ?? s1.expression
-      if (e?.type === 'CallExpr' && e.callee?.name === 'json' && e.args?.[0]?.name === s0.name) return 'echo'
-    }
-  }
-  return 'handler'
-}
 
 async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError } = {}) {
   const absDir = path.resolve(projectDir)
@@ -246,7 +226,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
       for (const r of routes) {
         const method = (r.method ?? 'GET').toUpperCase().padEnd(6)
         const rpath = (r.path ?? '/').padEnd(maxPath)
-        const type = _routeType(r)
+        const type = routeTypeLabel(r)
         console.log(`  ${_SDIM}${method}${_SRST}  ${rpath}  ${_SDIM}${type}${_SRST}`)
       }
       console.log(`  ${_SDIM}GET     /health${''.padEnd(maxPath - 7)}  built-in${_SRST}`)
