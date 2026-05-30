@@ -1058,40 +1058,12 @@ function _createDevRequestHandler(distDir, reloadClients) {
     const ext = path.extname(filePath)
 
     try {
-      let content = await fs.promises.readFile(filePath)
-      const mime = _MIME_TYPES[ext] ?? 'application/octet-stream'
-
       // Inject reload script into HTML; strip CSP meta so inline script is allowed in dev
-      if (ext === '.html') {
-        content = Buffer.from(
-          content.toString()
-            .replace(_CSP_META_RE, '')
-            .replace(/<\/body>/i, `${RELOAD_SCRIPT}\n</body>`)
-        )
-      }
-
-      res.writeHead(200, {
-        'Content-Type': mime,
-        'X-Content-Type-Options': 'nosniff',
-        'X-Frame-Options': 'SAMEORIGIN',
-        'Referrer-Policy': 'strict-origin-when-cross-origin',
-      })
-      res.end(content)
+      await _serveDevFile(filePath, ext, RELOAD_SCRIPT, res)
     } catch (e) {
       // Only fall back to SPA index.html for missing files, not for other read errors
       if (e.code !== 'ENOENT' && e.code !== 'EISDIR') {
-        const msg = `${e.code ?? 'ERROR'}: ${e.message}`
-        console.error(`arc: dev: ${req.method} ${req.url} — ${msg}`)
-        res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' })
-        res.end(`<!doctype html><html><head><title>500 — arc dev</title>
-<style>body{font:14px/1.6 system-ui,sans-serif;max-width:600px;margin:60px auto;padding:0 16px;color:#111}
-h1{font-size:1.5rem;color:#c00}code{background:#f3f3f3;padding:2px 6px;border-radius:4px;font-size:13px}
-pre{background:#f3f3f3;padding:16px;border-radius:8px;overflow:auto;font-size:13px}</style></head>
-<body><h1>500 — Server Error</h1>
-<p><code>${msg.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</code></p>
-<p>File: <code>${filePath.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</code></p>
-<p>Check the terminal for details, then run <code>arc build-site .</code> to rebuild.</p>
-</body></html>`)
+        _handleDevError(e, filePath, req, res)
         return
       }
       try {
@@ -1113,6 +1085,68 @@ pre{background:#f3f3f3;padding:16px;border-radius:8px;overflow:auto;font-size:13
         res.end('Not found')
       }
     }
+  }
+}
+
+// H2: Per-change rebuild logic extracted from the dev() watcher callback.
+// `state` is a shared mutable bag { building, rebuildRequested } owned by dev().
+// `ctx` bundles the closure-captured helpers from dev() so they can be passed explicitly.
+async function _handleFileChange(changedFile, absDir, isMultiPage, state, ctx) {
+  if (state.building) { state.rebuildRequested = true; return }
+  try {
+    state.building = true
+    do {
+      state.rebuildRequested = false
+      if (_TTY) {
+        console.log(`  ${_OCYAN}↺${_ORST}  ${_ODIM}${changedFile} changed${_ORST}`)
+      } else {
+        console.log(`arc: ${changedFile} changed, rebuilding...`)
+      }
+      const t0 = Date.now()
+      try {
+        // Determine which pages are affected by the changed file
+        const changedAbsPath = path.resolve(absDir, changedFile)
+        const affected = new Set()
+        if (isMultiPage && _slugFile.size > 0) {
+          for (const [slug, absPath] of _slugFile) {
+            if (absPath === changedAbsPath) affected.add(slug)
+          }
+          for (const slug of (_depMap.get(changedAbsPath) ?? [])) affected.add(slug)
+        }
+
+        if (isMultiPage && affected.size > 0) {
+          // Partial rebuild - only recompile affected pages
+          await ctx.devRebuildPages(affected)
+          const dur = Date.now() - t0
+          const n = ctx.totalClients()
+          if (_TTY) {
+            console.log(`  ${_OGREEN}✓${_ORST}  rebuilt ${affected.size} page${affected.size !== 1 ? 's' : ''} in ${_ODIM}${dur}ms${_ORST} · ${n} browser${n !== 1 ? 's' : ''} notified`)
+          } else {
+            console.log(`arc: rebuilt ${affected.size} page${affected.size !== 1 ? 's' : ''} in ${dur}ms → ${n} browser${n !== 1 ? 's' : ''} notified`)
+          }
+        } else {
+          // Full rebuild (single-page, or unknown file, or multi-page first run)
+          _spaFallbackHtml = null
+          await ctx.rebuild()
+          await ctx.initHmrState()
+          // Notify all clients after full rebuild
+          const dur = Date.now() - t0
+          const n = ctx.totalClients()
+          ctx.broadcastReload(null)
+          if (_TTY) {
+            console.log(`  ${_OGREEN}✓${_ORST}  rebuilt in ${_ODIM}${dur}ms${_ORST} · ${n} browser${n !== 1 ? 's' : ''} notified`)
+          } else {
+            console.log(`arc: rebuilt in ${dur}ms → reload sent to ${n} browser${n !== 1 ? 's' : ''}`)
+          }
+        }
+      } catch (e) {
+        let src = null
+        try { src = fs.readFileSync(path.join(absDir, changedFile), 'utf8') } catch {} // intentionally ignored - src stays null; formatError handles null src gracefully
+        try { formatError(e, src, changedFile) } catch (e2) { console.error(`arc: dev: error formatting rebuild error: ${e2?.message ?? String(e2)}`) }
+      }
+    } while (state.rebuildRequested)
+  } finally {
+    state.building = false
   }
 }
 
@@ -1348,72 +1382,21 @@ async function dev(projectDir) {
 
   if (!_TTY) console.log('arc: watching for changes...')
   let rebuildTimer = null
-  let building = false
-  let rebuildRequested = false
+  const _watchState = { building: false, rebuildRequested: false }
+  const _watchCtx = {
+    rebuild: _rebuild,
+    initHmrState: _initHmrState,
+    devRebuildPages: _devRebuildPages,
+    totalClients: _totalClients,
+    broadcastReload: _broadcastReload,
+  }
 
   _startWatcher(absDir, (changedFile) => {
     if (!changedFile || !changedFile.endsWith('.arc')) return
     if (changedFile.includes('dist' + path.sep) || changedFile.includes('dist/')) return
 
     clearTimeout(rebuildTimer)
-    rebuildTimer = setTimeout(async () => {
-      if (building) { rebuildRequested = true; return }
-      try {
-        building = true
-        do {
-          rebuildRequested = false
-          if (_TTY) {
-            console.log(`  ${_OCYAN}↺${_ORST}  ${_ODIM}${changedFile} changed${_ORST}`)
-          } else {
-            console.log(`arc: ${changedFile} changed, rebuilding...`)
-          }
-          const t0 = Date.now()
-          try {
-            // Determine which pages are affected by the changed file
-            const changedAbsPath = path.resolve(absDir, changedFile)
-            const affected = new Set()
-            if (isMultiPage && _slugFile.size > 0) {
-              for (const [slug, absPath] of _slugFile) {
-                if (absPath === changedAbsPath) affected.add(slug)
-              }
-              for (const slug of (_depMap.get(changedAbsPath) ?? [])) affected.add(slug)
-            }
-
-            if (isMultiPage && affected.size > 0) {
-              // Partial rebuild - only recompile affected pages
-              await _devRebuildPages(affected)
-              const dur = Date.now() - t0
-              const n = _totalClients()
-              if (_TTY) {
-                console.log(`  ${_OGREEN}✓${_ORST}  rebuilt ${affected.size} page${affected.size !== 1 ? 's' : ''} in ${_ODIM}${dur}ms${_ORST} · ${n} browser${n !== 1 ? 's' : ''} notified`)
-              } else {
-                console.log(`arc: rebuilt ${affected.size} page${affected.size !== 1 ? 's' : ''} in ${dur}ms → ${n} browser${n !== 1 ? 's' : ''} notified`)
-              }
-            } else {
-              // Full rebuild (single-page, or unknown file, or multi-page first run)
-              _spaFallbackHtml = null
-              await _rebuild()
-              await _initHmrState()
-              // Notify all clients after full rebuild
-              const dur = Date.now() - t0
-              const n = _totalClients()
-              _broadcastReload(null)
-              if (_TTY) {
-                console.log(`  ${_OGREEN}✓${_ORST}  rebuilt in ${_ODIM}${dur}ms${_ORST} · ${n} browser${n !== 1 ? 's' : ''} notified`)
-              } else {
-                console.log(`arc: rebuilt in ${dur}ms → reload sent to ${n} browser${n !== 1 ? 's' : ''}`)
-              }
-            }
-          } catch (e) {
-            let src = null
-            try { src = fs.readFileSync(path.join(absDir, changedFile), 'utf8') } catch {} // intentionally ignored - src stays null; formatError handles null src gracefully
-            try { formatError(e, src, changedFile) } catch (e2) { console.error(`arc: dev: error formatting rebuild error: ${e2?.message ?? String(e2)}`) }
-          }
-        } while (rebuildRequested)
-      } finally {
-        building = false
-      }
-    }, 50)
+    rebuildTimer = setTimeout(() => _handleFileChange(changedFile, absDir, isMultiPage, _watchState, _watchCtx), 50)
   })
 }
 

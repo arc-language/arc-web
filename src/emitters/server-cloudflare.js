@@ -20,7 +20,7 @@ const { emitEmailPreamble } = require('./queue-helpers')
 const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
 const { routeHandlerName } = require('./route-utils')
 const { SHARED_RESPONSE_HELPERS } = require('./emitter-preamble')
-const { emitRouteBody } = require('./route-body-emitter')
+const { emitRouteBody, emitCatchBlock } = require('./route-body-emitter')
 
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
@@ -269,6 +269,7 @@ async function _job_${job.name}(${params}${params ? ', ' : ''}env) {
       }
     }
 
+    const traceLog = `console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, method: '${route.method}', path: '${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))`
     return `
 // Route: ${route.method} ${route.path}${requiresAuth ? ' [auth]' : ''}
 async function ${name}(req, params, env) {
@@ -277,14 +278,7 @@ async function ${name}(req, params, env) {
     ${hasDb ? 'const db = _getDb(env.DB)' : ''}
     const email = ${this._emailHelper()}
     ${pathParams ? pathParams + '\n    ' : ''}${authGuard ? authGuard + '\n    ' : ''}${body}
-  } catch (_e) {
-    if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
-    if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
-    if (_e?.status === 422) return _json({ error: _e.message ?? 'Unprocessable entity' }, 422)
-    if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, method: '${route.method}', path: '${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))
-    return _json({ error: 'Internal server error' }, 500)
-  }
+  ${emitCatchBlock(traceLog)}
 }`.trim()
   }
 

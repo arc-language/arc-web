@@ -64,7 +64,12 @@ async function _hmacVerify(data, sig, secret) {
   const key = await _getHmacKey(secret)
   const padded = sig.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - sig.length % 4) % 4)
   const sigBytes = Uint8Array.from(atob(padded), c => c.charCodeAt(0))
-  try { return await crypto.subtle.verify('HMAC', key, sigBytes, enc.encode(data)) } catch { return false }
+  try {
+    return await crypto.subtle.verify('HMAC', key, sigBytes, enc.encode(data))
+  } catch (_e) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'hmac_verify_failed', msg: _e?.message ?? String(_e) }))
+    return false
+  }
 }
 
 // Session: encode/decode signed cookie value

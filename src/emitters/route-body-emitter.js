@@ -2,11 +2,6 @@
 
 // Shared route body emission helpers used by Bun and Cloudflare server emitters.
 //
-// IMPORTANT: The catch block in emitRouteHandler is duplicated between server-bun.js
-// and server-cloudflare.js. Any new status code handling (e.g., 422, new auth errors)
-// must be added to BOTH files. A future refactor should extract emitRouteHandlerShell()
-// here so the catch block is shared.
-//
 // In route/job bodies: response calls (json/redirect/html/text) need `return`,
 // async helpers (parseBody, auth.*, oauth.*, jwt.*) need `await`.
 
@@ -153,6 +148,20 @@ function emitRouteMatch(stmt, jsEmitter) {
   return `const ${subj} = ${cond};\n${arms.join('\n')}`
 }
 
+// Shared catch block emitted inside every route handler.
+// `traceLog` is the full console.error(...) statement string — callers
+// build it with the appropriate traceId/method/path interpolations.
+function emitCatchBlock(traceLog) {
+  return `} catch (_e) {
+    if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
+    if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
+    if (_e?.status === 422) return _json({ error: _e.message ?? 'Unprocessable entity' }, 422)
+    if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
+    ${traceLog}
+    return _json({ error: 'Internal server error' }, 500)
+  }`
+}
+
 module.exports = {
   _RETURN_FUNS,
   _RETURN_AWAIT_FUNS,
@@ -161,4 +170,5 @@ module.exports = {
   emitRouteStmt,
   emitRouteArmBody,
   emitRouteMatch,
+  emitCatchBlock,
 }

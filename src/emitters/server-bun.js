@@ -19,7 +19,7 @@ const { emitQueuePreamble, emitEmailPreamble, emitJobEnqueueWrapper } = require(
 const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
 const { routeHandlerName, isValidRoute } = require('./route-utils')
 const { SHARED_RESPONSE_HELPERS } = require('./emitter-preamble')
-const { emitRouteBody } = require('./route-body-emitter')
+const { emitRouteBody, emitCatchBlock } = require('./route-body-emitter')
 const { profilerPreamble, profilerDbWrapper } = require('../profiler/hooks')
 
 const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
@@ -699,19 +699,40 @@ async function ${name}(req, params) {
 
     // Item 11: RBAC auth guard
     // If route belongs to a group, use the shared guard function (1 line vs 12 inline)
-    let authGuard = ''
-    if (route._groupGuardFn) {
-      authGuard = `const session = await ${route._groupGuardFn}(req); if (session instanceof Response) return session`
-    } else if (requiresAuth) {
-      authGuard = `const _sess = await auth.session(req); if (!_sess) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Unauthorized' }, 401) : Response.redirect('/admin/login', 302); }\n    const session = _sess;`
-      if (authRole) {
-        const roles = authRole.split(',').map(r => r.trim()).filter(Boolean)
-        authGuard += `\n    if (!${JSON.stringify(roles)}.includes(session.role)) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Forbidden' }, 403) : Response.redirect('/admin/login', 302); }`
-      }
-    }
+    const authGuard = this._emitAuthGuard(route, requiresAuth ? authAnnotation : null)
 
     // Item 5: only emit aliases that are actually referenced in the route body
     const refs = this._collectRefs(route.body?.body ?? [])
+    const aliasBlock = this._emitAliasBlock(route, refs)
+
+    return `
+// Route: ${route.method} ${route.path}${requiresAuth ? ` [auth${authRole ? `:${authRole}` : ''}]` : ''}
+async function ${name}(req, params) {
+  ${traceDecl}try {
+    ${pathParams ? pathParams + '\n    ' : ''}${authGuard ? authGuard + '\n    ' : ''}${aliasBlock}${body}
+  ${emitCatchBlock(traceLog)}
+}`.trim()
+  }
+
+  // ── Private helpers for emitRouteHandler() ────────────────────────────────────
+
+  _emitAuthGuard(route, authAnnotation) {
+    if (route._groupGuardFn) {
+      return `const session = await ${route._groupGuardFn}(req); if (session instanceof Response) return session`
+    }
+    if (!authAnnotation) return ''
+    let authRole = null
+    const roleMatch = authAnnotation.match(/^@auth\(([^)]+)\)$/)
+    if (roleMatch) authRole = roleMatch[1].trim()
+    let authGuard = `const _sess = await auth.session(req); if (!_sess) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Unauthorized' }, 401) : Response.redirect('/admin/login', 302); }\n    const session = _sess;`
+    if (authRole) {
+      const roles = authRole.split(',').map(r => r.trim()).filter(Boolean)
+      authGuard += `\n    if (!${JSON.stringify(roles)}.includes(session.role)) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Forbidden' }, 403) : Response.redirect('/admin/login', 302); }`
+    }
+    return authGuard
+  }
+
+  _emitAliasBlock(route, refs) {
     const aliases = []
     if (refs.has('json')) aliases.push('const json = _json')
     if (refs.has('html')) aliases.push('const html = _html')
@@ -719,25 +740,36 @@ async function ${name}(req, params) {
     if (refs.has('redirect')) aliases.push('const redirect = _redirect')
     if (refs.has('parseBody')) aliases.push('const parseBody = _parseBody')
     if (refs.has('request')) aliases.push('const request = req')
-    const aliasBlock = aliases.length > 0 ? aliases.join('\n    ') + '\n    ' : ''
-
-    return `
-// Route: ${route.method} ${route.path}${requiresAuth ? ` [auth${authRole ? `:${authRole}` : ''}]` : ''}
-async function ${name}(req, params) {
-  ${traceDecl}try {
-    ${pathParams ? pathParams + '\n    ' : ''}${authGuard ? authGuard + '\n    ' : ''}${aliasBlock}${body}
-  } catch (_e) {
-    if (_e?._authError) return _json({ error: 'Unauthorized' }, 401)
-    if (_e?.status === 413) return _json({ error: 'Request body too large' }, 413)
-    if (_e?.status === 422) return _json({ error: _e.message ?? 'Unprocessable entity' }, 422)
-    if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
-    ${traceLog}
-    return _json({ error: 'Internal server error' }, 500)
-  }
-}`.trim()
+    return aliases.length > 0 ? aliases.join('\n    ') + '\n    ' : ''
   }
 
   // ── Bun.serve() entry ─────────────────────────────────────────────────────────
+
+  _emitHealthBody(hasDb, isPg) {
+    if (!hasDb) {
+      return `return _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a', version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
+    }
+    const dbProbe = isPg
+      ? `let _dbOk=false;try{await Promise.race([_pool.query('SELECT 1'),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),2000))]);_dbOk=true}catch(_dbProbeErr){console.error(JSON.stringify({ts:new Date().toISOString(),level:'warn',event:'health_db_probe_failed',msg:_dbProbeErr?.message??String(_dbProbeErr)}))}`
+      : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch(_dbProbeErr){console.error(JSON.stringify({ts:new Date().toISOString(),level:'warn',event:'health_db_probe_failed',msg:_dbProbeErr?.message??String(_dbProbeErr)}))}`
+    return `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
+  }
+
+  _emitTraceSetup(noTracing) {
+    if (noTracing) return ''
+    return `
+    const _clientId = req.headers.get('x-request-id') ?? ''
+    req._traceId = _TRACE_ID_RE.test(_clientId) ? _clientId : crypto.randomUUID().slice(0, 8)`
+  }
+
+  _emitCorsHandler(cors) {
+    if (!cors) return ''
+    const corsOriginLiteral = JSON.stringify(cors)
+    return `
+    if (req.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': ${corsOriginLiteral}, 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', 'Access-Control-Max-Age': '86400' } })
+    }`
+  }
 
   _routeTypeLabel(route) {
     const stmts = route.body?.body
@@ -793,22 +825,13 @@ function _printBanner(port) {
     const port = '+(process.env.PORT ?? 3000)'
     const hasAuth = routes.some(r => r.annotations?.find(a => a === '@auth' || a.startsWith('@auth(')))
     const hasDb = schemas && schemas.length > 0
-    const dbProbe = hasDb
-      ? (this.isPg
-        ? `let _dbOk=false;try{await Promise.race([_pool.query('SELECT 1'),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),2000))]);_dbOk=true}catch(_dbProbeErr){console.error(JSON.stringify({ts:new Date().toISOString(),level:'warn',event:'health_db_probe_failed',msg:_dbProbeErr?.message??String(_dbProbeErr)}))}`
-        : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch(_dbProbeErr){console.error(JSON.stringify({ts:new Date().toISOString(),level:'warn',event:'health_db_probe_failed',msg:_dbProbeErr?.message??String(_dbProbeErr)}))}` )
-      : ''
-    const healthBody = hasDb
-      ? `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
-      : `return _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a', version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
+    const healthBody = this._emitHealthBody(hasDb, this.isPg)
     const dbLabel = this.isPg ? 'postgres' : (hasDb ? 'sqlite' : 'none')
     const dbDisplayLabel = this.isPg ? 'PostgreSQL' : (hasDb ? 'SQLite (local)' : null)
 
     const routeTableStr = this._buildRouteTable(routes)
     const bannerFn = this._buildBannerFn(routeTableStr, dbDisplayLabel, dbLabel)
-    const traceSetup = this.noTracing ? '' : `
-    const _clientId = req.headers.get('x-request-id') ?? ''
-    req._traceId = _TRACE_ID_RE.test(_clientId) ? _clientId : crypto.randomUUID().slice(0, 8)`
+    const traceSetup = this._emitTraceSetup(this.noTracing)
 
     const traceHoist = this.noTracing ? '' : `
 // Hoisted: avoids per-request RegExp allocation at high request rates
@@ -830,11 +853,7 @@ const _TRACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/`
     const envBlock = envChecks.length > 0 ? envChecks.join('\n') + '\n\n' : ''
 
     // Item 9: CORS preflight response (lean server only - bun-routes handles it per-route)
-    const corsOriginLiteral = this.cors ? JSON.stringify(this.cors) : null
-    const corsOptionsHandler = corsOriginLiteral ? `
-    if (req.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': ${corsOriginLiteral}, 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', 'Access-Control-Max-Age': '86400' } })
-    }` : ''
+    const corsOptionsHandler = this._emitCorsHandler(this.cors)
 
     if (this.bunRoutes) {
       // Bun routes object mode: routing is handled in native C++ by Bun
