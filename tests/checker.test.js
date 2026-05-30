@@ -915,3 +915,99 @@ page "Test"
       'No @raw warning for plain string html')
   })
 })
+
+// ── checkJobDecl annotation validation ────────────────────────────────────────
+
+describe('Checker: checkJobDecl annotation validation', () => {
+  function makeChecker() {
+    const { Checker } = require('../src/checker')
+    return new Checker('test.arc')
+  }
+
+  function makeScope(entries = {}) {
+    const map = new Map(Object.entries(entries))
+    return {
+      hasLocal: k => map.has(k),
+      has: k => map.has(k),
+      get: k => map.get(k),
+      set: (k, v) => map.set(k, v),
+    }
+  }
+
+  test('invalid @priority produces error', () => {
+    const checker = makeChecker()
+    const decl = { type: 'JobDecl', name: 'MyJob', params: [], body: null, priority: 'critical', unique: false, schedule: null, thenJob: null }
+    checker.checkJobDecl(decl, makeScope())
+    assert.ok(checker.errors.some(e => e.message.includes('@priority')))
+  })
+
+  test('@unique with invalid strategy produces error', () => {
+    const checker = makeChecker()
+    const decl = { type: 'JobDecl', name: 'MyJob', params: [], body: null, priority: null, unique: true, uniqueStrategy: 'defer', schedule: null, thenJob: null }
+    checker.checkJobDecl(decl, makeScope())
+    assert.ok(checker.errors.some(e => e.message.includes('@unique strategy')))
+  })
+
+  test('@schedule with invalid cron produces error', () => {
+    const checker = makeChecker()
+    const decl = { type: 'JobDecl', name: 'MyJob', params: [], body: null, priority: null, unique: false, schedule: 'not a cron', thenJob: null }
+    checker.checkJobDecl(decl, makeScope())
+    assert.ok(checker.errors.some(e => e.message.includes('@schedule has invalid cron')))
+  })
+
+  test('@schedule with valid cron and required params produces warning', () => {
+    const checker = makeChecker()
+    const decl = { type: 'JobDecl', name: 'MyJob', params: [{ name: 'userId', defaultValue: null }], body: null, priority: null, unique: false, schedule: '0 9 * * *', thenJob: null }
+    checker.checkJobDecl(decl, makeScope())
+    assert.ok(checker.warnings.some(w => w.message.includes('@schedule job') && w.message.includes('required params')))
+  })
+
+  test('@then referencing unknown job produces error', () => {
+    const checker = makeChecker()
+    const decl = { type: 'JobDecl', name: 'MyJob', params: [], body: null, priority: null, unique: false, schedule: null, thenJob: 'NotExist' }
+    checker.checkJobDecl(decl, makeScope())
+    assert.ok(checker.errors.some(e => e.message.includes('@then references unknown job')))
+  })
+
+  test('@then referencing non-job declaration produces error', () => {
+    const checker = makeChecker()
+    const decl = { type: 'JobDecl', name: 'MyJob', params: [], body: null, priority: null, unique: false, schedule: null, thenJob: 'SomeModel' }
+    checker.checkJobDecl(decl, makeScope({ SomeModel: 'model' }))
+    assert.ok(checker.errors.some(e => e.message.includes('@then') && e.message.includes('is not a job')))
+  })
+
+  test('@then referencing a valid job is accepted', () => {
+    const checker = makeChecker()
+    const decl = { type: 'JobDecl', name: 'MyJob', params: [], body: null, priority: null, unique: false, schedule: null, thenJob: 'OtherJob' }
+    checker.checkJobDecl(decl, makeScope({ OtherJob: 'job' }))
+    assert.strictEqual(checker.errors.filter(e => e.message.includes('@then')).length, 0)
+  })
+
+  test('@progress sets job context scope', () => {
+    const checker = makeChecker()
+    const decl = {
+      type: 'JobDecl', name: 'ProgressJob', params: [],
+      body: { type: 'BlockStatement', body: [] },
+      priority: null, unique: false, schedule: null, thenJob: null, hasProgress: true,
+    }
+    checker.checkJobDecl(decl, makeScope())
+    assert.strictEqual(checker.errors.length, 0)
+  })
+
+  test('valid @schedule cron expressions pass validation', () => {
+    const checker = makeChecker()
+    const validCrons = ['* * * * *', '0 9 * * *', '*/5 * * * *', '0-30 * * * *', '0,30 9 * * 1']
+    for (const cron of validCrons) {
+      const decl = { type: 'JobDecl', name: 'MyJob', params: [], body: null, priority: null, unique: false, schedule: cron, thenJob: null }
+      checker.checkJobDecl(decl, makeScope())
+    }
+    assert.ok(!checker.errors.some(e => e.message.includes('@schedule')), 'No cron errors for valid expressions')
+  })
+
+  test('@schedule with non-numeric cron part produces error (covers fallback false branch)', () => {
+    const checker = makeChecker()
+    const decl = { type: 'JobDecl', name: 'MyJob', params: [], body: null, priority: null, unique: false, schedule: 'abc * * * *', thenJob: null }
+    checker.checkJobDecl(decl, makeScope())
+    assert.ok(checker.errors.some(e => e.message.includes('@schedule has invalid cron')))
+  })
+})
