@@ -874,8 +874,8 @@ test('generateAllBlockEditors: warns for invalid type key failing regex (lines 2
     const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'))
     schema['BadType'] = { fields: [] }
     fs.writeFileSync(schemaPath, JSON.stringify(schema))
-    // Re-run with force to trigger generateAllBlockEditors on modified schema
-    await cmsInit(tmp, { force: true })
+    // Re-run WITHOUT force so block-types.json is NOT overwritten by the template
+    await cmsInit(tmp, {})
     // BadType should not have created a directory
     const badDir = path.join(tmp, 'admin', 'blocks', 'BadType')
     assert.ok(!fs.existsSync(badDir), 'invalid key should not create a directory')
@@ -901,6 +901,32 @@ test('generateAllBlockEditors: warns when arc-ui CSS not found (lines 352-354)',
     assert.ok(true, 'should complete without throwing')
   } finally {
     restore()
+    rmTmp(tmp)
+  }
+})
+
+test('cmsInit: color output path (lines 361-378) by re-requiring with forced _C', async () => {
+  const tmp = makeTmp()
+  const origIsTTY = process.stdout.isTTY
+  const capturedLogs = []
+  try {
+    // Force the module to re-evaluate with isTTY=true
+    delete require.cache[require.resolve('../src/commands/cms')]
+    process.stdout.isTTY = true
+    const { cmsInit } = require('../src/commands/cms')
+    const origLog = console.log
+    console.log = (m) => capturedLogs.push(String(m))
+    try {
+      await cmsInit(tmp, {})
+    } finally {
+      console.log = origLog
+    }
+    // With _C=true, colored output should include arc symbol
+    assert.ok(capturedLogs.some(m => m.includes('arc cms init') || m.includes('files created')), 'colored output should contain summary')
+  } finally {
+    process.stdout.isTTY = origIsTTY
+    // Force re-require for subsequent tests
+    delete require.cache[require.resolve('../src/commands/cms')]
     rmTmp(tmp)
   }
 })
