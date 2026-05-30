@@ -1200,3 +1200,648 @@ describe('cli: deploy command (subprocess)', () => {
     } finally { rmDir(dir) }
   })
 })
+
+// ── New coverage tests ────────────────────────────────────────────────────────
+
+const {
+  _extractSharedCss,
+  _patchPageHtml,
+  _injectPrefetchTags,
+  _extractDbAccess,
+  collectDbCalls,
+  collectJobCalls,
+  explain,
+  generate,
+  buildServer,
+  serve,
+} = _internal
+
+describe('cli: _extractDbAccess', () => {
+  test('returns null for non-db node', () => {
+    const node = { type: 'Literal', value: 42 }
+    assert.strictEqual(_extractDbAccess(node), null)
+  })
+
+  test('returns null for MemberExpr not rooted at db', () => {
+    const node = {
+      type: 'MemberExpr',
+      object: { type: 'MemberExpr', object: { name: 'req' }, property: { name: 'body' } },
+      property: { name: 'parse' },
+    }
+    assert.strictEqual(_extractDbAccess(node), null)
+  })
+
+  test('returns { table, method } for db.model.method MemberExpr', () => {
+    const node = {
+      type: 'MemberExpr',
+      object: { type: 'MemberExpr', object: { name: 'db' }, property: { name: 'users' } },
+      property: { name: 'findMany' },
+    }
+    const result = _extractDbAccess(node)
+    assert.deepEqual(result, { table: 'users', method: 'findMany' })
+  })
+
+  test('returns { table, method } for db.model.method CallExpr', () => {
+    const node = {
+      type: 'CallExpr',
+      callee: {
+        type: 'MemberExpr',
+        object: { type: 'MemberExpr', object: { name: 'db' }, property: { name: 'posts' } },
+        property: { name: 'create' },
+      },
+      args: [],
+    }
+    const result = _extractDbAccess(node)
+    assert.deepEqual(result, { table: 'posts', method: 'create' })
+  })
+})
+
+describe('cli: collectDbCalls', () => {
+  function makeDbCallNode(table, method) {
+    return {
+      type: 'CallExpr',
+      callee: {
+        type: 'MemberExpr',
+        object: { type: 'MemberExpr', object: { name: 'db' }, property: { name: table } },
+        property: { name: method },
+      },
+      args: [],
+    }
+  }
+
+  test('returns empty reads/writes for empty node array', () => {
+    const result = collectDbCalls([])
+    assert.deepEqual(result.reads, [])
+    assert.deepEqual(result.writes, [])
+  })
+
+  test('classifies findMany as a read', () => {
+    const node = makeDbCallNode('users', 'findMany')
+    const { reads, writes } = collectDbCalls([node])
+    assert.ok(reads.includes('users.findMany'), 'findMany should be a read')
+    assert.deepEqual(writes, [])
+  })
+
+  test('classifies find as a read', () => {
+    const node = makeDbCallNode('posts', 'find')
+    const { reads, writes } = collectDbCalls([node])
+    assert.ok(reads.includes('posts.find'))
+    assert.deepEqual(writes, [])
+  })
+
+  test('classifies count as a read', () => {
+    const node = makeDbCallNode('orders', 'count')
+    const { reads, writes } = collectDbCalls([node])
+    assert.ok(reads.includes('orders.count'))
+    assert.deepEqual(writes, [])
+  })
+
+  test('classifies create as a write', () => {
+    const node = makeDbCallNode('comments', 'create')
+    const { reads, writes } = collectDbCalls([node])
+    assert.deepEqual(reads, [])
+    assert.ok(writes.includes('comments.create'))
+  })
+
+  test('classifies update as a write', () => {
+    const node = makeDbCallNode('products', 'update')
+    const { reads, writes } = collectDbCalls([node])
+    assert.deepEqual(reads, [])
+    assert.ok(writes.includes('products.update'))
+  })
+
+  test('classifies delete as a write', () => {
+    const node = makeDbCallNode('sessions', 'delete')
+    const { reads, writes } = collectDbCalls([node])
+    assert.deepEqual(reads, [])
+    assert.ok(writes.includes('sessions.delete'))
+  })
+
+  test('handles multiple db calls in same array', () => {
+    const nodes = [
+      makeDbCallNode('users', 'findMany'),
+      makeDbCallNode('users', 'create'),
+    ]
+    const { reads, writes } = collectDbCalls(nodes)
+    assert.ok(reads.includes('users.findMany'))
+    assert.ok(writes.includes('users.create'))
+  })
+
+  test('deduplicates repeated identical calls', () => {
+    const nodes = [
+      makeDbCallNode('users', 'findMany'),
+      makeDbCallNode('users', 'findMany'),
+    ]
+    const { reads } = collectDbCalls(nodes)
+    assert.strictEqual(reads.length, 1)
+  })
+
+  test('walks nested nodes inside body array', () => {
+    // Wrap a db call inside an if-body node
+    const dbCall = makeDbCallNode('logs', 'create')
+    const ifNode = {
+      type: 'IfStmt',
+      consequent: {
+        type: 'Block',
+        body: [dbCall],
+      },
+    }
+    const { writes } = collectDbCalls([ifNode])
+    assert.ok(writes.includes('logs.create'))
+  })
+
+  test('ignores nodes with unknown methods (neither read nor write)', () => {
+    const node = makeDbCallNode('users', 'aggregate')
+    const { reads, writes } = collectDbCalls([node])
+    assert.deepEqual(reads, [])
+    assert.deepEqual(writes, [])
+  })
+})
+
+describe('cli: collectJobCalls', () => {
+  test('returns empty array when jobNames set is empty', () => {
+    const node = { type: 'CallExpr', callee: { type: 'Identifier', name: 'SendEmail' }, args: [] }
+    const result = collectJobCalls([node], new Set())
+    assert.deepEqual(result, [])
+  })
+
+  test('returns empty array when no matching job calls', () => {
+    const node = { type: 'CallExpr', callee: { type: 'Identifier', name: 'console' }, args: [] }
+    const result = collectJobCalls([node], new Set(['SendEmail']))
+    assert.deepEqual(result, [])
+  })
+
+  test('detects a matching job call', () => {
+    const node = { type: 'CallExpr', callee: { type: 'Identifier', name: 'SendEmail' }, args: [] }
+    const result = collectJobCalls([node], new Set(['SendEmail']))
+    assert.ok(result.includes('SendEmail'))
+  })
+
+  test('detects multiple distinct job calls', () => {
+    const nodes = [
+      { type: 'CallExpr', callee: { type: 'Identifier', name: 'SendEmail' }, args: [] },
+      { type: 'CallExpr', callee: { type: 'Identifier', name: 'GenerateReport' }, args: [] },
+    ]
+    const result = collectJobCalls(nodes, new Set(['SendEmail', 'GenerateReport']))
+    assert.ok(result.includes('SendEmail'))
+    assert.ok(result.includes('GenerateReport'))
+  })
+
+  test('deduplicates repeated job calls', () => {
+    const nodes = [
+      { type: 'CallExpr', callee: { type: 'Identifier', name: 'SendEmail' }, args: [] },
+      { type: 'CallExpr', callee: { type: 'Identifier', name: 'SendEmail' }, args: [] },
+    ]
+    const result = collectJobCalls(nodes, new Set(['SendEmail']))
+    assert.strictEqual(result.length, 1)
+  })
+
+  test('walks nested nodes', () => {
+    const jobCall = { type: 'CallExpr', callee: { type: 'Identifier', name: 'ProcessPayment' }, args: [] }
+    const wrapper = { type: 'Block', body: [jobCall] }
+    const result = collectJobCalls([wrapper], new Set(['ProcessPayment']))
+    assert.ok(result.includes('ProcessPayment'))
+  })
+})
+
+describe('cli: _extractSharedCss', () => {
+  test('returns empty filename when no rules provided', () => {
+    const { filename, sharedCssMinified } = _extractSharedCss([], 2)
+    assert.strictEqual(filename, null)
+    assert.strictEqual(sharedCssMinified, '')
+  })
+
+  test('returns empty filename when rules appear in fewer pages than threshold', () => {
+    // Rule appears in only 1 page, threshold is 2
+    const rulesByPage = [
+      ['.foo{color:red}'],
+    ]
+    const { filename } = _extractSharedCss(rulesByPage, 2)
+    assert.strictEqual(filename, null)
+  })
+
+  test('extracts shared rule appearing in >= threshold pages', () => {
+    const rule = '.shared{margin:0}'
+    const rulesByPage = [
+      [rule, '.page1{color:blue}'],
+      [rule, '.page2{color:green}'],
+    ]
+    const { sharedRules, filename } = _extractSharedCss(rulesByPage, 2)
+    assert.ok(sharedRules.includes(rule), 'shared rule should be in sharedRules')
+    assert.ok(filename !== null, 'filename should be non-null when shared CSS exists')
+    assert.ok(filename.startsWith('shared.'), `filename should start with "shared.", got: ${filename}`)
+    assert.ok(filename.endsWith('.css'), 'filename should end with .css')
+  })
+
+  test('keeps page-only rules out of sharedRules', () => {
+    const sharedRule = '.shared{font-size:16px}'
+    const rulesByPage = [
+      [sharedRule, '.only-page1{color:red}'],
+      [sharedRule, '.only-page2{color:blue}'],
+    ]
+    const { sharedRules, pageOnlyRules } = _extractSharedCss(rulesByPage, 2)
+    assert.ok(sharedRules.includes(sharedRule))
+    assert.ok(pageOnlyRules[0].includes('.only-page1{color:red}'))
+    assert.ok(pageOnlyRules[1].includes('.only-page2{color:blue}'))
+  })
+
+  test('filename includes content hash (8 hex chars)', () => {
+    const rule = '.a{color:red}'
+    const rulesByPage = [[rule], [rule]]
+    const { filename } = _extractSharedCss(rulesByPage, 2)
+    assert.ok(filename !== null)
+    const match = filename.match(/^shared\.([0-9a-f]{8})\.css$/)
+    assert.ok(match, `Expected shared.<8hex>.css, got: ${filename}`)
+  })
+})
+
+describe('cli: _patchPageHtml', () => {
+  const baseHtml = '<html><head><link rel="stylesheet" href="styles.css"></head><body>content</body></html>'
+
+  test('replaces inline styles.css link with shared link + page style', () => {
+    const result = _patchPageHtml(baseHtml, 'shared.abc12345.css', '.page{color:red}')
+    assert.ok(result.includes('<link rel="stylesheet" href="shared.abc12345.css">'))
+    assert.ok(result.includes('<style data-arc-css>.page{color:red}</style>'))
+    assert.ok(!result.includes('href="styles.css"'), 'original styles.css link should be removed')
+  })
+
+  test('omits shared link tag when sharedFilename is null', () => {
+    const result = _patchPageHtml(baseHtml, null, '.page{color:blue}')
+    assert.ok(!result.includes('<link rel="stylesheet" href="null">'))
+    assert.ok(!result.includes('href="styles.css"'))
+    assert.ok(result.includes('<style data-arc-css>.page{color:blue}</style>'))
+  })
+
+  test('omits page style block when pageCssText is empty', () => {
+    const result = _patchPageHtml(baseHtml, 'shared.abc12345.css', '')
+    assert.ok(result.includes('<link rel="stylesheet" href="shared.abc12345.css">'))
+    assert.ok(!result.includes('<style data-arc-css>'), 'empty CSS should not generate style tag')
+  })
+
+  test('omits page style block when pageCssText is only whitespace', () => {
+    const result = _patchPageHtml(baseHtml, 'shared.abc12345.css', '   ')
+    assert.ok(!result.includes('<style data-arc-css>'))
+  })
+
+  test('escapes </style> inside page CSS to avoid closing tag injection', () => {
+    const result = _patchPageHtml(baseHtml, null, '.x{content:"</style>"}')
+    assert.ok(!result.includes('</style></style>'), 'raw </style> should not appear verbatim inside style block')
+  })
+})
+
+describe('cli: explain (pure function via _internal)', () => {
+  test('explain is exported as a function', () => {
+    assert.strictEqual(typeof explain, 'function')
+  })
+
+  test('explain with a single .arc file containing models and routes', async () => {
+    const dir = mkTmpDir('explain-file')
+    try {
+      const src = `
+model User
+  @id let id = autoincrement()
+  let name: String
+  let email: String
+
+@route get "/users" -> Response
+  json(db.users.findMany())
+`
+      const arcFile = path.join(dir, 'api.arc')
+      fs.writeFileSync(arcFile, src)
+
+      const logs = []
+      const origLog = console.log
+      console.log = (...a) => logs.push(a.map(String).join(' '))
+      try {
+        await explain(arcFile)
+      } finally {
+        console.log = origLog
+      }
+
+      const output = logs.join('\n')
+      assert.ok(output.includes('User'), 'should mention User model')
+      assert.ok(output.includes('/users'), 'should mention /users route')
+    } finally {
+      rmDir(dir)
+    }
+  })
+
+  test('explain with a directory (uses server/ subdir when present)', async () => {
+    const dir = mkTmpDir('explain-dir')
+    try {
+      const serverDir = path.join(dir, 'server')
+      fs.mkdirSync(serverDir, { recursive: true })
+      fs.writeFileSync(path.join(serverDir, 'routes.arc'), `
+@route get "/ping" -> Response
+  json({ ok: true })
+`)
+      const logs = []
+      const origLog = console.log
+      console.log = (...a) => logs.push(a.map(String).join(' '))
+      try {
+        await explain(dir)
+      } finally {
+        console.log = origLog
+      }
+
+      const output = logs.join('\n')
+      assert.ok(output.includes('/ping'), 'should mention /ping route')
+    } finally {
+      rmDir(dir)
+    }
+  })
+
+  test('explain with directory without server/ subdir uses the dir itself', async () => {
+    const dir = mkTmpDir('explain-noserver')
+    try {
+      fs.writeFileSync(path.join(dir, 'jobs.arc'), `
+job ProcessOrder(id: Int)
+  console.log("processing", id)
+`)
+      const logs = []
+      const origLog = console.log
+      console.log = (...a) => logs.push(a.map(String).join(' '))
+      try {
+        await explain(dir)
+      } finally {
+        console.log = origLog
+      }
+
+      const output = logs.join('\n')
+      assert.ok(output.includes('ProcessOrder'), 'should mention the job name')
+    } finally {
+      rmDir(dir)
+    }
+  })
+
+  test('explain with file containing no backend declarations prints notice', async () => {
+    const dir = mkTmpDir('explain-empty')
+    try {
+      const arcFile = path.join(dir, 'page.arc')
+      fs.writeFileSync(arcFile, 'page "Home"\n  text "Hello world"\n')
+
+      const logs = []
+      const origLog = console.log
+      console.log = (...a) => logs.push(a.map(String).join(' '))
+      try {
+        await explain(arcFile)
+      } finally {
+        console.log = origLog
+      }
+
+      const output = logs.join('\n')
+      assert.ok(
+        output.includes('No backend') || output.toLowerCase().includes('no backend'),
+        'should note that no backend declarations were found'
+      )
+    } finally {
+      rmDir(dir)
+    }
+  })
+
+  test('explain with route that reads from DB shows reads annotation', async () => {
+    const dir = mkTmpDir('explain-dbreads')
+    try {
+      const arcFile = path.join(dir, 'server.arc')
+      fs.writeFileSync(arcFile, `
+@route get "/posts" -> Response
+  json(db.posts.findMany())
+`)
+      const logs = []
+      const origLog = console.log
+      console.log = (...a) => logs.push(a.map(String).join(' '))
+      try {
+        await explain(arcFile)
+      } finally {
+        console.log = origLog
+      }
+
+      const output = logs.join('\n')
+      assert.ok(output.includes('/posts'), 'should mention /posts route')
+    } finally {
+      rmDir(dir)
+    }
+  })
+})
+
+describe('cli: generate command (via _internal)', () => {
+  test('generate is exported as a function', () => {
+    assert.strictEqual(typeof generate, 'function')
+  })
+
+  test('generate model creates schema file', () => {
+    const dir = mkTmpDir('generate-model')
+    const origCwd = process.cwd()
+    try {
+      process.chdir(dir)
+      const logs = []
+      const origLog = console.log
+      console.log = (...a) => logs.push(a.map(String).join(' '))
+      try {
+        generate('model', 'Product')
+      } finally {
+        console.log = origLog
+      }
+      const outFile = path.join(dir, 'server', 'schemas', 'product.arc')
+      assert.ok(fs.existsSync(outFile), 'schema file should be created')
+      const content = fs.readFileSync(outFile, 'utf8')
+      assert.ok(content.includes('model Product'), 'should contain model declaration')
+    } finally {
+      process.chdir(origCwd)
+      rmDir(dir)
+    }
+  })
+
+  test('generate handler creates routes file', () => {
+    const dir = mkTmpDir('generate-handler')
+    const origCwd = process.cwd()
+    try {
+      process.chdir(dir)
+      const logs = []
+      const origLog = console.log
+      console.log = (...a) => logs.push(a.map(String).join(' '))
+      try {
+        generate('handler', 'Order')
+      } finally {
+        console.log = origLog
+      }
+      const outFile = path.join(dir, 'server', 'routes', 'order.arc')
+      assert.ok(fs.existsSync(outFile), 'routes file should be created')
+      const content = fs.readFileSync(outFile, 'utf8')
+      assert.ok(content.includes('@route get'), 'should contain route declarations')
+    } finally {
+      process.chdir(origCwd)
+      rmDir(dir)
+    }
+  })
+
+  test('generate job creates job file', () => {
+    const dir = mkTmpDir('generate-job')
+    const origCwd = process.cwd()
+    try {
+      process.chdir(dir)
+      const logs = []
+      const origLog = console.log
+      console.log = (...a) => logs.push(a.map(String).join(' '))
+      try {
+        generate('job', 'SendEmail')
+      } finally {
+        console.log = origLog
+      }
+      const outFile = path.join(dir, 'server', 'jobs', 'sendemail.arc')
+      assert.ok(fs.existsSync(outFile), 'job file should be created')
+      const content = fs.readFileSync(outFile, 'utf8')
+      assert.ok(content.includes('job SendEmail'), 'should contain job declaration')
+    } finally {
+      process.chdir(origCwd)
+      rmDir(dir)
+    }
+  })
+
+  test('generate model does not overwrite existing file (subprocess)', () => {
+    const { execFileSync } = require('child_process')
+    const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+    const dir = mkTmpDir('generate-dupe')
+    try {
+      // First call succeeds
+      execFileSync('node', [cliPath, 'generate', 'model', 'Widget'], { cwd: dir, stdio: 'pipe' })
+      // Second call should fail with non-zero exit
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'generate', 'model', 'Widget'], { cwd: dir, stdio: 'pipe' }),
+        /Command failed/,
+        'second generate should fail'
+      )
+    } finally {
+      rmDir(dir)
+    }
+  })
+
+  test('generate with unknown type exits non-zero (subprocess)', () => {
+    const { execFileSync } = require('child_process')
+    const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+    const dir = mkTmpDir('generate-unknown')
+    try {
+      assert.throws(
+        () => execFileSync('node', [cliPath, 'generate', 'migration', 'Foo'], { cwd: dir, stdio: 'pipe' }),
+        /Command failed/,
+        'unknown type should fail'
+      )
+    } finally {
+      rmDir(dir)
+    }
+  })
+})
+
+describe('cli: buildServer and serve (type checks)', () => {
+  test('buildServer is exported as a function', () => {
+    assert.strictEqual(typeof buildServer, 'function')
+  })
+
+  test('serve is exported as a function', () => {
+    assert.strictEqual(typeof serve, 'function')
+  })
+})
+
+describe('cli: _injectPrefetchTags', () => {
+  test('_injectPrefetchTags is exported as a function', () => {
+    assert.strictEqual(typeof _injectPrefetchTags, 'function')
+  })
+
+  test('injects prefetch link for a linked page', async () => {
+    const dir = mkTmpDir('prefetch')
+    try {
+      fs.mkdirSync(path.join(dir, 'dist'), { recursive: true })
+      // Write two HTML files that link to each other
+      const indexHtml = '<html><head></head><body><a href="about.html">About</a></body></html>'
+      const aboutHtml = '<html><head></head><body><a href="index.html">Home</a></body></html>'
+      fs.writeFileSync(path.join(dir, 'dist', 'index.html'), indexHtml)
+      fs.writeFileSync(path.join(dir, 'dist', 'about.html'), aboutHtml)
+
+      const compiled = [
+        { slug: 'index', meta: {} },
+        { slug: 'about', meta: {} },
+      ]
+
+      await _injectPrefetchTags(path.join(dir, 'dist'), compiled)
+
+      const resultIndex = fs.readFileSync(path.join(dir, 'dist', 'index.html'), 'utf8')
+      assert.ok(
+        resultIndex.includes('<link rel="prefetch" href="about.html">'),
+        'index.html should prefetch about.html'
+      )
+    } finally {
+      rmDir(dir)
+    }
+  })
+
+  test('injects view-transition meta by default', async () => {
+    const dir = mkTmpDir('viewtrans')
+    try {
+      fs.mkdirSync(path.join(dir, 'dist'), { recursive: true })
+      const html = '<html><head></head><body>hi</body></html>'
+      fs.writeFileSync(path.join(dir, 'dist', 'page.html'), html)
+
+      const compiled = [{ slug: 'page', meta: {} }]
+      await _injectPrefetchTags(path.join(dir, 'dist'), compiled)
+
+      const result = fs.readFileSync(path.join(dir, 'dist', 'page.html'), 'utf8')
+      assert.ok(
+        result.includes('<meta name="view-transition" content="same-origin">'),
+        'should inject view-transition meta'
+      )
+    } finally {
+      rmDir(dir)
+    }
+  })
+
+  test('suppresses view-transition meta when viewTransitions is false', async () => {
+    const dir = mkTmpDir('noviewtrans')
+    try {
+      fs.mkdirSync(path.join(dir, 'dist'), { recursive: true })
+      const html = '<html><head></head><body>hi</body></html>'
+      fs.writeFileSync(path.join(dir, 'dist', 'page.html'), html)
+
+      const compiled = [{ slug: 'page', meta: { viewTransitions: false } }]
+      await _injectPrefetchTags(path.join(dir, 'dist'), compiled)
+
+      const result = fs.readFileSync(path.join(dir, 'dist', 'page.html'), 'utf8')
+      assert.ok(
+        !result.includes('<meta name="view-transition"'),
+        'should not inject view-transition meta when disabled'
+      )
+    } finally {
+      rmDir(dir)
+    }
+  })
+})
+
+describe('cli: buildSite (multi-page, subprocess)', () => {
+  const { execFileSync } = require('child_process')
+  const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js')
+
+  test('buildSite compiles two page files and emits both HTMLs', () => {
+    const dir = mkTmpDir('buildsite-multi')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "Home"\n  text "Welcome"\n')
+      fs.writeFileSync(path.join(dir, 'about.arc'), 'page "About"\n  text "About us"\n')
+      execFileSync('node', [cliPath, 'build-site', dir], { stdio: 'pipe' })
+      assert.ok(fs.existsSync(path.join(dir, 'dist', 'index.html')), 'index.html should exist')
+      assert.ok(fs.existsSync(path.join(dir, 'dist', 'about.html')), 'about.html should exist')
+    } finally {
+      rmDir(dir)
+    }
+  })
+
+  test('buildSite emits _headers manifest and sitemap for multi-page sites', () => {
+    const dir = mkTmpDir('buildsite-meta')
+    try {
+      fs.writeFileSync(path.join(dir, 'index.arc'), 'page "Home"\n  title "My Site"\n  text "Welcome"\n')
+      fs.writeFileSync(path.join(dir, 'about.arc'), 'page "About"\n  text "About us"\n')
+      const out = execFileSync('node', [cliPath, 'build-site', dir], { stdio: 'pipe' }).toString()
+      assert.ok(out.includes('2 pages') || out.includes('built site'), `expected site build summary, got: ${out}`)
+      assert.ok(fs.existsSync(path.join(dir, 'dist', '_headers')), '_headers should exist')
+    } finally {
+      rmDir(dir)
+    }
+  })
+})
