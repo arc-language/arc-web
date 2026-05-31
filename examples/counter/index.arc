@@ -1,4 +1,6 @@
 page "Counter"
+  meta
+    favicon "/favicon.png"
   @state let count = 0
 
   main

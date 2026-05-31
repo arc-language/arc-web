@@ -1253,14 +1253,23 @@ impl Parser {
         node!("ExprStatement", tok.line, "expr" => expr)
     }
 
+    fn parse_block_or_indented(&mut self) -> Value {
+        self.consume_newlines();
+        if self.tokens.get(self.pos).map_or(false, |t| t.kind == TokenType::INDENT) {
+            self.parse_indented_block()
+        } else {
+            self.parse_block()
+        }
+    }
+
     fn parse_if_statement(&mut self) -> Value {
         let tok = self.eat(TokenType::IF);
         let condition = self.parse_expr();
-        let consequent = self.parse_block();
+        let consequent = self.parse_block_or_indented();
         let alternate = if self.eat_if(TokenType::ELSE).is_some() {
             if self.tokens.get(self.pos).map_or(false, |t| t.kind == TokenType::IF) {
                 self.parse_if_statement()
-            } else { self.parse_block() }
+            } else { self.parse_block_or_indented() }
         } else { Value::Null };
         self.consume_newlines();
         node!("IfStatement", tok.line, "condition" => condition, "consequent" => consequent, "alternate" => alternate)
@@ -1269,7 +1278,7 @@ impl Parser {
     fn parse_unless_statement(&mut self) -> Value {
         let tok = self.eat(TokenType::UNLESS);
         let condition = self.parse_expr();
-        let body = self.parse_block();
+        let body = self.parse_block_or_indented();
         self.consume_newlines();
         node!("UnlessStatement", tok.line, "condition" => condition, "body" => body)
     }
@@ -1277,7 +1286,7 @@ impl Parser {
     fn parse_while_statement(&mut self) -> Value {
         let tok = self.eat(TokenType::WHILE);
         let condition = self.parse_expr();
-        let body = self.parse_block();
+        let body = self.parse_block_or_indented();
         self.consume_newlines();
         node!("WhileStatement", tok.line, "condition" => condition, "body" => body)
     }
@@ -1307,7 +1316,7 @@ impl Parser {
         }
         self.eat(TokenType::IN);
         let collection = self.parse_expr();
-        let body = self.parse_block();
+        let body = self.parse_block_or_indented();
         self.consume_newlines();
         node!("ForStatement", tok.line,
             "indexName" => index_name,

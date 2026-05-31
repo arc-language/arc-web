@@ -55,6 +55,7 @@ Arc has macros for the patterns most apps reach for JS to build:
 | `modal id="name"` | `<dialog>` | Native browser modal; no JS needed |
 | `tooltip text="..."` | Popover API | Native; works without JS |
 | `accordion` | `<details>` / `<summary>` | Native disclosure |
+| `slider` | Scroll-snap carousel | CSS-native scrolling; JS only for dots/autoplay/keyboard |
 
 ### Modal example
 
@@ -107,6 +108,60 @@ Compiles to:
   <summary>What is Arc?</summary>
   <p>A compiler that produces optimal HTML, CSS, and JavaScript.</p>
 </details>
+```
+
+### Slider
+
+A scroll-snap carousel. Scrolling is CSS-native (no JS for basic use). Arrow-key navigation is on by default; dots and autoplay are opt-in.
+
+```arc
+slider
+  img src="a.jpg" alt="Slide 1"
+  img src="b.jpg" alt="Slide 2"
+  img src="c.jpg" alt="Slide 3"
+```
+
+All attributes are optional:
+
+| Attribute | Default | Description |
+| --- | --- | --- |
+| `items=N` | `1` | Slides visible at once |
+| `gap=N` | `0` | Gap between slides (`px` appended to bare numbers) |
+| `peek=N` | `0` | Show edge of next slide (`px` appended to bare numbers) |
+| `nav=false` | `true` | Show previous/next buttons |
+| `dots=false` | `true` | Show pagination dots |
+| `center=true` | `false` | Snap-align slides to center instead of start |
+| `wrap=true` | `false` | Nav buttons wrap from last → first and first → last |
+| `keyboard=false` | `true` | Arrow-key navigation when the track is focused |
+| `autoplay=true` | `false` | Auto-advance slides |
+| `timeout=N` | `4000` | Autoplay interval in ms (min 500) |
+| `label="..."` | locale `"Slider"` | `aria-label` for the carousel region |
+| `class="..."` | — | Extra CSS classes on the outer wrapper |
+
+**Multi-item example with peek:**
+
+```arc
+slider items=3 gap=16 peek=40 wrap=true
+  card
+    img src="a.jpg" alt="Product A"
+    heading "Product A"
+  card
+    img src="b.jpg" alt="Product B"
+    heading "Product B"
+  card
+    img src="c.jpg" alt="Product C"
+    heading "Product C"
+```
+
+**Theming with CSS custom properties:**
+
+```css
+.my-page {
+  --arc-slider-nav-bg: oklch(30% 0.2 270);   /* button background */
+  --arc-slider-nav-size: 2.5rem;              /* button width/height */
+  --arc-slider-nav-icon-size: 1.25rem;        /* arrow icon size */
+  --arc-slider-dot-size: 0.625rem;            /* dot width/height */
+}
 ```
 
 ## Attributes

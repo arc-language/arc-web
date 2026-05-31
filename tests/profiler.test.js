@@ -119,11 +119,10 @@ describe('BunServerEmitter with profile=false (default)', () => {
     assert.ok(!out.includes('/_arc/profiler'))
   })
 
-  test('uses sync fetch when profile=false', () => {
+  test('uses async fetch when profile=false', () => {
     const emitter = new BunServerEmitter({ profile: false })
     const out = emitter.emitProgram(program)
-    assert.ok(out.includes('  fetch(req)'))
-    assert.ok(!out.includes('async fetch(req)'))
+    assert.ok(out.includes('async fetch(req)'))
   })
 
   test('no profiler code when profile option omitted', () => {

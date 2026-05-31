@@ -67,9 +67,12 @@
   },
   "sideEffects": false,
   "optionalDependencies": {
-    "better-sqlite3": "^9.0.0",
+    "better-sqlite3": "^9.6.0",
     "pg": "^8.0.0",
     "sharp": "^0.34.5"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0"
+  }
 }

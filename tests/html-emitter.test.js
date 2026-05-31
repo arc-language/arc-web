@@ -118,9 +118,17 @@ describe('HTML Emitter', () => {
   })
 
   describe('img auto-enhancements', () => {
-    test('img gets loading="lazy" auto-added', async () => {
+    test('first img gets eager loading (no loading attr) for LCP', async () => {
       const { html } = await compile('page "T"\n  img src="photo.jpg" alt="A photo"')
-      assert.ok(html.includes('loading="lazy"'), `Expected loading="lazy" in:\n${html}`)
+      assert.ok(!html.includes('loading="lazy"'), `First img should not get loading="lazy" (LCP): ${html}`)
+    })
+
+    test('second img gets loading="lazy" auto-added', async () => {
+      const { html } = await compile('page "T"\n  img src="a.jpg" alt="first"\n  img src="b.jpg" alt="second"')
+      const imgs = [...html.matchAll(/<img[^>]*>/g)]
+      assert.ok(imgs.length >= 2, 'Expected at least 2 imgs')
+      assert.ok(!imgs[0][0].includes('loading='), `First img should not have loading attr: ${imgs[0][0]}`)
+      assert.ok(imgs[1][0].includes('loading="lazy"'), `Second img should have loading="lazy": ${imgs[1][0]}`)
     })
 
     test('img gets decoding="async" auto-added', async () => {
@@ -220,7 +228,7 @@ describe('HTML Emitter', () => {
   @state let x = 0
   text "{x}"`
       const { html } = await compile(src)
-      assert.match(html, /<span id="_a\d+" data-arc-live><\/span>/, `Expected reactive span in:\n${html}`)
+      assert.match(html, /<span id="_[a-z0-9]+" data-arc-live><\/span>/, `Expected reactive span in:\n${html}`)
     })
   })
 
@@ -437,7 +445,7 @@ page "T"
       const { html } = await compile(src)
       // Default reactive for should produce a quiet list container (no aria-live)
       // to avoid noisy screen-reader announcements on every mutation.
-      const listDiv = html.match(/<div id="_a\d+"[^>]*><\/div>/)
+      const listDiv = html.match(/<div id="_[a-z0-9]+"[^>]*><\/div>/)
       assert.ok(listDiv, `Expected list container in:\n${html}`)
       assert.ok(!listDiv[0].includes('aria-live'),
         `List container should not have aria-live by default: ${listDiv[0]}`)
@@ -579,11 +587,12 @@ page "T"
 
     test('slider with no autoplay and dots=false emits no script', async () => {
       const src = `page "T"
-  slider dots=false
+  slider dots=false keyboard=false
     div "A"
     div "B"`
       const { html } = await compile(src)
       assert.ok(!html.includes('setInterval'), `Expected no autoplay setInterval script in:\n${html}`)
+      assert.ok(!html.includes('<script>'), `Expected no script tag in:\n${html}`)
     })
 
     test('slider items=3 sets CSS custom property', async () => {
@@ -620,6 +629,108 @@ page "T"
       const { html } = await compile(src)
       assert.ok(!html.includes('Previous slide'), `Expected no nav with single slide in:\n${html}`)
       assert.ok(!html.match(/arc-slider-dots_/), `Expected no dots with single slide in:\n${html}`)
+    })
+
+    test('slider CSS uses --arc-slider-nav-bg and --arc-slider-nav-size custom properties', async () => {
+      const { css } = await compile(`page "T"\n  slider\n    div "A"\n    div "B"`)
+      assert.ok(css.includes('--arc-slider-nav-bg'), `Expected --arc-slider-nav-bg in CSS:\n${css}`)
+      assert.ok(css.includes('--arc-slider-nav-size'), `Expected --arc-slider-nav-size in CSS:\n${css}`)
+      assert.ok(css.includes('--arc-slider-nav-icon-size'), `Expected --arc-slider-nav-icon-size in CSS:\n${css}`)
+    })
+
+    test('slider CSS uses --arc-slider-dot-size custom property', async () => {
+      const { css } = await compile(`page "T"\n  slider\n    div "A"\n    div "B"`)
+      assert.ok(css.includes('--arc-slider-dot-size'), `Expected --arc-slider-dot-size in CSS:\n${css}`)
+    })
+
+    test('slider class attr is passed through to outer wrapper', async () => {
+      const src = `page "T"
+  slider class="hero-slider"
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('hero-slider'), `Expected class passthrough in:\n${html}`)
+      assert.match(html, /class="arc-slider_[a-z0-9_]+ hero-slider"/)
+    })
+
+    test('slider peek sets --arc-sp CSS custom property on track', async () => {
+      const src = `page "T"
+  slider peek="40px"
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('--arc-sp:40px'), `Expected --arc-sp:40px in:\n${html}`)
+    })
+
+    test('slider peek as number adds px suffix', async () => {
+      const src = `page "T"
+  slider peek=40
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('--arc-sp:40px'), `Expected --arc-sp:40px in:\n${html}`)
+    })
+
+    test('slider wrap=true prev button wraps to end', async () => {
+      const src = `page "T"
+  slider wrap=true
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('scrollTo({left:t.scrollWidth'), `Expected wrap logic in prev handler:\n${html}`)
+    })
+
+    test('slider wrap=true next button wraps to start', async () => {
+      const src = `page "T"
+  slider wrap=true
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('scrollTo({left:0'), `Expected wrap logic in next handler:\n${html}`)
+    })
+
+    test('slider without wrap does not emit scrollTo wrap logic', async () => {
+      const src = `page "T"
+  slider
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(!html.includes('scrollTo({left:t.scrollWidth'), `Expected no wrap logic in:\n${html}`)
+    })
+
+    test('slider emits keyboard listener by default', async () => {
+      const src = `page "T"
+  slider
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('keydown'), `Expected keydown handler in:\n${html}`)
+      assert.ok(html.includes('ArrowLeft'), `Expected ArrowLeft in:\n${html}`)
+      assert.ok(html.includes('ArrowRight'), `Expected ArrowRight in:\n${html}`)
+    })
+
+    test('slider keyboard=false omits keyboard listener', async () => {
+      const src = `page "T"
+  slider keyboard=false
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(!html.includes('keydown'), `Expected no keydown handler in:\n${html}`)
+    })
+
+    test('slider keyboard=false dots=false emits no script tag', async () => {
+      const src = `page "T"
+  slider keyboard=false dots=false
+    div "A"
+    div "B"`
+      const { html } = await compile(src)
+      assert.ok(!html.includes('<script>'), `Expected no script tag in:\n${html}`)
+    })
+
+    test('slider default label is locale-aware', async () => {
+      const src = `page "T" lang="en"\n  slider\n    div "A"\n    div "B"`
+      const { html } = await compile(src)
+      assert.ok(html.includes('aria-label="Slider"'), `Expected locale default label in:\n${html}`)
     })
   })
 

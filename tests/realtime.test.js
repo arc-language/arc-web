@@ -78,7 +78,7 @@ describe('RealtimeEmitter — DOM update wiring', () => {
       0)
     const e = new RealtimeEmitter({ hash: 'h1' })
     const bindings = [
-      { id: '_a1', expr: 'feed.length', stateVar: 'feed' },
+      { id: '_1', expr: 'feed.length', stateVar: 'feed' },
     ]
     const code = e.emitAll([decl], bindings)
     assert.ok(code.includes('_set_feed'), `Expected _set_feed call: ${code.slice(0, 500)}`)
@@ -90,10 +90,10 @@ describe('RealtimeEmitter — DOM update wiring', () => {
       0)
     const e = new RealtimeEmitter({ hash: 'h1' })
     const bindings = [
-      { id: '_a1', expr: 'msg', stateVar: null },
+      { id: '_1', expr: 'msg', stateVar: null },
     ]
     const code = e.emitAll([decl], bindings)
-    assert.ok(code.includes("getElementById('_a1')"), `Expected direct getElementById: ${code.slice(0, 500)}`)
+    assert.ok(code.includes("getElementById('_1')"), `Expected direct getElementById: ${code.slice(0, 500)}`)
     assert.ok(code.includes('textContent'))
   })
 

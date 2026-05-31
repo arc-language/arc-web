@@ -1,3 +1,5 @@
+<img src="../packages/arc-cms/src/public/logo.png" alt="Arc" width="80">
+
 # Arc Documentation
 
 Complete reference for the [Arc compiler](../README.md). Start with [Getting Started](#getting-started) if you've never used Arc; jump to [Reference](#reference) if you have.

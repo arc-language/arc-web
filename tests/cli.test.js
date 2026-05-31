@@ -254,6 +254,73 @@ page "T"
     } finally { rmDir(dir) }
   })
 
+  describe('@arc-cms/ alias resolver', () => {
+    const { _resolveImportPath } = _internal
+
+    test('resolves @arc-cms/ to package source when no override exists', () => {
+      const dir = mkTmpDir('alias-pkg')
+      try {
+        const resolved = _resolveImportPath(
+          '@arc-cms/widgets/CmsEmpty.arc', dir, 'main.arc', dir
+        )
+        assert.ok(resolved, 'expected resolution to succeed')
+        assert.ok(resolved.includes('packages/arc-cms/src/widgets/CmsEmpty.arc'),
+          `expected package path, got ${resolved}`)
+      } finally { rmDir(dir) }
+    })
+
+    test('override in site/cms/ wins over package source', () => {
+      const dir = mkTmpDir('alias-override')
+      try {
+        const overrideDir = path.join(dir, 'site', 'cms', 'widgets')
+        fs.mkdirSync(overrideDir, { recursive: true })
+        const overridePath = path.join(overrideDir, 'CmsEmpty.arc')
+        fs.writeFileSync(overridePath, 'widget CmsEmpty() text "local"\n')
+        const resolved = _resolveImportPath(
+          '@arc-cms/widgets/CmsEmpty.arc', dir, 'main.arc', dir
+        )
+        assert.equal(resolved, overridePath)
+      } finally { rmDir(dir) }
+    })
+
+    test('missing @arc-cms/ import returns null with warning', () => {
+      const dir = mkTmpDir('alias-miss')
+      try {
+        const origWarn = console.warn
+        const warnings = []
+        console.warn = (...a) => warnings.push(a.join(' '))
+        try {
+          const resolved = _resolveImportPath(
+            '@arc-cms/widgets/NopeNotReal.arc', dir, 'main.arc', dir
+          )
+          assert.equal(resolved, null)
+          assert.ok(warnings.some(w => w.includes('@arc-cms import not found')),
+            'expected warning about missing import')
+        } finally { console.warn = origWarn }
+      } finally { rmDir(dir) }
+    })
+
+    test('package source is in allowed roots so non-alias absolute imports inside it pass', () => {
+      // Sanity: if a package file imports another file via relative path, the
+      // containment check must not reject it just because it lives outside the
+      // user's project root.
+      const dir = mkTmpDir('alias-allowed')
+      try {
+        const pkgRel = path.resolve(__dirname, '..', 'packages', 'arc-cms', 'src', 'widgets', 'CmsEmpty.arc')
+        // Mimic: an @arc-cms/ resolution succeeded earlier; now during that
+        // file's own imports, a relative path inside the package must resolve.
+        const resolved = _resolveImportPath(
+          './CmsEmpty.arc',
+          dir,
+          pkgRel,
+          dir
+        )
+        assert.ok(resolved && resolved.endsWith('CmsEmpty.arc'),
+          `expected resolution within package to succeed, got ${resolved}`)
+      } finally { rmDir(dir) }
+    })
+  })
+
   test('imports FnDecl by name', async () => {
     const dir = mkTmpDir('importfn')
     try {

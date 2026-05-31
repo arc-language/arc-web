@@ -1,7 +1,7 @@
 import CmsLayout from "site/cms/CmsLayout.arc"
 import CmsPageHeader from "site/cms/CmsPageHeader.arc"
-import CmsField from "site/cms/CmsField.arc"
-import CmsConfirm from "site/cms/CmsConfirm.arc"
+import CmsField from "@arc-cms/widgets/CmsField.arc"
+import CmsConfirm from "@arc-cms/widgets/CmsConfirm.arc"
 
 page "Edit group - Admin"
 

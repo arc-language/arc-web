@@ -1,11 +1,9 @@
-# CmsConfirm - accessible confirmation dialog replacing browser confirm().
-# Usage in a page:
-#   @state let confirmOpen = ""
-#   button class="!btn !btn--danger" on:click={ @confirmOpen = "delete-foo" } "Delete"
-#   CmsConfirm id="delete-foo" open="{confirmOpen}" title="Delete this?" message="Cannot be undone."
-#     button class="!btn !btn--danger" on:click={ @confirmOpen = ""; @deleted = (deleteItem(id).ok == true) } "Delete"
-# The slot provides the confirm action button so the parent fully controls the action.
-# Open state is keyed by id so multiple dialogs can coexist on the page.
+// CmsConfirm - accessible confirmation dialog replacing browser confirm.
+// Pages declare a string state var (e.g. confirmOpen) and assign the dialog
+// id to open it; the matching CmsConfirm with that id shows itself. The slot
+// inside this widget is where the parent passes the confirm action button so
+// it fully owns the action. Open state is keyed by id so multiple dialogs
+// can coexist on the page.
 widget CmsConfirm(id: String, title: String, message: String = "", cancelLabel: String = "Cancel", open: String = "")
   if open == id
     div class="cms-confirm-backdrop" on:click={ @open = "" }
@@ -16,7 +14,7 @@ widget CmsConfirm(id: String, title: String, message: String = "", cancelLabel: 
           text class="!modal__subtitle" "{message}"
       row class="!modal__footer" justify="flex-end" gap="8px"
         button class="!btn !btn--ghost" on:click={ @open = "" } "{cancelLabel}"
-        slot
+        @slot
 
   design
     .cms-confirm-backdrop

@@ -67,8 +67,8 @@ test('ServerEmitter: edge function includes error handling', () => {
   return 1
 }
 `)
-  assert.ok(result.edgeFunctions.includes('catch (_e)'), 'should catch errors')
-  assert.ok(result.edgeFunctions.includes('status: 500'), 'should return 500 on error')
+  assert.ok(result.edgeFunctions.includes('catch(_e)'), 'should catch errors')
+  assert.ok(result.edgeFunctions.includes('status:500'), 'should return 500 on error')
 })
 
 test('ServerEmitter: edge function includes WinterCG export', () => {
@@ -78,7 +78,7 @@ test('ServerEmitter: edge function includes WinterCG export', () => {
 }
 `)
   assert.ok(result.edgeFunctions.includes('export default'), 'should have WinterCG export')
-  assert.ok(result.edgeFunctions.includes('async fetch(req)'), 'fetch handler exported')
+  assert.ok(result.edgeFunctions.includes('async fetch(req){'), 'fetch handler exported')
 })
 
 // ── @server fn with params ────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ test('ServerEmitter: client stub POSTs to /_arc/fn/<name>', () => {
 }
 `)
   assert.ok(result.clientStubs.includes("/_arc/fn/getData"), 'should post to correct endpoint')
-  assert.ok(result.clientStubs.includes("method: 'POST'"), 'should use POST method')
+  assert.ok(result.clientStubs.includes("method:'POST'"), 'should use POST method')
 })
 
 test('ServerEmitter: client stub with params passes args as object', () => {

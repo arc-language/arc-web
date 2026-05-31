@@ -1,6 +1,6 @@
 import CmsLayout from "site/cms/CmsLayout.arc"
 import CmsPageHeader from "site/cms/CmsPageHeader.arc"
-import CmsEmpty from "site/cms/CmsEmpty.arc"
+import CmsEmpty from "@arc-cms/widgets/CmsEmpty.arc"
 
 page "Blocks - Admin"
 

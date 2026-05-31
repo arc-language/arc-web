@@ -1,0 +1,14 @@
+{
+  "_doc": "Path-prefix -> minimum required role for GET requests to /admin/*. The _serveStatic guard in arc-web's server-bun.js loads this at boot. Routes with their own @auth(...) handlers are unaffected (they're served by _dispatch before _serveStatic runs).",
+  "default": "viewer",
+  "exempt": ["/admin/login", "/admin/check-auth"],
+  "rules": [
+    { "prefix": "/admin/users",    "role": "admin" },
+    { "prefix": "/admin/groups",   "role": "admin" },
+    { "prefix": "/admin/settings", "role": "admin" },
+    { "prefix": "/admin/audit",    "role": "admin" },
+    { "prefix": "/admin/pages",    "role": "editor" },
+    { "prefix": "/admin/blocks",   "role": "editor" },
+    { "prefix": "/admin/media",    "role": "editor" }
+  ]
+}

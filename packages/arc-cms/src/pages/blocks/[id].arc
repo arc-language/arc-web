@@ -1,7 +1,7 @@
 import CmsLayout from "site/cms/CmsLayout.arc"
 import CmsPageHeader from "site/cms/CmsPageHeader.arc"
-import CmsField from "site/cms/CmsField.arc"
-import CmsConfirm from "site/cms/CmsConfirm.arc"
+import CmsField from "@arc-cms/widgets/CmsField.arc"
+import CmsConfirm from "@arc-cms/widgets/CmsConfirm.arc"
 
 # Phase 4 will replace the JSON textarea with a schema-driven per-type form
 # and add a live-preview iframe pane.

@@ -1,4 +1,6 @@
 page "Hello, Arc"
+  meta
+    favicon "/favicon.png"
   header
     heading "Hello, Arc"
     text "Built from scratch. Zero dependencies. Zero runtime."
