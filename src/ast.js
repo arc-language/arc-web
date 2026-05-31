@@ -114,6 +114,15 @@ const RawNode = (html, line) => ({
   arcTag: 'raw'
 })
 
+const SlotNode = (line) => ({
+  type: 'SlotNode', line,
+  arcTag: 'slot'
+})
+
+const CssImport = (pkg, line) => ({
+  type: 'CssImport', pkg, line
+})
+
 // ── Design Nodes ──────────────────────────────────────────────────────────────
 
 const DesignBlock = (rules, line) => ({
@@ -283,9 +292,40 @@ const RouteDecl = (method, path, params, returnType, body, line, annotations = [
   // annotations: extra decorators e.g. ['@auth']
 })
 
-const JobDecl = (name, params, body, line) => ({
+const RouteGroupDecl = (prefix, annotations, routes, line) => ({
+  type: 'RouteGroupDecl', prefix, annotations, routes, line,
+  arcTag: 'group'
+  // prefix: string e.g. '/admin'
+  // annotations: string[] e.g. ['@auth', '@auth(admin)']
+  // routes: RouteDecl[]
+})
+
+const JobDecl = (name, params, body, line, annotations = []) => ({
   type: 'JobDecl', name, params, body, line,
-  arcTag: 'job'
+  arcTag: 'job',
+  // Queue adapter selection (@queue name — must exist in arc.config.queues)
+  queueName: null,
+  // Scheduling (@schedule "0 9 * * *")
+  schedule: null,
+  // Priority (@priority high|normal|low)
+  priority: 'normal',
+  // Per-job timeout override in ms (@timeout 120000)
+  timeoutMs: null,
+  // Retry config (@retries 5, @backoff 2000)
+  maxRetries: null,
+  backoffMs: null,
+  // Max simultaneous instances (@concurrency 2)
+  concurrency: null,
+  // Duplicate prevention — celery-once equivalent (@unique, @unique timeout=3600000 strategy=skip)
+  unique: false,
+  uniqueTimeout: 3600000,
+  uniqueStrategy: 'skip',  // 'skip' | 'reject' | 'replace'
+  // Progress streaming — injects job.progress() into body (@progress)
+  hasProgress: false,
+  // Job chaining — auto-enqueues named job on success (@then OtherJob)
+  thenJob: null,
+  // Raw annotation strings collected before the job keyword
+  annotations,
 })
 
 // ── Function parameters ───────────────────────────────────────────────────────
@@ -302,10 +342,10 @@ module.exports = {
   Program,
   ImportDecl, ExportDecl,
   StateDecl, ComputedDecl, BuildDecl, LiveDecl, RealtimeDecl, ServerFn, WorkerFn,
-  ModelDecl, ModelField, RouteDecl, JobDecl,
+  ModelDecl, ModelField, RouteDecl, RouteGroupDecl, JobDecl,
   WidgetDecl, PageDecl,
   Element, TextNode, InterpolationNode,
-  IfNode, UnlessNode, ForNode, MatchTemplateNode, RawNode,
+  IfNode, UnlessNode, ForNode, MatchTemplateNode, RawNode, SlotNode, CssImport,
   DesignBlock, StyleRule, StyleProp, StyleCondition,
   VarDecl, FnDecl, ClassDecl, ClassField, ClassMethod,
   BlockStatement, ReturnStatement,

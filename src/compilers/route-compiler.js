@@ -15,6 +15,7 @@ function makeNode() {
     children: new Map(),    // literal char segment → node
     param: null,            // paramName or null for :param segments
     paramChild: null,       // node for :param branch
+    catchAll: null,         // paramName for *param catch-all (matches remaining path)
     handlers: new Map(),    // method → handlerFn string
   }
 }
@@ -26,7 +27,12 @@ function insertRoute(root, method, path, handlerName) {
   let node = root
 
   for (const seg of segments) {
-    if (seg.startsWith(':')) {
+    if (seg.startsWith('*')) {
+      // Catch-all *param: matches the rest of the path as a single string
+      node.catchAll = seg.slice(1)
+      node.handlers.set(method.toUpperCase(), handlerName)
+      return // catch-all must be terminal
+    } else if (seg.startsWith(':')) {
       const paramName = seg.slice(1)
       if (!node.paramChild) {
         node.param = paramName
@@ -169,6 +175,19 @@ function emitTrieNodeWithExtra(node, depth, indent, extra) {
   // Re-emit trie but thread the extra param through every handler call
   const pad = '  '.repeat(indent)
   const lines = []
+
+  // Catch-all *param: match remaining path (depth..end) as a single param
+  if (node.catchAll && node.handlers.size > 0) {
+    lines.push(`${pad}if (params === _EMPTY_PARAMS) params = Object.create(null)`)
+    lines.push(`${pad}params['${node.catchAll}'] = segments.slice(${depth}).join('/')`)
+    lines.push(`${pad}switch (method) {`)
+    for (const [method, handler] of node.handlers) {
+      lines.push(`${pad}  case '${method}': return ${handler}(req, params${extra})`)
+    }
+    lines.push(`${pad}  default: return new Response('Method Not Allowed', { status: 405 })`)
+    lines.push(`${pad}}`)
+    return lines.join('\n')
+  }
 
   if (node.children.size === 0 && !node.paramChild) {
     if (node.handlers.size === 0) {

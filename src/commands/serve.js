@@ -32,7 +32,6 @@ function createFileWatcher(absDir, onChange) {
 
   watchDir(absDir)
 
-  // Return the watched Set (backward-compat) with a .close() method for cleanup.
   watched.close = function () {
     for (const w of fsWatchers) w.close()
     if (!fsWatchers.length) {
@@ -44,7 +43,7 @@ function createFileWatcher(absDir, onChange) {
   return watched
 }
 
-async function serve(projectDir, flags, buildServer) {
+async function serve(projectDir, flags, buildServer, buildSite) {
   const outFile = await buildServer(projectDir, {}, flags)
 
   const bunCheck = spawnSync('bun', ['--version'], { stdio: 'pipe' })
@@ -60,7 +59,6 @@ async function serve(projectDir, flags, buildServer) {
     ? path.join(absDir, 'server')
     : absDir
 
-  // --port flag: pass as PORT env var to the child process
   const childEnv = flags.port
     ? { ...process.env, PORT: String(flags.port) }
     : process.env
@@ -77,42 +75,83 @@ async function serve(projectDir, flags, buildServer) {
     child = thisChild
     thisChild.on('error', e => console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_spawn_failed', msg: e.message })))
     thisChild.on('exit', (code, signal) => {
-      // Ignore exit from superseded children - only act on the currently active one.
       if (child !== thisChild) return
       if (signal !== 'SIGTERM') process.exit(code ?? 0)
     })
   }
 
-  let _pendingRebuild = false
-  async function rebuild() {
-    if (_rebuilding) { _pendingRebuild = true; return }
+  let _pendingServerRebuild = false
+  async function rebuildServer() {
+    if (_rebuilding) { _pendingServerRebuild = true; return }
     _rebuilding = true
     try {
       await buildServer(projectDir, {}, flags)
-      console.log(`${CYAN}arc: reloaded${RESET}`)
+      console.log(`${CYAN}arc: server reloaded${RESET}`)
       startChild()
     } catch (e) {
-      console.error(`arc: rebuild failed: ${e?.stack ?? e?.message ?? String(e)}`)
+      console.error(`arc: server rebuild failed: ${e?.stack ?? e?.message ?? String(e)}`)
     } finally {
       _rebuilding = false
     }
-    if (_pendingRebuild) { _pendingRebuild = false; rebuild().catch(e => console.error(`arc: rebuild error: ${e?.message ?? String(e)}`)) }
+    if (_pendingServerRebuild) { _pendingServerRebuild = false; rebuildServer().catch(e => console.error(`arc: rebuild error: ${e?.message ?? String(e)}`)) }
+  }
+
+  let _siteBusy = false
+  let _pendingSiteRebuild = false
+  async function rebuildSite() {
+    if (!buildSite) return
+    if (_siteBusy) { _pendingSiteRebuild = true; return }
+    _siteBusy = true
+    try {
+      await buildSite(projectDir)
+      console.log(`${CYAN}arc: site rebuilt${RESET}`)
+    } catch (e) {
+      console.error(`arc: site rebuild failed: ${e?.stack ?? e?.message ?? String(e)}`)
+    } finally {
+      _siteBusy = false
+    }
+    if (_pendingSiteRebuild) { _pendingSiteRebuild = false; rebuildSite().catch(e => console.error(`arc: site rebuild error: ${e?.message ?? String(e)}`)) }
   }
 
   console.log(`arc: starting server with ${runtime}...`)
   startChild()
 
-  let debounceTimer = null
-  createFileWatcher(serverDir, (filename) => {
-    clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(() => {
-      console.log(`${DIM}arc: ${filename} changed — rebuilding...${RESET}`)
-      rebuild().catch(e => console.error(`arc: rebuild error: ${e?.message ?? String(e)}`))
-    }, 150)
-  })
-  console.log(`${DIM}arc: watching ${path.relative(process.cwd(), serverDir)}/**/*.arc${RESET}`)
+  // Single watcher on the project root, dispatching by file location.
+  // - server/**/*.arc → server rebuild + bun restart
+  // - everything else → site (static HTML) rebuild
+  const serverRel = path.relative(absDir, serverDir)
+  let serverDebounce = null
+  let siteDebounce = null
 
-  // Re-emit child's exit code so the parent shell sees the correct status.
+  createFileWatcher(absDir, (filename) => {
+    // Ignore dist, node_modules, dotfiles
+    if (filename.startsWith('dist/') || filename.startsWith('node_modules/') || filename.startsWith('.')) return
+
+    const isServerFile = serverRel
+      ? (filename === serverRel || filename.startsWith(serverRel + path.sep) || filename.startsWith(serverRel + '/'))
+      : false
+
+    if (isServerFile) {
+      clearTimeout(serverDebounce)
+      serverDebounce = setTimeout(() => {
+        console.log(`${DIM}arc: server/${path.basename(filename)} changed — rebuilding server...${RESET}`)
+        rebuildServer().catch(e => console.error(`arc: rebuild error: ${e?.message ?? String(e)}`))
+      }, 150)
+    } else if (buildSite) {
+      clearTimeout(siteDebounce)
+      siteDebounce = setTimeout(() => {
+        console.log(`${DIM}arc: ${filename} changed — rebuilding site...${RESET}`)
+        rebuildSite().catch(e => console.error(`arc: site rebuild error: ${e?.message ?? String(e)}`))
+      }, 200)
+    }
+  })
+
+  if (buildSite) {
+    console.log(`${DIM}arc: watching server/**/*.arc (server reload) + **/*.arc (site rebuild)${RESET}`)
+  } else {
+    console.log(`${DIM}arc: watching ${path.relative(process.cwd(), serverDir)}/**/*.arc${RESET}`)
+  }
+
   process.once('SIGINT', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGINT') } else process.exit(0) })
   process.once('SIGTERM', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGTERM') } else process.exit(0) })
 }

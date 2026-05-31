@@ -1,5 +1,31 @@
 'use strict'
 
+// Minimal 5-field cron validator: "min hour dom month dow"
+// Supports: *, */step, N-M ranges, comma lists, plain numbers
+function _isValidCron(expr) {
+  if (typeof expr !== 'string') return false
+  const fields = expr.trim().split(/\s+/)
+  if (fields.length !== 5) return false
+  const ranges = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]]
+  return fields.every((field, i) => {
+    const [lo, hi] = ranges[i]
+    const checkPart = (p) => {
+      if (p === '*') return true
+      if (/^\*\/\d+$/.test(p)) return parseInt(p.slice(2), 10) > 0
+      if (/^\d+-\d+$/.test(p)) {
+        const [a, b] = p.split('-').map(Number)
+        return a >= lo && b <= hi && a <= b
+      }
+      if (/^\d+$/.test(p)) {
+        const n = parseInt(p, 10)
+        return n >= lo && n <= hi
+      }
+      return false
+    }
+    return field.split(',').every(checkPart)
+  })
+}
+
 // Linked scope chain - O(1) child creation vs O(N) Map copy.
 // Writes go to the local frame only; lookups walk the chain.
 class Scope {
@@ -144,6 +170,34 @@ class Checker {
     if (declared && !declared.hasLocal(decl.name)) {
       declared.set(decl.name, 'job')
     }
+
+    // ── Annotation validation ────────────────────────────────────────────────
+    if (decl.priority && !['high', 'normal', 'low'].includes(decl.priority)) {
+      this.error(`@priority must be 'high', 'normal', or 'low' — got '${decl.priority}'`, decl)
+    }
+
+    if (decl.unique && !['skip', 'reject', 'replace'].includes(decl.uniqueStrategy)) {
+      this.error(`@unique strategy must be 'skip', 'reject', or 'replace' — got '${decl.uniqueStrategy}'`, decl)
+    }
+
+    if (decl.schedule && !_isValidCron(decl.schedule)) {
+      this.error(`@schedule has invalid cron expression: "${decl.schedule}" — expected 5-field cron (min hour dom mon dow)`, decl)
+    }
+
+    if (decl.schedule && (decl.params ?? []).some(p => !p.defaultValue)) {
+      this.warn(`@schedule job '${decl.name}' has required params — it will be called with no arguments by the scheduler`, decl)
+    }
+
+    if (decl.thenJob) {
+      // @then cross-reference: target job must be declared in same project
+      // Note: declared is hoisted at check() start, so forward refs are fine
+      if (!declared.has(decl.thenJob)) {
+        this.error(`@then references unknown job '${decl.thenJob}' — make sure it is declared in your server files`, decl)
+      } else if (declared.get(decl.thenJob) !== 'job' && declared.get(decl.thenJob) !== 'JobDecl') {
+        this.error(`@then '${decl.thenJob}' is not a job declaration`, decl)
+      }
+    }
+
     if (decl.body) {
       const scope = new Scope(declared)
       for (const p of decl.params ?? []) {
@@ -151,6 +205,10 @@ class Checker {
       }
       scope.set('Queue', 'Queue')
       scope.set('email', 'Email')
+      // @progress jobs get a `job` context with progress() method
+      if (decl.hasProgress) {
+        scope.set('job', 'JobContext')
+      }
       this.checkBody(decl.body, scope, {})
     }
   }
@@ -311,10 +369,20 @@ class Checker {
         if (node.alternate) this.checkTemplateBody(node.alternate ?? [], declared)
         break
       case 'VarDecl':
-        // const/let local to a widget or page body. Check the init expression,
-        // then add the name to scope so subsequent references resolve.
+      case 'StateDecl':
+      case 'ComputedDecl':
+      case 'LiveDecl':
+      case 'BuildDecl':
+      case 'RealtimeDecl':
+        // const/let and annotation-based declarations in widget/page bodies.
+        // Check the init expression, then add the name to scope.
         if (node.init) this.checkExpr(node.init, declared, {})
-        if (node.name) declared.set(node.name, 'VarDecl')
+        if (node.name) declared.set(node.name, node.type)
+        break
+      case 'ServerFn':
+      case 'WorkerFn':
+        // @server fn declared inside a widget/page body — add its name to scope
+        if (node.name) declared.set(node.name, 'ServerFn')
         break
       case 'TextNode':
         break
@@ -607,12 +675,17 @@ const GLOBALS = new Set([
   'require', 'module', 'exports', '__dirname', '__filename', 'process', 'Buffer', 'crypto',
   'fetch', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
   'requestAnimationFrame', 'cancelAnimationFrame',
+  'event',
   'document', 'window', 'location', 'history', 'navigator',
   'localStorage', 'sessionStorage', 'indexedDB',
   'alert', 'confirm', 'prompt',
   'queueMicrotask', 'structuredClone',
   // Arc builtins
   'none', 'Ok', 'Err',
+  // @build builtins
+  'readFile',
+  // Arc server-side builtins available in @server fn and @live
+  'db', 'auth', 'email', 'jwt', 'oauth', 'Queue', 'now', 'crypto',
   // Arc session context
   '_session',
 ])

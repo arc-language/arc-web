@@ -21,7 +21,7 @@ const { buildServer: _buildServerImpl } = require('./commands/build-server')
 const { serve: _serveImpl, createFileWatcher } = require('./commands/serve')
 const { dbCommand: _dbCommandImpl } = require('./commands/db')
 const { scaffold: _scaffoldImpl, scaffoldAll: _scaffoldAllImpl, scaffoldBlock: _scaffoldBlockImpl, scaffoldBlockInit: _scaffoldBlockInitImpl } = require('./commands/scaffold')
-const { cmsInit: _cmsInitImpl } = require('./commands/cms')
+const { cmsInit: _cmsInitImpl, cmsCreateSuperuser: _cmsCreateSuperuserImpl, cmsEject: _cmsEjectImpl } = require('./commands/cms')
 const { newProject, detectPackageManager, runWizard } = require('./new-command')
 const { emit: emitSiteMeta } = require('./emitters/site-meta')
 const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
@@ -53,12 +53,50 @@ const _ORST   = _TTY ? '\x1b[0m'  : ''
 // Reads imported .arc files, extracts their widget/fn/style declarations,
 // and merges them into the importing program's declaration list.
 
+// Locate the @arc-lang/arc-cms package source root. Tries node_modules via
+// require.resolve (handles hoisted/symlinked workspace installs), then falls
+// back to the in-repo path for development inside the arc monorepo.
+const _arcCmsRootCache = new Map()
+function _resolveArcCmsRoot(projectDir) {
+  if (_arcCmsRootCache.has(projectDir)) return _arcCmsRootCache.get(projectDir)
+  let root = null
+  try {
+    const pkgJson = require.resolve('@arc-lang/arc-cms/package.json', { paths: [projectDir] })
+    root = path.join(path.dirname(pkgJson), 'src')
+  } catch (_e) {
+    const repoFallback = path.resolve(__dirname, '..', 'packages', 'arc-cms', 'src')
+    if (fs.existsSync(repoFallback)) root = repoFallback
+  }
+  _arcCmsRootCache.set(projectDir, root)
+  return root
+}
+
 // visited: Map<importPath, importedProgram> - caches parsed+resolved programs.
 // Prevents re-parsing and infinite recursion, but still processes named exports on repeat imports.
 // Resolve an import source string to an absolute path within topLevelRoot.
 // Returns the resolved path, or null (with a console.warn) if not found or out-of-bounds.
 // Defense: uses fs.realpathSync to prevent symlink traversal outside the project root.
 function _resolveImportPath(src, projectDir, filename, topLevelRoot) {
+  // @arc-cms/<path> — override-first alias for the arc-cms package.
+  // Checks site/cms/<path> in the user project first (per-file override / eject),
+  // then falls back to the package source in node_modules (or the in-repo monorepo path).
+  if (src.startsWith('@arc-cms/')) {
+    const rel = src.slice('@arc-cms/'.length).replace(/\.arc$/, '')
+    const overrideBase = path.resolve(projectDir, 'site', 'cms', rel)
+    for (const c of [overrideBase + '.arc', overrideBase]) {
+      if (fs.existsSync(c)) return c
+    }
+    const pkgRoot = _resolveArcCmsRoot(projectDir)
+    if (pkgRoot) {
+      const pkgBase = path.resolve(pkgRoot, rel)
+      for (const c of [pkgBase + '.arc', pkgBase]) {
+        if (fs.existsSync(c)) return c
+      }
+    }
+    console.warn(`arc: warning: @arc-cms import not found: ${src}`)
+    return null
+  }
+
   const fileDir = path.dirname(path.resolve(projectDir, filename))
   const candidates = [
     path.resolve(projectDir, src),
@@ -75,7 +113,13 @@ function _resolveImportPath(src, projectDir, filename, topLevelRoot) {
   let realImportPath
   try { realImportPath = fs.realpathSync(importPath) } catch (_e) { realImportPath = importPath /* realpathSync failed - symlink or permissions issue */ }
   const realTopLevelRoot = (() => { try { return fs.realpathSync(topLevelRoot) } catch { return topLevelRoot } })()
-  if (!realImportPath.startsWith(realTopLevelRoot + path.sep) && realImportPath !== realTopLevelRoot) {
+  const pkgRoot = _resolveArcCmsRoot(projectDir)
+  const allowedRoots = [realTopLevelRoot]
+  if (pkgRoot) {
+    try { allowedRoots.push(fs.realpathSync(pkgRoot)) } catch { allowedRoots.push(pkgRoot) }
+  }
+  const inAllowed = allowedRoots.some(r => realImportPath === r || realImportPath.startsWith(r + path.sep))
+  if (!inAllowed) {
     console.warn(`arc: warning: import escapes project root, skipping: ${src}`)
     return null
   }
@@ -92,6 +136,11 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
   const mergedWidgetNames = new Set(merged.filter(d => d.type === 'WidgetDecl').map(d => d.name))
   const mergedFnNames = new Set(merged.filter(d => d.type === 'FnDecl').map(d => d.name))
   const mergedStateNames = new Set(merged.filter(d => d.type === 'StateDecl').map(d => d.name))
+  const mergedComputedNames = new Set(merged.filter(d => d.type === 'ComputedDecl').map(d => d.name))
+  const mergedBuildNames = new Set(merged.filter(d => d.type === 'BuildDecl').map(d => d.name))
+  const mergedLiveNames = new Set(merged.filter(d => d.type === 'LiveDecl').map(d => d.name))
+  const mergedServerFnNames = new Set(merged.filter(d => d.type === 'ServerFn').map(d => d.name))
+  const mergedWorkerFnNames = new Set(merged.filter(d => d.type === 'WorkerFn').map(d => d.name))
 
   for (const imp of imports) {
     const src = imp.source
@@ -156,8 +205,11 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
     )
 
     for (const decl of importedProgram.declarations) {
-      // Always include widgets and top-level fns that were imported by name
-      if (decl.type === 'WidgetDecl' && (wantedNames.size === 0 || wantedNames.has(decl.name))) {
+      // Always include widgets and top-level fns that were imported by name.
+      // When importing a widget, also pull in ALL other WidgetDecls from the resolved
+      // program, since the imported widget may transitively depend on them (e.g. Layout
+      // imports Navbar and Footer — those must be available to the emitter).
+      if (decl.type === 'WidgetDecl' && (wantedNames.size === 0 || wantedNames.has(decl.name) || importingWidget)) {
         if (!mergedWidgetNames.has(decl.name)) {
           merged.push(decl)
           mergedWidgetNames.add(decl.name)
@@ -171,6 +223,31 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
         if (!mergedStateNames.has(decl.name)) {
           merged.push(decl)
           mergedStateNames.add(decl.name)
+        }
+      } else if (decl.type === 'ComputedDecl' && (wantedNames.has(decl.name) || importingWidget)) {
+        if (!mergedComputedNames.has(decl.name)) {
+          merged.push(decl)
+          mergedComputedNames.add(decl.name)
+        }
+      } else if (decl.type === 'BuildDecl' && importingWidget) {
+        if (!mergedBuildNames.has(decl.name)) {
+          merged.push(decl)
+          mergedBuildNames.add(decl.name)
+        }
+      } else if (decl.type === 'LiveDecl' && (wantedNames.has(decl.name) || importingWidget)) {
+        if (!mergedLiveNames.has(decl.name)) {
+          merged.push(decl)
+          mergedLiveNames.add(decl.name)
+        }
+      } else if (decl.type === 'ServerFn' && (wantedNames.has(decl.name) || importingWidget)) {
+        if (!mergedServerFnNames.has(decl.name)) {
+          merged.push(decl)
+          mergedServerFnNames.add(decl.name)
+        }
+      } else if (decl.type === 'WorkerFn' && (wantedNames.has(decl.name) || importingWidget)) {
+        if (!mergedWorkerFnNames.has(decl.name)) {
+          merged.push(decl)
+          mergedWorkerFnNames.add(decl.name)
         }
       } else if (decl.type === 'DesignBlock') {
         // Always merge design blocks (they define CSS tokens/globals, no name to match)
@@ -235,21 +312,62 @@ function _resolveCssFile(cssPath, visited = new Set()) {
 function _resolveCssPackages(pkgs, rootDir) {
   const parts = []
   for (const pkg of pkgs) {
+    // Subpath form: "@arc-lang/arc-animations/entrances" → base + subpath.
+    // Bare scoped names (e.g. "@arc-lang/arc-ui") keep the second segment as part of base.
+    let basePkg = pkg
+    let subpath = null
+    if (pkg.startsWith('@')) {
+      // @scope/name[/subpath]
+      const m = pkg.match(/^(@[^/]+\/[^/]+)\/(.+)$/)
+      if (m) { basePkg = m[1]; subpath = m[2] }
+    } else {
+      const idx = pkg.indexOf('/')
+      if (idx !== -1) { basePkg = pkg.slice(0, idx); subpath = pkg.slice(idx + 1) }
+    }
+
     // Walk up from rootDir to find node_modules containing the package
     let dir = rootDir
     let cssPath = null
     for (let i = 0; i < 8; i++) {
-      const candidate = path.join(dir, 'node_modules', pkg)
+      const candidate = path.join(dir, 'node_modules', basePkg)
       if (fs.existsSync(candidate)) {
-        // Resolve main CSS file via package.json style/main fields or index.css
         let entry = null
+        let pkgJson = {}
         try {
-          const pkgJson = JSON.parse(fs.readFileSync(path.join(candidate, 'package.json'), 'utf8'))
+          pkgJson = JSON.parse(fs.readFileSync(path.join(candidate, 'package.json'), 'utf8'))
+        } catch (_e) { /* package.json missing - fall back below */ }
+
+        if (subpath) {
+          // Subpath: prefer pkg.exports map ("./entrances" key, or "./src/*" pattern).
+          // Fall back to "src/<name>.css" or "<name>.css".
+          const exp = pkgJson.exports ?? {}
+          const key = './' + subpath
+          if (typeof exp[key] === 'string') {
+            entry = exp[key]
+          } else {
+            for (const [k, v] of Object.entries(exp)) {
+              if (typeof k === 'string' && typeof v === 'string' && k.endsWith('/*') && v.endsWith('/*')) {
+                const prefix = k.slice(0, -1)
+                if (key.startsWith(prefix)) {
+                  const tail = key.slice(prefix.length)
+                  entry = v.slice(0, -1) + tail
+                  if (!entry.endsWith('.css')) entry += '.css'
+                  break
+                }
+              }
+            }
+          }
+          if (!entry) {
+            for (const guess of [`src/${subpath}.css`, `${subpath}.css`, `dist/${subpath}.css`]) {
+              if (fs.existsSync(path.join(candidate, guess))) { entry = guess; break }
+            }
+          }
+        } else {
           entry = pkgJson.style ?? pkgJson.main ?? null
           if (entry && !entry.endsWith('.css')) entry = null
-        } catch (_e) { /* package.json missing or malformed - fall back to index.css */ }
-        if (!entry) entry = 'index.css'
-        cssPath = path.join(candidate, entry)
+          if (!entry) entry = 'index.css'
+        }
+        cssPath = entry ? path.join(candidate, entry) : null
         break
       }
       const parent = path.dirname(dir)
@@ -325,6 +443,11 @@ async function compile(source, filename = '<input>', options = {}) {
     if (bundled) css = bundled + '\n' + css
   }
 
+  // 7c. Animation tree-shake: drop `.animate-X` rules + their @keyframes when X
+  //     isn't referenced on the page. Operates on the combined CSS (so package CSS
+  //     plus design-block CSS share the same surviving-keyframes set).
+  css = treeshakeAnimationCss(css, html)
+
   // 8. @server function compilation
   const serverEmitter = new ServerEmitter({ hash })
   const { edgeFunctions, clientStubs, handlerNames } = serverEmitter.emitProgram(program)
@@ -356,7 +479,6 @@ async function compile(source, filename = '<input>', options = {}) {
 
 // Inline ADP mini-runtime for browser (encode + decode, ~600 bytes minified)
 const ADP_MINI_RUNTIME = `
-// ADP mini-runtime (auto-generated)
 const _te=new TextEncoder();function _adpEncode(v){const b=[];function w(x){if(x===null||x===undefined){b.push(0);}else if(x===true){b.push(1);}else if(x===false){b.push(2);}else if(typeof x==='number'){if(Number.isInteger(x)&&x>=0&&x<=255){b.push(3,x);}else if(Number.isInteger(x)){b.push(4,(x>>>24)&255,(x>>>16)&255,(x>>>8)&255,x&255);}else{b.push(5);const d=new DataView(new ArrayBuffer(8));d.setFloat64(0,x,false);for(let i=0;i<8;i++)b.push(d.getUint8(i));}}else if(typeof x==='string'){b.push(6);const e=_te.encode(x);let l=e.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);e.forEach(c=>b.push(c));}else if(Array.isArray(x)){b.push(7);let l=x.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);x.forEach(w);}else if(typeof x==='object'){const ks=Object.keys(x);b.push(8);let l=ks.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);ks.forEach(k=>{const e=_te.encode(k);let kl=e.length;while(kl>127){b.push((kl&127)|128);kl>>>=7;}b.push(kl);e.forEach(c=>b.push(c));w(x[k]);});}}w(v);return new Uint8Array(b);}
 function _adpDecode(buf){let p=0;function rv(){const t=buf[p++];if(t===0)return null;if(t===1)return true;if(t===2)return false;if(t===3)return buf[p++];if(t===4){const v=(buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3];p+=4;return v;}if(t===5){const d=new DataView(buf.buffer,buf.byteOffset+p,8);p+=8;return d.getFloat64(0,false);}if(t===6){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return new TextDecoder().decode(buf.subarray(p,p+=l));}if(t===7){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return Array.from({length:l},rv);}if(t===8){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}const o={};for(let i=0;i<l;i++){let kl=0,ks=0;while(true){const b=buf[p++];kl|=(b&127)<<ks;if(!(b&128))break;ks+=7;}const k=new TextDecoder().decode(buf.subarray(p,p+=kl));const v=rv();if(k!=='__proto__'&&k!=='constructor'&&k!=='prototype')o[k]=v;}return o;}throw new Error('ADP: unknown tag '+t);}return rv();}
 `.trim()
@@ -383,6 +505,136 @@ function treeshakeBaseCss(css, html) {
     css = css.replace(re, '')
   }
   return css
+}
+
+// Animation tree-shaker.
+// Strips `.animate-<X> { ... }` rules whose `<X>` isn't referenced in the HTML, then
+// strips `@keyframes <name> { ... }` blocks whose `<name>` isn't referenced by any
+// surviving rule's `animation:` / `animation-name:` property.
+//
+// Designed for CSS packages that use the `.animate-<name>` naming convention
+// (arc-animations and similar). Conservative: only touches rules whose selector
+// has a literal `.animate-` segment; user CSS using its own animations is preserved.
+const _ANIM_VALUE_KEYWORDS = new Set([
+  'inherit', 'initial', 'revert', 'revert-layer', 'unset',
+  'none', 'normal', 'reverse', 'alternate', 'alternate-reverse',
+  'infinite', 'paused', 'running', 'forwards', 'backwards', 'both',
+  'linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out',
+  'step-start', 'step-end',
+])
+
+function _findBalancedEnd(css, openBraceIdx) {
+  let depth = 1
+  for (let k = openBraceIdx + 1; k < css.length; k++) {
+    const c = css[k]
+    if (c === '{') depth++
+    else if (c === '}') { depth--; if (depth === 0) return k + 1 }
+  }
+  return css.length
+}
+
+function treeshakeAnimationCss(css, html) {
+  // 1. Collect `animate-<X>` classes referenced in HTML.
+  //    Arc scopes class names with a trailing `_<hash>` suffix, so we strip that
+  //    when present so external (unscoped) animation rules match correctly.
+  const used = new Set()
+  let m
+  const classRe = /class\s*=\s*["']([^"']*)["']/g
+  const SCOPE_SUFFIX = /_[a-z0-9]{2,8}$/
+  while ((m = classRe.exec(html))) {
+    for (const cls of m[1].split(/\s+/)) {
+      if (!cls.startsWith('animate-')) continue
+      const bare = cls.slice('animate-'.length)
+      used.add(bare)
+      // Also record the unscoped form so external (unscoped) rules match.
+      const stripped = bare.replace(SCOPE_SUFFIX, '')
+      if (stripped !== bare) used.add(stripped)
+    }
+  }
+
+  // 2. Drop `.animate-<X>` rules where X is not used.
+  //    Pattern: optional selector list ending with `.animate-X` (possibly with combinators),
+  //    followed by `{ ... }`. We find each `.animate-` occurrence, expand to its rule
+  //    boundary, and decide keep/drop based on the captured name.
+  let out = ''
+  let i = 0
+  while (i < css.length) {
+    const idx = css.indexOf('.animate-', i)
+    if (idx === -1) { out += css.slice(i); break }
+    // Capture the name segment
+    let j = idx + '.animate-'.length
+    while (j < css.length && /[A-Za-z0-9_-]/.test(css[j])) j++
+    const name = css.slice(idx + '.animate-'.length, j)
+    // Find the rule's opening brace (skip selector list / pseudo-classes)
+    const brace = css.indexOf('{', j)
+    if (brace === -1) { out += css.slice(i); break }
+    // Find the selector start (walk back to last `}` or comment end or top of buffer)
+    let selStart = idx
+    while (selStart > i) {
+      const c = css[selStart - 1]
+      if (c === '}' || c === '\n') break
+      selStart--
+    }
+    while (selStart < idx && /\s/.test(css[selStart])) selStart++
+    const ruleEnd = _findBalancedEnd(css, brace)
+    if (used.has(name)) {
+      out += css.slice(i, ruleEnd)
+    } else {
+      out += css.slice(i, selStart)
+      // Eat trailing newline so we don't leave empty lines
+      let k = ruleEnd
+      while (k < css.length && (css[k] === ' ' || css[k] === '\t')) k++
+      if (css[k] === '\n') k++
+      i = k
+      continue
+    }
+    i = ruleEnd
+  }
+  css = out
+
+  // 3. Scan surviving CSS for `animation: <name>` / `animation-name: <name>` references.
+  //    A name is the first identifier-shaped token in the property value that isn't
+  //    a known animation keyword or numeric.
+  const referenced = new Set()
+  const animRe = /\banimation(?:-name)?\s*:\s*([^;}]+)/g
+  while ((m = animRe.exec(css))) {
+    for (const tok of m[1].split(/[\s,]+/)) {
+      const clean = tok.replace(/[(),'"]/g, '').trim()
+      if (!clean) continue
+      if (/^[0-9.]/.test(clean)) continue                  // duration / count
+      if (clean.endsWith('s') || clean.endsWith('ms')) continue  // duration
+      if (_ANIM_VALUE_KEYWORDS.has(clean)) continue
+      if (!/^[A-Za-z_-][A-Za-z0-9_-]*$/.test(clean)) continue
+      referenced.add(clean)
+    }
+  }
+
+  // 4. Drop `@keyframes <name>` blocks (and vendor-prefixed forms) where name is unreferenced.
+  out = ''
+  i = 0
+  const kfRe = /@(?:-[a-z]+-)?keyframes\s+([A-Za-z_-][A-Za-z0-9_-]*)\s*\{/g
+  let last = 0
+  while ((m = kfRe.exec(css))) {
+    const blockStart = m.index
+    const braceIdx = blockStart + m[0].length - 1
+    const blockEnd = _findBalancedEnd(css, braceIdx)
+    out += css.slice(last, blockStart)
+    if (referenced.has(m[1])) {
+      out += css.slice(blockStart, blockEnd)
+    } else {
+      // Strip trailing whitespace/newline
+      let k = blockEnd
+      while (k < css.length && (css[k] === ' ' || css[k] === '\t')) k++
+      if (css[k] === '\n') k++
+      last = k
+      kfRe.lastIndex = k
+      continue
+    }
+    last = blockEnd
+    kfRe.lastIndex = blockEnd
+  }
+  out += css.slice(last)
+  return out
 }
 
 // Pipeline is a no-op when sharp is unavailable (returns null from emitPicture);
@@ -1479,7 +1731,7 @@ async function buildServer(projectDir, opts = {}, flags = {}) {
 // arc serve [dir] - build server.js then run it, with hot reload on .arc changes.
 // Extracted to src/commands/serve.js; buildServer is injected to avoid circular deps.
 async function serve(projectDir, flags = {}) {
-  return _serveImpl(projectDir, flags, buildServer)
+  return _serveImpl(projectDir, flags, buildServer, buildSite)
 }
 
 // H7: Extract db access info from a single AST node chain.
@@ -1893,11 +2145,33 @@ async function main() {
       const sub = args[0]
       const positional = args.slice(1).filter(a => !a.startsWith('--'))
       const force = args.includes('--force')
+      const _flag = (name) => {
+        const idx = args.findIndex(a => a === '--' + name || a.startsWith('--' + name + '='))
+        if (idx === -1) return undefined
+        const tok = args[idx]
+        return tok.includes('=') ? tok.split('=').slice(1).join('=') : args[idx + 1]
+      }
       if (sub === 'init') {
         const dir = positional[0] ?? '.'
         await _cmsInitImpl(dir, { force })
+      } else if (sub === 'create-superuser' || sub === 'createsuperuser') {
+        const dir = positional[0] ?? '.'
+        await _cmsCreateSuperuserImpl(dir, {
+          email:    _flag('email'),
+          password: _flag('password'),
+          name:     _flag('name'),
+          db:       _flag('db'),
+          force,
+        })
+      } else if (sub === 'eject') {
+        const name = positional[0]
+        await _cmsEjectImpl('.', name, { force })
       } else {
-        console.error('arc cms init [dir] [--force]   Scaffold admin panel + CMS into project')
+        console.error('arc cms init [dir] [--force]              Scaffold admin panel + CMS into project')
+        console.error('arc cms create-superuser [dir]            Create an admin user (interactive)')
+        console.error('  Flags: --email <e> --password <p> --name <n> --db <path> --force')
+        console.error('         --force bypasses the 8-char password minimum (dev use only)')
+        console.error('arc cms eject <Name> [--force]           Copy one widget/page from package for local override')
         process.exit(1)
       }
       break
@@ -1931,6 +2205,7 @@ async function main() {
       console.log('  arc generate <type> <name>  Scaffold: model, handler')
       console.log('  arc scaffold <Model> [dir]  Generate admin routes + pages for a model (--all, --force)')
       console.log('  arc cms init [dir]       Scaffold full admin panel + CMS (arc-ui based)')
+      console.log('  arc cms create-superuser Create an admin user (interactive or --email/--password)')
       console.log('  arc new <name>           Create a new Arc project (--template default|counter|blog|api|cms)')
       console.log('  arc deploy [dir]         Deploy to hosting (--target cloudflare|deno|bun|node)')
       console.log('  arc db <cmd>             Database: migrate, seed, studio')
@@ -1958,7 +2233,11 @@ module.exports = {
   compile,
   _internal: {
     resolveImports,
+    _resolveImportPath,
+    _resolveArcCmsRoot,
     composeClientJs,
+    treeshakeBaseCss,
+    treeshakeAnimationCss,
     hashString,
     injectAssets,
     fmt,

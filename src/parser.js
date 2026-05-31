@@ -17,7 +17,9 @@ const _PSEUDO_SHORTHANDS = Object.freeze({ hover: ':hover', focus: ':focus-visib
 // Reserved keywords that are valid CSS identifier segments (e.g. --grad-from, background-color)
 const _CSS_IDENT_TYPES = new Set([
   T.IDENT, T.FROM, T.IN, T.FOR, T.LET, T.RETURN, T.MODEL, T.WIDGET, T.PAGE, T.CLASS,
-  T.IF, T.ELSE, T.NUMBER, T.IS, T.GET, T.NEW, T.STATIC
+  T.IF, T.ELSE, T.NUMBER, T.IS, T.GET, T.NEW, T.STATIC, T.GROUP, T.JOB, T.RAW,
+  T.UNLESS, T.WHILE, T.UNTIL, T.LOOP, T.BREAK, T.CONTINUE, T.AWAIT, T.ASYNC,
+  T.GEN, T.YIELD, T.TRY, T.CATCH, T.THROW, T.DESIGN, T.MATCH
 ])
 function _cssIdentVal(t) { return t.value ?? t.type.toLowerCase() }
 
@@ -114,7 +116,9 @@ const _TEMPLATE_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live',
 
 // Hoisted operator Sets for hot expression-parsing loops: avoids per-call array allocation
 const _ASSIGN_OPS = new Set([T.EQ, T.PLUS_EQ, T.MINUS_EQ, T.STAR_EQ, T.SLASH_EQ, T.CARET_EQ, T.LSHIFT_EQ, T.RSHIFT_EQ])
-const _DECLARATION_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker', '@param', '@route'])
+const _DECLARATION_ANNOTATIONS = new Set(['@state', '@computed', '@build', '@live', '@realtime', '@server', '@worker', '@param', '@route', '@group'])
+// Job-specific annotations that can appear above a `job` keyword
+const _JOB_ANNOTATIONS = new Set(['@queue', '@schedule', '@priority', '@retries', '@backoff', '@timeout', '@concurrency', '@unique', '@progress', '@then'])
 const _EQUALITY_OPS = new Set([T.EQEQ, T.BANGEQ, T.IS])
 const _CMP_OPS = new Set([T.LT, T.GT, T.LTEQ, T.GTEQ])
 const _SHIFT_OPS = new Set([T.LSHIFT, T.RSHIFT])
@@ -359,8 +363,34 @@ class Parser {
         }
         if (this.tokens[this.pos]?.type === T.RPAREN) this.pos++ // consume )
         ann += `(${roles.join(',')})`
+      } else if (_JOB_ANNOTATIONS.has(ann)) {
+        // Job annotations can have inline values: @schedule "0 9 * * *", @unique timeout=3600000 strategy=skip
+        // Consume all tokens until NEWLINE, AT_IDENT, or EOF (same line only)
+        const parts = []
+        while (
+          this.tokens[this.pos]?.type !== T.NEWLINE &&
+          this.tokens[this.pos]?.type !== T.AT_IDENT &&
+          this.tokens[this.pos]?.type !== T.EOF
+        ) {
+          const t = this.tokens[this.pos++]
+          parts.push(t.value ?? t.type.toLowerCase())
+        }
+        if (parts.length > 0) ann += ' ' + parts.join(' ')
       }
       annotations.push(ann)
+      // Job annotations can stack across multiple lines — skip newlines to allow continued collection
+      if (_JOB_ANNOTATIONS.has(ann.split(/[\s(]/)[0])) {
+        this.consumeNewlines()
+      }
+    }
+
+    // If all collected annotations are job-specific and the next token is `job`, route to parseJobDecl
+    const allJobAnnotations = annotations.length > 0 && annotations.every(a => {
+      const base = a.split('(')[0].split(/\s/)[0].split('=')[0]
+      return _JOB_ANNOTATIONS.has(base)
+    })
+    if (allJobAnnotations && this.tokens[this.pos]?.type === T.JOB) {
+      return this.parseJobDecl(annotations)
     }
 
     // Find the primary annotation - the one that determines declaration type
@@ -385,6 +415,8 @@ class Parser {
         if (extras.length > 0) node.annotations = extras
         return node
       }
+      case '@group':
+        return this.parseRouteGroup(line)
       default:
         this.error(`Unknown annotation: ${primary}`, firstTok)
     }
@@ -517,7 +549,12 @@ class Parser {
     const tok = this.eat(T.PAGE)
     let title = null
     if (this.peekType() === T.STRING) {
-      title = N.Literal(this.next().value, null, tok.line)
+      const strTok = this.tokens[this.pos]
+      if (this.tokens[this.pos + 1]?.type === T.INTERP_START) {
+        title = this._parseTemplateLiteralExpr(strTok)
+      } else {
+        title = N.Literal(this.next().value, null, tok.line)
+      }
     }
     const meta = {}
     // Parse key=value meta attributes (only if IDENT is followed by EQ on same line)
@@ -593,6 +630,13 @@ class Parser {
       const strTok = this.eat(T.STRING)
       this.consumeNewlines()
       return N.CssImport(strTok.value, strTok.line)
+    }
+
+    // @slot — renders the caller's slot children at this location in a widget body
+    if (t.type === T.AT_IDENT && t.value === '@slot') {
+      this.pos++ // consume @slot
+      this.consumeNewlines()
+      return N.SlotNode(t.line)
     }
 
     // @state/@computed/@build inside template: hoist to program declarations
@@ -733,8 +777,14 @@ class Parser {
             this.pos++
             if (this.tokens[this.pos]?.type === T.LBRACE) {
               this.pos++
-              attrs[attrName] = this.parseExpr()
-              this.eatIf(T.RBRACE)
+              // Multiline event handler: { \n  stmt... \n} — parse as indented block
+              if (this.tokens[this.pos]?.type === T.NEWLINE) {
+                attrs[attrName] = this.parseIndentedBlock()
+                this.eatIf(T.RBRACE)
+              } else {
+                attrs[attrName] = this.parseExpr()
+                this.eatIf(T.RBRACE)
+              }
             } else {
               attrs[attrName] = this.parseExpr()
             }
@@ -745,11 +795,12 @@ class Parser {
         }
 
         // Hyphenated attribute: data-foo="bar", aria-label="text", aria-hidden (bare)
+        // Also handles keyword segments like data-group-toggle, data-year-from, aria-expanded
         if (next?.type === T.MINUS) {
           let key = t.value
           let i = this.pos + 1          // points at first MINUS
-          while (this.tokens[i]?.type === T.MINUS && this.tokens[i + 1]?.type === T.IDENT) {
-            key += '-' + this.tokens[i + 1].value
+          while (this.tokens[i]?.type === T.MINUS && this.tokens[i + 1] && _CSS_IDENT_TYPES.has(this.tokens[i + 1].type)) {
+            key += '-' + (this.tokens[i + 1].value ?? _cssIdentVal(this.tokens[i + 1]))
             i += 2
           }
           const afterKey = this.tokens[i]
@@ -762,7 +813,8 @@ class Parser {
           if (!afterKey || afterKey.type === T.NEWLINE || afterKey.type === T.INDENT ||
               afterKey.type === T.DEDENT || afterKey.type === T.EOF ||
               afterKey.type === T.STRING || afterKey.type === T.LBRACE ||
-              afterKey.type === T.IDENT || afterKey.type === T.CLASS) {
+              afterKey.type === T.IDENT || afterKey.type === T.CLASS ||
+              _CSS_IDENT_TYPES.has(afterKey.type)) {
             this.pos = i
             attrs[key] = true
             continue
@@ -803,6 +855,17 @@ class Parser {
           } else {
             attrs['class'] = this.parseExpr()
           }
+          continue
+        }
+        break
+      }
+
+      // `for` is a reserved keyword (T.FOR) but valid as HTML attribute on <label>
+      if (t.type === T.FOR) {
+        const next = this.tokens[this.pos + 1]
+        if (next?.type === T.EQ) {
+          this.pos += 2
+          attrs['for'] = this.parseExpr()
           continue
         }
         break
@@ -1031,6 +1094,13 @@ class Parser {
 
       // Combinator prefixes: > child, + adjacent sibling
       if (pt.type === T.GT || pt.type === T.PLUS) {
+        const rule = this.parseStyleRule()
+        if (rule) nestedRules.push(rule)
+        continue
+      }
+
+      // Universal selector: * { ... }
+      if (pt.type === T.STAR) {
         const rule = this.parseStyleRule()
         if (rule) nestedRules.push(rule)
         continue
@@ -1477,6 +1547,14 @@ class Parser {
         continue
       }
 
+      // STRING token: re-wrap with quotes so CSS values like font-family preserve quoted names
+      // (e.g. "Source Sans 3" must remain quoted in CSS output to be valid)
+      if (t.type === T.STRING) {
+        parts.push(`"${String(t.value ?? '').replace(/"/g, '\\"')}"`)
+        this.pos++
+        continue
+      }
+
       // COMMA: attach directly to previous token (font lists, multi-value properties)
       if (t.type === T.COMMA) {
         if (parts.length > 0) parts[parts.length - 1] += ','
@@ -1677,7 +1755,15 @@ class Parser {
     }
     if (t.type === T.TRY) return this.parseTryCatch()
     if (t.type === T.MATCH) return this.parseMatchStatement()
-    if (t.type === T.AT_IDENT) return this.parseAnnotatedDecl()
+    if (t.type === T.AT_IDENT) {
+      // Only parse as a declaration if it's a known declaration annotation (@state, @server, etc.)
+      // @property references in assignments (e.g. `@submitted = true`) must fall through to parseExprStatement
+      if (_DECLARATION_ANNOTATIONS.has(t.value) || t.value.startsWith('@route') || t.value.startsWith('@group') || t.value.startsWith('@auth')) {
+        return this.parseAnnotatedDecl()
+      }
+      // Otherwise: @ident used as an expression (e.g. @state = value, @count++)
+      return this.parseExprStatement()
+    }
 
     return this.parseExprStatement()
   }
@@ -1693,7 +1779,13 @@ class Parser {
     if (this.tokens[this.pos]?.type === T.NEWLINE || this.tokens[this.pos]?.type === T.INDENT) {
       return this.parseIndentedBlock()
     }
-    return this.parseBlock()
+    if (this.tokens[this.pos]?.type === T.LBRACE) {
+      return this.parseBlock()
+    }
+    // Inline single-statement body: `if condition return value`
+    const stmt = this.parseStatement()
+    this.consumeNewlines()
+    return N.BlockStatement(stmt ? [stmt] : [], stmt?.line ?? 0)
   }
 
   parseIfStatement() {
@@ -2488,12 +2580,143 @@ class Parser {
 
   // ── Backend: job ───────────────────────────────────────────────────────────
 
-  parseJobDecl() {
+  parseJobDecl(pendingAnnotations = []) {
     const tok = this.eat(T.JOB)
     const name = this.eat(T.IDENT).value
     const params = this.parseParams()
     const body = this.parseIndentedBlock()
-    return N.JobDecl(name, params, body, tok.line)
+    const node = N.JobDecl(name, params, body, tok.line, pendingAnnotations)
+
+    for (const ann of pendingAnnotations) {
+      const base = ann.split(/[\s=(]/)[0]
+      switch (base) {
+        case '@queue': {
+          node.queueName = ann.replace('@queue', '').trim() || null
+          break
+        }
+        case '@schedule': {
+          const m = ann.match(/"([^"]+)"/) || ann.match(/'([^']+)'/)
+          node.schedule = m ? m[1] : ann.replace('@schedule', '').trim() || null
+          break
+        }
+        case '@priority': {
+          node.priority = ann.replace('@priority', '').trim() || 'normal'
+          break
+        }
+        case '@retries': {
+          const v = parseInt(ann.replace('@retries', '').trim(), 10)
+          if (!isNaN(v)) node.maxRetries = v
+          break
+        }
+        case '@backoff': {
+          const v = parseInt(ann.replace('@backoff', '').trim(), 10)
+          if (!isNaN(v)) node.backoffMs = v
+          break
+        }
+        case '@timeout': {
+          const v = parseInt(ann.replace('@timeout', '').trim(), 10)
+          if (!isNaN(v)) node.timeoutMs = v
+          break
+        }
+        case '@concurrency': {
+          const v = parseInt(ann.replace('@concurrency', '').trim(), 10)
+          if (!isNaN(v)) node.concurrency = v
+          break
+        }
+        case '@unique': {
+          node.unique = true
+          const rest = ann.replace('@unique', '').trim()
+          // Parse optional key=value pairs: timeout=3600000 strategy=skip
+          const timeoutM = rest.match(/timeout\s*=\s*(\d+)/)
+          if (timeoutM) node.uniqueTimeout = parseInt(timeoutM[1], 10)
+          const stratM = rest.match(/strategy\s*=\s*(\w+)/)
+          if (stratM) node.uniqueStrategy = stratM[1]
+          break
+        }
+        case '@progress': {
+          node.hasProgress = true
+          break
+        }
+        case '@then': {
+          node.thenJob = ann.replace('@then', '').trim() || null
+          break
+        }
+      }
+    }
+
+    return node
+  }
+
+  // ── Backend: route group ───────────────────────────────────────────────────
+  // Syntax: @group "/prefix" [@auth(roles)]
+  //           @route METHOD "path" -> ReturnType
+  //             body
+  // Compiles to flat RouteDecl list with prefix prepended. Zero runtime cost.
+
+  parseRouteGroup(line) {
+    this.skipWhitespace()
+    const prefix = this.eat(T.STRING).value  // e.g. "/admin"
+
+    // Collect group-level annotations after prefix (e.g. @auth(admin,editor))
+    const annotations = []
+    while (this.tokens[this.pos]?.type === T.AT_IDENT) {
+      let ann = this.tokens[this.pos++].value
+      if (this.tokens[this.pos]?.type === T.LPAREN) {
+        this.pos++
+        const roles = []
+        while (this.tokens[this.pos]?.type !== T.RPAREN && this.tokens[this.pos]?.type !== T.EOF) {
+          if (this.tokens[this.pos]?.type === T.COMMA) { this.pos++; continue }
+          roles.push(this.tokens[this.pos++].value)
+        }
+        if (this.tokens[this.pos]?.type === T.RPAREN) this.pos++
+        ann += `(${roles.join(',')})`
+      }
+      annotations.push(ann)
+    }
+
+    // Consume NEWLINE + INDENT to enter the block
+    this.consumeNewlines()
+    if (this.tokens[this.pos]?.type !== T.INDENT) {
+      this.error('@group block must have an indented body', this.tokens[this.pos])
+    }
+    this.pos++ // consume INDENT
+
+    const routes = []
+    while (this.tokens[this.pos]?.type !== T.DEDENT && this.tokens[this.pos]?.type !== T.EOF) {
+      this.consumeNewlines()
+      if (this.tokens[this.pos]?.type === T.DEDENT || this.tokens[this.pos]?.type === T.EOF) break
+
+      // Each child must be @route (possibly @route @auth ...)
+      if (this.tokens[this.pos]?.type === T.AT_IDENT) {
+        // Collect annotations for this route (may include @route + @auth etc.)
+        const routeAnns = []
+        while (this.tokens[this.pos]?.type === T.AT_IDENT) {
+          let ann = this.tokens[this.pos++].value
+          if (this.tokens[this.pos]?.type === T.LPAREN) {
+            this.pos++
+            const roles = []
+            while (this.tokens[this.pos]?.type !== T.RPAREN && this.tokens[this.pos]?.type !== T.EOF) {
+              if (this.tokens[this.pos]?.type === T.COMMA) { this.pos++; continue }
+              roles.push(this.tokens[this.pos++].value)
+            }
+            if (this.tokens[this.pos]?.type === T.RPAREN) this.pos++
+            ann += `(${roles.join(',')})`
+          }
+          routeAnns.push(ann)
+        }
+        if (routeAnns.includes('@route')) {
+          const node = this.parseRouteDecl(this.tokens[this.pos]?.line)
+          const extras = routeAnns.filter(a => a !== '@route')
+          if (extras.length > 0) node.annotations = [...(node.annotations ?? []), ...extras]
+          routes.push(node)
+        }
+      } else {
+        this.pos++ // skip unexpected token
+      }
+    }
+
+    if (this.tokens[this.pos]?.type === T.DEDENT) this.pos++
+    return N.RouteGroupDecl(prefix, annotations, routes, line)
   }
 
   // ── Backend: route ─────────────────────────────────────────────────────────

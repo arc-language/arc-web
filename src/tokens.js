@@ -57,6 +57,7 @@ const T = {
   // Backend keywords
   MODEL: 'MODEL',       // model Post { ... }
   JOB: 'JOB',           // job SendEmail(userId: Int)
+  GROUP: 'GROUP',       // @group "/prefix" @auth(roles)
 
   // Symbols
   LPAREN: 'LPAREN',       // (
@@ -103,6 +104,12 @@ const T = {
   MINUS_EQ: 'MINUS_EQ',   // -=
   STAR_EQ: 'STAR_EQ',     // *=
   SLASH_EQ: 'SLASH_EQ',   // /=
+  CARET: 'CARET',         // ^
+  CARET_EQ: 'CARET_EQ',   // ^=
+  LSHIFT: 'LSHIFT',       // <<
+  LSHIFT_EQ: 'LSHIFT_EQ', // <<=
+  RSHIFT: 'RSHIFT',       // >>
+  RSHIFT_EQ: 'RSHIFT_EQ', // >>=
 
   // Template-specific
   INDENT: 'INDENT',       // increase in indentation
@@ -159,6 +166,7 @@ const KEYWORDS = new Map([
   // Backend keywords
   ['model', T.MODEL],
   ['job', T.JOB],
+  ['group', T.GROUP],
 ])
 
 // HTML element names that Arc recognizes as structure nodes

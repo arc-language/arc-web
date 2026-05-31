@@ -154,10 +154,53 @@ const email = {
 }`.trim()
 }
 
-// Emit the public enqueue wrapper for a job: `const JobName = (...args) => Queue.enqueue(_job_JobName, ...args)`
-function emitJobEnqueueWrapper(jobName) {
+// Emit the public enqueue wrapper for a job.
+// When arc-jobs is installed: uses _queues[queueName].enqueue() with priority/unique/delay support.
+// Legacy fallback: Queue.enqueue(_job_Name, ...args)
+function emitJobEnqueueWrapper(job) {
+  // Accept both legacy string (job name only) and full JobDecl node
+  const isLegacy = typeof job === 'string'
+  const jobName = isLegacy ? job : job.name
   if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(jobName)) throw new Error(`Arc codegen: unsafe job name: ${JSON.stringify(jobName)}`)
-  return `const ${jobName} = (...args) => Queue.enqueue(_job_${jobName}, ...args)`
+
+  if (isLegacy) {
+    // Legacy: backwards-compatible inline queue
+    return `const ${jobName} = (...args) => Queue.enqueue(_job_${jobName}, ...args)`
+  }
+
+  const queueName = job.queueName ?? 'default'
+  const priority = job.priority !== 'normal' ? JSON.stringify(job.priority) : null
+  const maxAttempts = job.maxRetries != null ? job.maxRetries : null
+  const baseOpts = [
+    priority ? `priority: ${priority}` : null,
+    maxAttempts != null ? `maxAttempts: ${maxAttempts}` : null,
+  ].filter(Boolean)
+  const baseOptsStr = baseOpts.length ? `{ ${baseOpts.join(', ')} }` : '{}'
+
+  if (job.unique) {
+    // @unique: compute lock key from job name + args, acquire lock before enqueueing
+    const strategy = job.uniqueStrategy ?? 'skip'
+    const timeout = job.uniqueTimeout ?? 3600000
+    return `
+const ${jobName} = async (...args) => {
+  const _key = ${JSON.stringify(jobName)} + ':' + JSON.stringify(args)
+  const _queue = _queues[${JSON.stringify(queueName)}]
+  const _locked = await _queue.acquireLock(_key, ${timeout})
+  if (!_locked) {
+    ${strategy === 'reject' ? `throw new Error('[arc-jobs] job ' + ${JSON.stringify(jobName)} + ' is already running or pending')` : 'return null'}
+  }
+  return _queue.enqueue(${JSON.stringify(jobName)}, args, { ...(${baseOptsStr}), idempotencyKey: _key, lockTtlMs: ${timeout} })
+}
+${jobName}.delay = async (ms, ...args) => ${jobName}.call(null, ...args).then(id => id ? _queues[${JSON.stringify(queueName)}].enqueue(${JSON.stringify(jobName)}, args, { ...(${baseOptsStr}), delayMs: ms }) : null)
+${jobName}.at = async (date, ...args) => ${jobName}.call(null, ...args).then(id => id ? _queues[${JSON.stringify(queueName)}].enqueue(${JSON.stringify(jobName)}, args, { ...(${baseOptsStr}), at: date }) : null)
+${jobName}.unique = (key, ...args) => _queues[${JSON.stringify(queueName)}].enqueue(${JSON.stringify(jobName)}, args, { ...(${baseOptsStr}), idempotencyKey: key, lockTtlMs: ${timeout} })`.trim()
+  }
+
+  return `
+const ${jobName} = (...args) => _queues[${JSON.stringify(queueName)}].enqueue(${JSON.stringify(jobName)}, args, ${baseOptsStr})
+${jobName}.delay = (ms, ...args) => _queues[${JSON.stringify(queueName)}].enqueue(${JSON.stringify(jobName)}, args, { ...(${baseOptsStr}), delayMs: ms })
+${jobName}.at = (date, ...args) => _queues[${JSON.stringify(queueName)}].enqueue(${JSON.stringify(jobName)}, args, { ...(${baseOptsStr}), at: date })
+${jobName}.unique = (key, ...args) => _queues[${JSON.stringify(queueName)}].enqueue(${JSON.stringify(jobName)}, args, { ...(${baseOptsStr}), idempotencyKey: key })`.trim()
 }
 
 module.exports = { emitQueuePreamble, emitEmailPreamble, emitJobEnqueueWrapper }

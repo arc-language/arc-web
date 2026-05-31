@@ -13,6 +13,7 @@ const _RST   = _C ? '\x1b[0m'  : ''
 const _PKG_ROOT = path.join(__dirname, '..', '..', 'packages', 'arc-cms')
 const _SRC_WIDGETS = path.join(_PKG_ROOT, 'src', 'widgets')
 const _SRC_PAGES   = path.join(_PKG_ROOT, 'src', 'pages')
+const _SRC_PUBLIC  = path.join(_PKG_ROOT, 'src', 'public')
 const _SRC_SCHEMA  = path.join(_PKG_ROOT, 'src', 'schema')
 const _SRC_SERVER  = path.join(_PKG_ROOT, 'src', 'server')
 
@@ -22,7 +23,7 @@ const _SRC_SERVER  = path.join(_PKG_ROOT, 'src', 'server')
 // are flattened to textarea fallback for v1 to keep generated code simple.
 function _esc(s) { return String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') }
 
-function generateTypeEditor(typeKey, schema) {
+function generateTypeEditor(typeKey, schema, styleFields = []) {
   const label = schema.label ?? typeKey
   const fields = (schema.fields ?? []).filter(f => f.type !== 'array')
   const arrayFields = (schema.fields ?? []).filter(f => f.type === 'array')
@@ -36,10 +37,25 @@ function generateTypeEditor(typeKey, schema) {
     ? arrayFields.map(f => `  @state let f_${f.name} = JSON.stringify(meta.data.${f.name} ?? [])`).join('\n')
     : ''
 
-  const fieldFnArgs = fields.map(f => `${f.name}: String`).concat(arrayFields.map(f => `${f.name}: String`)).join(', ')
+  // Style fields are stored under data._style and edited via the same form section.
+  const styleState = styleFields.length
+    ? '\n' + styleFields.map(sf => {
+        const defaultVal = sf.type === 'select' ? `"${_esc((sf.options ?? [''])[0])}"` : '""'
+        return `  @state let s_${sf.name} = ((meta.data._style ?? {}).${sf.name} ?? ${defaultVal})`
+      }).join('\n')
+    : ''
+
+  const fieldFnArgs = [
+    ...fields.map(f => `${f.name}: String`),
+    ...arrayFields.map(f => `${f.name}: String`),
+    ...styleFields.map(sf => `style_${sf.name}: String`),
+  ].join(', ')
+
+  const styleObjEntries = styleFields.map(sf => `${sf.name}: style_${sf.name}`).join(', ')
   const dataObj = [
     ...fields.map(f => `${f.name}: ${f.name}`),
-    ...arrayFields.map(f => `${f.name}: JSON.parse(${f.name})`)
+    ...arrayFields.map(f => `${f.name}: JSON.parse(${f.name})`),
+    ...(styleFields.length ? [`_style: { ${styleObjEntries} }`] : []),
   ].join(', ')
 
   // Children of `col class="!card" ... ` (indent 8) should sit at indent 10.
@@ -71,7 +87,26 @@ ${opts}`
             textarea class="!input cms-mono" bind:value="f_${f.name}" rows="8"`
   }).join('\n')
 
-  const saveArgs = fields.map(f => `f_${f.name}`).concat(arrayFields.map(f => `f_${f.name}`)).join(', ')
+  const styleRows = styleFields.length
+    ? styleFields.map(sf => {
+        const lbl = _esc(sf.label ?? sf.name)
+        const placeholder = _esc(sf.placeholder ?? '')
+        if (sf.type === 'select') {
+          const opts = (sf.options ?? []).map(o => `              option value="${_esc(o)}" "${_esc(o)}"`).join('\n')
+          return `          col gap="6px"
+            text class="!input-label" "${lbl}"
+            select class="!input" bind:value="s_${sf.name}"
+${opts}`
+        }
+        return `          CmsField label="${lbl}" name="s_${sf.name}" placeholder="${placeholder}"`
+      }).join('\n')
+    : ''
+
+  const saveArgs = [
+    ...fields.map(f => `f_${f.name}`),
+    ...arrayFields.map(f => `f_${f.name}`),
+    ...styleFields.map(sf => `s_${sf.name}`),
+  ].join(', ')
 
   return `import CmsLayout from "site/cms/CmsLayout.arc"
 import CmsPageHeader from "site/cms/CmsPageHeader.arc"
@@ -93,7 +128,7 @@ page "Edit ${label} block - Admin"
   @state let pageName = meta.block.page
   @state let visible  = meta.block.visible
   @state let deleted  = false
-${stateLines}${arrayState ? '\n' + arrayState : ''}
+${stateLines}${arrayState ? '\n' + arrayState : ''}${styleState}
 
   @server fn save(blockId: String, p: String, v: Bool, ${fieldFnArgs}) -> Any
     if !session || (session.role != "admin" && session.role != "editor")
@@ -132,7 +167,7 @@ ${stateLines}${arrayState ? '\n' + arrayState : ''}
             text class="!input-label" "Visible"
 
           text class="cms-section" "${label} fields"
-${formRows || '          text class="cms-hint" "No simple fields defined."'}${arrayRows ? '\n\n          text class="cms-section" "Lists"\n' + arrayRows : ''}
+${formRows || '          text class="cms-hint" "No simple fields defined."'}${arrayRows ? '\n\n          text class="cms-section" "Lists"\n' + arrayRows : ''}${styleRows ? '\n\n          text class="cms-section" "Style"\n' + styleRows : ''}
 
           row gap="10px"
             button class="!btn !btn--primary" on:click={ save(id, pageName, visible, ${saveArgs}) } "Save"
@@ -184,8 +219,10 @@ function generateAllBlockEditors(absDir, log, force) {
     log.warnings.push(`could not parse server/block-types.json: ${err.message}`)
     return
   }
+  const styleFields = schema._styleFields ?? []
   const blocksDir = path.join(absDir, 'admin', 'blocks')
   for (const [typeKey, typeSchema] of Object.entries(schema)) {
+    if (typeKey.startsWith('_')) continue
     if (!/^[a-z][a-z0-9_-]*$/.test(typeKey)) {
       log.warnings = log.warnings ?? []
       log.warnings.push(`skipping invalid block type key: "${typeKey}"`)
@@ -198,7 +235,7 @@ function generateAllBlockEditors(absDir, log, force) {
       log.skipped.push(dest)
       continue
     }
-    fs.writeFileSync(dest, generateTypeEditor(typeKey, typeSchema))
+    fs.writeFileSync(dest, generateTypeEditor(typeKey, typeSchema, styleFields))
     log.created.push(dest)
   }
 }
@@ -234,8 +271,31 @@ async function cmsInit(projectDir, opts = {}) {
 
   const log = { created: [], skipped: [] }
 
-  // 1. Copy widgets → <project>/site/cms/
-  _copyDir(_SRC_WIDGETS, path.join(absDir, 'site', 'cms'), log, force)
+  // 1. Copy chrome widgets → <project>/site/cms/. Atoms (CmsField, CmsEmpty,
+  // CmsConfirm) are NOT scaffolded — they're imported live from the package
+  // via the @arc-cms/widgets/ alias so users get upstream bug fixes via
+  // `npm update`. To customize an atom, run `arc cms eject <Name>`.
+  const _PACKAGE_OWNED = new Set(['CmsField.arc', 'CmsEmpty.arc', 'CmsConfirm.arc'])
+  if (fs.existsSync(_SRC_WIDGETS)) {
+    const dest = path.join(absDir, 'site', 'cms')
+    fs.mkdirSync(dest, { recursive: true })
+    for (const entry of fs.readdirSync(_SRC_WIDGETS, { withFileTypes: true })) {
+      if (_PACKAGE_OWNED.has(entry.name)) continue
+      const s = path.join(_SRC_WIDGETS, entry.name)
+      const d = path.join(dest, entry.name)
+      if (entry.isDirectory()) {
+        _copyDir(s, d, log, force)
+      } else if (fs.existsSync(d) && !force) {
+        log.skipped.push(d)
+      } else {
+        fs.copyFileSync(s, d)
+        log.created.push(d)
+      }
+    }
+  }
+
+  // 1b. Copy public-side renderers (catch-all page + per-type block widgets)
+  _copyDir(_SRC_PUBLIC, path.join(absDir, 'site'), log, force)
 
   // 2. Copy admin pages → <project>/admin/
   _copyDir(_SRC_PAGES, path.join(absDir, 'admin'), log, force)
@@ -342,4 +402,204 @@ async function cmsInit(projectDir, opts = {}) {
   }
 }
 
-module.exports = { cmsInit }
+// ── Superuser creation ──────────────────────────────────────────────────────
+// Creates an admin user in the project's database. Supports both interactive
+// (prompts for email/password) and non-interactive (flag-based) usage.
+//
+//   arc cms create-superuser
+//   arc cms create-superuser --email admin@example.com --password 's3cret-pw'
+//   arc cms create-superuser --email admin@example.com --password "$ENV_VAR" --name "Admin"
+//   arc cms create-superuser --db ./custom.db
+async function cmsCreateSuperuser(projectDir, opts = {}) {
+  const absDir = path.resolve(projectDir || '.')
+  if (!fs.existsSync(absDir)) {
+    console.error(`${_RED}arc cms create-superuser: directory not found: ${absDir}${_RST}`)
+    process.exit(1)
+  }
+
+  // Resolve the sqlite database path: explicit --db wins, then DATABASE_URL env,
+  // then conventional locations.
+  const dbCandidates = [
+    opts.db,
+    process.env.DATABASE_URL,
+    path.join(absDir, 'app.db'),
+    path.join(absDir, 'dev.db'),
+  ].filter(Boolean)
+  const dbPath = dbCandidates.find(p => fs.existsSync(p))
+  if (!dbPath) {
+    console.error(`${_RED}arc cms create-superuser: no database found. Looked for:${_RST}`)
+    for (const p of dbCandidates) console.error(`  - ${p}`)
+    console.error(`\nRun the server once (\`bun dist/server.js\`) to create the DB, or pass --db <path>.`)
+    process.exit(1)
+  }
+
+  const readline = require('readline')
+  const ask = (q, opts = {}) => new Promise(resolve => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true })
+    // Mute echo for password prompts via a custom Writable wrapper.
+    if (opts.mask) {
+      const origWrite = process.stdout.write.bind(process.stdout)
+      rl._writeToOutput = (s) => {
+        if (rl.line.length === 0) return origWrite(s)
+        // Replace the typed char with '*'
+        if (s.length > 0 && s !== q) origWrite('*')
+      }
+    }
+    rl.question(q, (a) => { rl.close(); resolve(a) })
+  })
+
+  let email = opts.email
+  let password = opts.password
+  let name = opts.name
+
+  if (!email) email = (await ask('Email: ')).trim()
+  if (!email) { console.error(`${_RED}email required${_RST}`); process.exit(1) }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { console.error(`${_RED}invalid email: ${email}${_RST}`); process.exit(1) }
+
+  if (!password) {
+    password = await ask('Password: ', { mask: true })
+    process.stdout.write('\n')
+    const confirm = await ask('Confirm:  ', { mask: true })
+    process.stdout.write('\n')
+    if (password !== confirm) { console.error(`${_RED}passwords do not match${_RST}`); process.exit(1) }
+  }
+  if (!password) {
+    console.error(`${_RED}password required${_RST}`)
+    process.exit(1)
+  }
+  if (password.length < 8) {
+    if (!opts.force) {
+      console.error(`${_RED}password must be at least 8 characters (use --force to override)${_RST}`)
+      process.exit(1)
+    }
+    console.error(`${_RED}⚠  Weak password accepted via --force (${password.length} chars). DO NOT USE IN PRODUCTION.${_RST}`)
+  }
+
+  if (!name) name = (await ask('Name (optional): ') || '').trim() || email.split('@')[0]
+
+  // Open DB and check / insert.
+  let Database
+  try { ({ Database } = require('bun:sqlite')) } catch (_) {
+    try { Database = require('better-sqlite3') } catch (_) {
+      console.error(`${_RED}arc cms create-superuser: needs bun or better-sqlite3 to access ${dbPath}${_RST}`)
+      process.exit(1)
+    }
+  }
+  const db = new Database(dbPath)
+
+  // Check users table exists (otherwise schema isn't migrated)
+  const table = db.query
+    ? db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get()
+    : db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get()
+  if (!table) {
+    console.error(`${_RED}arc cms create-superuser: 'users' table missing. Run \`arc build-server . && bun dist/server.js\` once to migrate the schema.${_RST}`)
+    process.exit(1)
+  }
+
+  const exists = db.query
+    ? db.query('SELECT id, role FROM users WHERE email = ?1').get(email)
+    : db.prepare('SELECT id, role FROM users WHERE email = ?').get(email)
+  const crypto = require('crypto')
+  const salt = crypto.randomBytes(16).toString('hex')
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex')
+  const passwordHash = `${salt}:${hash}`
+  const now = new Date().toISOString()
+
+  if (exists) {
+    // Promote and rotate password
+    const updateQ = db.query
+      ? db.query('UPDATE users SET role = ?1, passwordHash = ?2, name = ?3 WHERE id = ?4')
+      : db.prepare('UPDATE users SET role = ?, passwordHash = ?, name = ? WHERE id = ?')
+    updateQ.run('admin', passwordHash, name, exists.id)
+    if (_C) {
+      console.log(`\n  ${_GREEN}✓${_RST}  Updated user ${_CYAN}${email}${_RST} → role: admin, password rotated`)
+      if (exists.role !== 'admin') console.log(`  ${_DIM}was role: ${exists.role}${_RST}`)
+    } else {
+      console.log(`arc cms create-superuser: updated existing user "${email}" (role=admin)`)
+    }
+  } else {
+    const insertQ = db.query
+      ? db.query('INSERT INTO users (email, name, role, oauthProvider, oauthId, passwordHash, createdAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) RETURNING id')
+      : db.prepare('INSERT INTO users (email, name, role, oauthProvider, oauthId, passwordHash, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    let newId
+    if (db.query) {
+      const row = insertQ.get(email, name, 'admin', 'local', 'local-' + Date.now(), passwordHash, now)
+      newId = row?.id
+    } else {
+      const info = insertQ.run(email, name, 'admin', 'local', 'local-' + Date.now(), passwordHash, now)
+      newId = info.lastInsertRowid
+    }
+    if (_C) {
+      console.log(`\n  ${_GREEN}✓${_RST}  Created superuser`)
+      console.log(`  ${_DIM}email${_RST}  ${_CYAN}${email}${_RST}`)
+      console.log(`  ${_DIM}name${_RST}   ${name}`)
+      console.log(`  ${_DIM}role${_RST}   admin`)
+      console.log(`  ${_DIM}id${_RST}     ${newId}`)
+      console.log(`  ${_DIM}db${_RST}     ${path.relative(process.cwd(), dbPath)}\n`)
+      console.log(`  ${_DIM}↳  Sign in at /admin/login${_RST}\n`)
+    } else {
+      console.log(`arc cms create-superuser: created admin user "${email}" (id=${newId}) in ${dbPath}`)
+    }
+  }
+
+  if (typeof db.close === 'function') db.close()
+}
+
+// Locate the arc-cms package source for the given project. Mirrors the
+// resolver in src/cli.js — prefer node_modules (handles workspace installs),
+// fall back to the in-repo monorepo path for development.
+function _findCmsPackageSrc(projectDir) {
+  try {
+    const pkgJson = require.resolve('@arc-lang/arc-cms/package.json', { paths: [projectDir] })
+    return path.join(path.dirname(pkgJson), 'src')
+  } catch (_e) {
+    const repoFallback = path.resolve(__dirname, '..', '..', 'packages', 'arc-cms', 'src')
+    if (fs.existsSync(repoFallback)) return repoFallback
+    return null
+  }
+}
+
+// arc cms eject <Name> — copy one widget or page from the package into the user
+// project so the @arc-cms/ resolver picks the local copy. Looks for the name in
+// widgets/, then pages/, then public/. Preserves the relative path under the
+// override directory (site/cms/).
+async function cmsEject(projectDir, name, opts = {}) {
+  const absDir = path.resolve(projectDir || '.')
+  if (!name) {
+    console.error(`${_RED}arc cms eject: missing widget or page name${_RST}`)
+    console.error(`Usage: arc cms eject <Name>   (e.g. arc cms eject CmsLayout)`)
+    process.exit(1)
+  }
+  const pkgSrc = _findCmsPackageSrc(absDir)
+  if (!pkgSrc) {
+    console.error(`${_RED}arc cms eject: @arc-lang/arc-cms not installed.${_RST}`)
+    console.error(`Run: npm install @arc-lang/arc-cms`)
+    process.exit(1)
+  }
+  const force = !!opts.force
+  const stem = name.replace(/\.arc$/, '')
+  const searchDirs = [
+    { src: 'widgets', dest: path.join('site', 'cms', 'widgets') },
+    { src: 'pages',   dest: 'admin' },
+    { src: 'public',  dest: path.join('site', 'cms', 'public') },
+  ]
+  for (const { src, dest } of searchDirs) {
+    const srcPath = path.join(pkgSrc, src, stem + '.arc')
+    if (!fs.existsSync(srcPath)) continue
+    const destPath = path.join(absDir, dest, stem + '.arc')
+    if (fs.existsSync(destPath) && !force) {
+      console.error(`${_RED}arc cms eject: ${path.relative(absDir, destPath)} already exists. Re-run with --force to overwrite.${_RST}`)
+      process.exit(1)
+    }
+    fs.mkdirSync(path.dirname(destPath), { recursive: true })
+    fs.copyFileSync(srcPath, destPath)
+    console.log(`${_GREEN}arc cms eject:${_RST} ${path.relative(absDir, destPath)}`)
+    console.log(`${_DIM}  This local copy now overrides the package version.${_RST}`)
+    console.log(`${_DIM}  The @arc-cms/ resolver checks site/cms/ first, then the package.${_RST}`)
+    return
+  }
+  console.error(`${_RED}arc cms eject: ${stem} not found in package widgets/, pages/, or public/${_RST}`)
+  process.exit(1)
+}
+
+module.exports = { cmsInit, cmsCreateSuperuser, cmsEject }
