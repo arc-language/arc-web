@@ -193,6 +193,9 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   }
 
   const dbAdapter = flags.db ?? 'sqlite'
+  // Load arc.config.json once for build-time configuration (storage backends, etc.)
+  let arcCfg = {}
+  try { arcCfg = JSON.parse(fs.readFileSync(path.join(absDir, 'arc.config.json'), 'utf8')) } catch { /* missing or invalid — use defaults */ }
   const emitter = new BunServerEmitter({
     hash: 'arc',
     db: dbAdapter,
@@ -201,6 +204,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     bunRoutes: flags.bunRoutes ?? false,
     cors: flags.cors ?? null,
     profile: flags.profile ?? false,
+    storage: arcCfg.storage,
   })
   emitter.hasMiddleware = !!middlewareFile
   emitter.middlewareDecls = middlewareDecls
