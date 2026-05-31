@@ -123,9 +123,13 @@ class Lexer {
   }
 
   tokenizeInterpolation() {
-    // Tokenize until we hit the matching } (depth tracking)
+    // Tokenize until we hit the matching } (depth tracking).
+    // We must skip inline whitespace BEFORE checking for { or } so that a trailing
+    // space like "{ expr }" doesn't cause tokenizeOne() to consume the } silently.
     let depth = 0
     while (this.pos < this.source.length) {
+      this.skipInlineWhitespace()
+      if (this.pos >= this.source.length) break
       const ch = this.source[this.pos]
       if (ch === '{') { depth++; this.tokenizeOne(); continue }
       if (ch === '}') {
@@ -134,6 +138,7 @@ class Lexer {
         this.tokenizeOne()
         continue
       }
+      if (ch === '\n') break // newline ends the interpolation context (error will follow)
       this.tokenizeOne()
     }
     this.error('Unterminated string interpolation')

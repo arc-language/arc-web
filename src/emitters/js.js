@@ -185,7 +185,7 @@ class JsEmitter {
     this._reCache?.clear()
     this._emitCache = undefined
     this._runtimeExprCache?.clear()
-    return parts.join('\n')
+    return parts.join('')
   }
 
   // ── Dependency graph ───────────────────────────────────────────────────────
@@ -272,9 +272,15 @@ class JsEmitter {
         return `if(${exprStr}){${el}.setAttribute('hidden','');}else{${el}.removeAttribute('hidden');}`
       case 'list':
         return this.emitListUpdate(b)
-      case 'attr':
+      case 'attr': {
         _assertSafeAttr(b.attr, 'attr binding')
+        // Boolean HTML attributes need setAttribute/removeAttribute, not a value
+        const _BOOL_ATTRS = new Set(['disabled','checked','readonly','required','multiple','selected','hidden','open','autofocus','autoplay','controls','loop','muted','default','defer','async','novalidate','formnovalidate','reversed','scoped','allowfullscreen','capture'])
+        if (_BOOL_ATTRS.has(b.attr)) {
+          return `if(${exprStr}){${el}.setAttribute('${b.attr}','');}else{${el}.removeAttribute('${b.attr}');}`
+        }
         return `${el}.setAttribute('${b.attr}',${exprStr});`
+      }
       case 'class-toggle':
         _assertSafeAttr(b.cls, 'class-toggle binding')
         return `${el}.classList.toggle('${b.cls}_${this.componentHash}',!!${exprStr});`
@@ -406,7 +412,8 @@ class JsEmitter {
 
     const evtName = ev.event ?? ''
     if (!_SAFE_DOM_EVENTS.has(evtName)) throw new Error(`Arc codegen: unknown/unsafe event type: ${JSON.stringify(evtName)}`)
-    return `(function(){const _ee=${el};if(_ee)_ee.addEventListener('${evtName}',function(event){${body}});})();`
+    const preBody = evtName === 'submit' ? 'event.preventDefault();' : ''
+    return `(function(){const _ee=${el};if(_ee)_ee.addEventListener('${evtName}',async function(event){${preBody}${body}});})();`
   }
 
   // ── Expression emission ────────────────────────────────────────────────────
@@ -691,7 +698,7 @@ class JsEmitter {
         return `${this.emitExpr(stmt.expr)};`
 
       case 'ReturnStatement':
-        return `return ${this.emitExpr(stmt.value)};`
+        return `return ${this.emitExpr(stmt.value ?? stmt.argument)};`
 
       case 'IfStatement': {
         const cond = this.emitExpr(stmt.condition)

@@ -46,8 +46,9 @@ const _text = (body, status = 200, headers = null) =>
 const _redirect = (location, status = 302) =>
   new Response(null, { status, headers: { Location: location } })
 
-// Body parser: JSON, multipart, or application/x-www-form-urlencoded
-const _MAX_BODY_SIZE = 1024 * 1024 // 1 MB
+// Body parser: JSON, multipart, or application/x-www-form-urlencoded.
+// Default cap is 25 MB to accommodate media uploads; override via ARC_MAX_BODY_MB.
+const _MAX_BODY_SIZE = (+(process.env.ARC_MAX_BODY_MB ?? 25)) * 1024 * 1024
 async function _parseBody(req) {
   const ct = req.headers.get('content-type') ?? ''
   // JSON fast path first - most API routes send application/json

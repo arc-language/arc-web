@@ -50,6 +50,7 @@ const _LOCALE_SLIDER_NEXT = { en: 'Next slide', fr: 'Diapositive suivante', es: 
 const _LOCALE_SLIDE_NAV = { en: 'Slide navigation', fr: 'Navigation entre diapositives', es: 'Navegación entre diapositivas', de: 'Foliennavigation', pt: 'Navegação de slides', ja: 'スライドナビゲーション', zh: '幻灯片导航', ar: 'التنقل بين الشرائح' }
 const _LOCALE_SLIDE_GO = { en: (n) => `Go to slide ${n}`, fr: (n) => `Aller à la diapositive ${n}`, es: (n) => `Ir a la diapositiva ${n}`, de: (n) => `Zu Folie ${n}`, pt: (n) => `Ir para o slide ${n}`, ja: (n) => `スライド${n}へ`, zh: (n) => `转到第${n}张`, ar: (n) => `انتقل إلى الشريحة ${n}` }
 const _LOCALE_SLIDE_OF = { en: (n, t) => `${n} of ${t}`, fr: (n, t) => `${n} sur ${t}`, es: (n, t) => `${n} de ${t}`, de: (n, t) => `${n} von ${t}`, pt: (n, t) => `${n} de ${t}`, ja: (n, t) => `${n}/${t}`, zh: (n, t) => `第${n}张，共${t}张`, ar: (n, t) => `${n} من ${t}` }
+const _LOCALE_SLIDER_LABEL = { en: 'Slider', fr: 'Diaporama', es: 'Carrusel', de: 'Schieberegler', pt: 'Carrossel', ja: 'スライダー', zh: '滑块', ar: 'شريط التمرير' }
 
 // BCP 47-aware locale lookup: tries full tag (zh-TW) then primary subtag (zh) then 'en'
 function _localize(map, lang) {
@@ -171,8 +172,10 @@ class HtmlEmitter {
     this.currentAttrs = {}        // @attr values for current widget invocation
     this.imgPipeline = options.imgPipeline ?? null  // optional ImagePipeline instance
     this._imgOrdinal = 0          // increments for each img encountered (for above-fold detection)
+    this._firstImgDone = false    // true after first img's loading attr is handled (LCP: first img stays eager)
     this._sawSection = false      // toggles true after first <section>
     this._currentLang = 'en'     // set in emitPage(); used by locale-aware helpers before page is emitted
+    this._headRaw = []            // @raw fragments containing <link>/<style>/<script> hoisted to <head>
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -213,6 +216,7 @@ class HtmlEmitter {
       ogType: evalMeta('ogType') || 'website',
       siteName: evalMeta('siteName'),
       robots: evalMeta('robots'),
+      favicon: evalMeta('favicon'),
     }
 
     // Don't double-wrap if the page already has a top-level <main>
@@ -234,6 +238,8 @@ class HtmlEmitter {
         })
       : (node.body ?? [])
 
+    // Emit body first so @raw <link>/<style> nodes can be collected into _headRaw
+    this._headRaw = []
     const bodyContent = this.emitChildren(bodyNodes)
 
     // Build JSON-LD only when a schemaType was requested
@@ -271,28 +277,31 @@ class HtmlEmitter {
   }
 
   _emitHead(title, description, seo, jsonLd) {
+    const _locale = this._ogLocale()
     return [
       '<head>',
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
-      `<meta name="robots" content="${this.escape(seo?.robots ?? 'index,follow')}">`,
+      (seo?.robots && seo.robots !== 'index,follow') ? `<meta name="robots" content="${this.escape(seo.robots)}">` : '',
       // CSP meta tag is a fallback hint only — does not replace server-sent Content-Security-Policy headers in production
-      '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'; object-src \'none\'; base-uri \'self\'; form-action \'self\';">',
+      '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com https://api.fontshare.com; font-src \'self\' https://fonts.gstatic.com https://api.fontshare.com data:; object-src \'none\'; base-uri \'self\'; form-action \'self\';">',
       `<title>${this.escape(title)}</title>`,
       description ? `<meta name="description" content="${this.escape(description)}">` : '',
       seo.keywords ? `<meta name="keywords" content="${this.escape(seo.keywords)}">` : '',
       seo.author ? `<meta name="author" content="${this.escape(seo.author)}">` : '',
       seo.canonical ? `<link rel="canonical" href="${this.escape(seo.canonical)}">` : '',
+      seo.favicon ? `<link rel="icon" type="image/png" href="${this.escape(seo.favicon)}">` : '',
+      seo.favicon ? `<link rel="apple-touch-icon" href="${this.escape(seo.favicon)}">` : '',
       // Open Graph
       `<meta property="og:title" content="${this.escape(title)}">`,
       description ? `<meta property="og:description" content="${this.escape(description)}">` : '',
-      `<meta property="og:type" content="${this.escape(seo.ogType)}">`,
+      seo.ogType !== 'website' ? `<meta property="og:type" content="${this.escape(seo.ogType)}">` : '',
       seo.canonical ? `<meta property="og:url" content="${this.escape(seo.canonical)}">` : '',
       seo.image ? `<meta property="og:image" content="${this.escape(seo.image)}">` : '',
       seo.siteName ? `<meta property="og:site_name" content="${this.escape(seo.siteName)}">` : '',
-      `<meta property="og:locale" content="${this.escape(this._ogLocale())}">`,
+      _locale !== 'en_US' ? `<meta property="og:locale" content="${this.escape(_locale)}">` : '',
       // Twitter Card
-      `<meta name="twitter:card" content="${seo.image ? 'summary_large_image' : 'summary'}">`,
+      seo.image ? `<meta name="twitter:card" content="summary_large_image">` : '',
       `<meta name="twitter:title" content="${this.escape(title)}">`,
       description ? `<meta name="twitter:description" content="${this.escape(description)}">` : '',
       seo.image ? `<meta name="twitter:image" content="${this.escape(seo.image)}">` : '',
@@ -300,6 +309,7 @@ class HtmlEmitter {
       // JSON-LD structured data
       jsonLd ? `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/&/g, '\\u0026').replace(/</g, '\\u003c').replace(/>/g, '\\u003e')}</script>` : '',
       '<link rel="stylesheet" href="styles.css">',
+      ...this._headRaw,
     ]
   }
 
@@ -389,6 +399,7 @@ class HtmlEmitter {
       case 'ForNode':           return this.emitFor(node)
       case 'MatchTemplateNode': return this.emitMatchTemplate(node)
       case 'RawNode':           return this.emitRaw(node)
+      case 'SlotNode':          return this.emitChildren(this.slotChildren)
       default:                  return ''
     }
   }
@@ -525,6 +536,12 @@ class HtmlEmitter {
         const event = key.slice(3)
         this.eventBindings.push({ elementId: id, event, handler: value, line: node.line })
         // on: attrs are JS-only: don't include in HTML output
+      } else if (value && typeof value === 'object' && value.type && !this.isStaticExpr(value)) {
+        // Dynamic attribute: expression depends on reactive state — track as attr binding for JS
+        if (!id) id = this.getReactiveId(`attr_${tag}_${key}_${node.line}`)
+        const exprStr = this.exprToString(value)
+        this.stateBindings.push({ id, kind: 'attr', attr: key, expr: exprStr, line: node.line })
+        // Don't add to staticAttrs — the JS initial render will set the correct value
       } else {
         staticAttrs[key] = value
       }
@@ -598,16 +615,16 @@ class HtmlEmitter {
     for (const [key, rawValue] of Object.entries(attrs)) {
       if (key === 'tooltip') continue
 
-      // Resolve AST node to its static value when possible
+      // Resolve AST node to its static value when possible; skip non-static (handled by JS)
       const value = (rawValue && typeof rawValue === 'object' && rawValue.type)
-        ? (this.isStaticExpr(rawValue) ? this.evalStaticExpr(rawValue) : rawValue)
+        ? (this.isStaticExpr(rawValue) ? this.evalStaticExpr(rawValue) : null)
         : rawValue
 
       if (this._emitSpecialAttr(key, value, parts, node)) continue
 
       if (value === true) {
         parts.push(this.escape(key))
-      } else if (value !== false && value !== undefined) {
+      } else if (value !== false && value !== undefined && value !== null) {
         const safeValue = this._safeUri(key, value)
         if (safeValue === null) {
           parts.push(`${this.escape(key)}="#"`)
@@ -699,7 +716,11 @@ class HtmlEmitter {
   // Handles: img defaults, button type injection, external link rel/target, icon aria-hidden.
   _applyAutoAttrs(node, attrs, parts) {
     if (node.tag === 'img') {
-      if (!attrs.loading) parts.push('loading="lazy"')
+      if (!this._firstImgDone) {
+        this._firstImgDone = true  // first img: omit loading attr (browser default is eager, optimal for LCP)
+      } else if (!attrs.loading) {
+        parts.push('loading="lazy"')
+      }
       if (!attrs.decoding) parts.push('decoding="async"')
       if (attrs.alt === undefined) parts.push('alt=""')
     }
@@ -1030,7 +1051,10 @@ class HtmlEmitter {
     const showDots    = getAttr('dots', true) !== false && getAttr('dots', true) !== 'false'
     const center      = getAttr('center', false)
     const gap         = getAttr('gap', 0)
-    const label       = getAttr('label', 'Slider')
+    const extraClass  = getAttr('class', '')
+    const peek        = getAttr('peek', 0)
+    const wrap        = getAttr('wrap', false) !== false && getAttr('wrap', false) !== 'false'
+    const keyboard    = getAttr('keyboard', true) !== false && getAttr('keyboard', true) !== 'false'
 
     const children = node.children ?? []
     const count    = children.length
@@ -1038,6 +1062,7 @@ class HtmlEmitter {
     const snapAlign = center ? 'center' : 'start'
 
     const lang = this._currentLang
+    const label = getAttr('label', _localize(_LOCALE_SLIDER_LABEL, lang))
     const slideOfFn = _LOCALE_SLIDE_OF[lang] ?? _LOCALE_SLIDE_OF[(lang ?? 'en').split('-')[0]] ?? _LOCALE_SLIDE_OF.en
     const slideGoFn = _LOCALE_SLIDE_GO[lang] ?? _LOCALE_SLIDE_GO[(lang ?? 'en').split('-')[0]] ?? _LOCALE_SLIDE_GO.en
 
@@ -1045,29 +1070,39 @@ class HtmlEmitter {
       `<div class="arc-slide_${uid}" role="group" aria-roledescription="slide" aria-label="${this.escape(slideOfFn(i + 1, count))}">${this.emitNode(child)}</div>`
     ).join('\n')
 
+    const prevOnclick = wrap
+      ? `var t=document.getElementById('${trackId}');if(t){var w=t.offsetWidth/${items};if(t.scrollLeft<=1)t.scrollTo({left:t.scrollWidth,behavior:'smooth'});else t.scrollBy({left:-w,behavior:'smooth'});}`
+      : `var t=document.getElementById('${trackId}');if(t)t.scrollBy({left:-t.offsetWidth/${items},behavior:'smooth'})`
+    const nextOnclick = wrap
+      ? `var t=document.getElementById('${trackId}');if(t){var w=t.offsetWidth/${items};if(t.scrollLeft+t.offsetWidth>=t.scrollWidth-1)t.scrollTo({left:0,behavior:'smooth'});else t.scrollBy({left:w,behavior:'smooth'});}`
+      : `var t=document.getElementById('${trackId}');if(t)t.scrollBy({left:t.offsetWidth/${items},behavior:'smooth'})`
+
     const navHtml = (showNav && count > 1) ? [
-      `<button class="arc-slider-prev_${uid}" aria-label="${this.escape(_localize(_LOCALE_SLIDER_PREV, lang))}" onclick="var t=document.getElementById('${trackId}');if(t)t.scrollBy({left:-t.offsetWidth/${items},behavior:'smooth'})">&#8592;</button>`,
-      `<button class="arc-slider-next_${uid}" aria-label="${this.escape(_localize(_LOCALE_SLIDER_NEXT, lang))}" onclick="var t=document.getElementById('${trackId}');if(t)t.scrollBy({left:t.offsetWidth/${items},behavior:'smooth'})">&#8594;</button>`,
+      `<button class="arc-slider-prev_${uid}" aria-label="${this.escape(_localize(_LOCALE_SLIDER_PREV, lang))}" onclick="${prevOnclick}">&#8592;</button>`,
+      `<button class="arc-slider-next_${uid}" aria-label="${this.escape(_localize(_LOCALE_SLIDER_NEXT, lang))}" onclick="${nextOnclick}">&#8594;</button>`,
     ].join('\n') : ''
 
     const dotsHtml = (showDots && count > 1) ? [
       `<div class="arc-slider-dots_${uid}" role="group" aria-label="${this.escape(_localize(_LOCALE_SLIDE_NAV, lang))}">`,
       ...children.map((_, i) =>
-        `<button class="arc-slider-dot_${uid}" aria-label="${this.escape(slideGoFn(i + 1))}" aria-current="${i === 0 ? 'true' : 'false'}"></button>`
+        `<button class="arc-slider-dot_${uid}" aria-label="${this.escape(slideGoFn(i + 1))}"${i === 0 ? ' aria-current="true"' : ''}></button>`
       ),
       `</div>`,
     ].join('\n') : ''
 
-    const scriptHtml = (showDots || autoplay) ? this._sliderScript(uid, trackId, showDots, autoplay, timeout) : ''
+    const scriptHtml = (showDots || autoplay || keyboard) ? this._sliderScript(uid, trackId, showDots, autoplay, timeout, keyboard, wrap, items) : ''
 
     const style = [
       items !== 1 ? `--arc-si:${items}` : '',
       gap ? `--arc-sg:${typeof gap === 'number' ? gap + 'px' : gap}` : '',
       `--arc-ss:${snapAlign}`,
+      peek ? `--arc-sp:${typeof peek === 'number' ? peek + 'px' : peek}` : '',
     ].filter(Boolean).join(';')
 
+    const wrapperClass = ['arc-slider_' + uid, extraClass].filter(Boolean).join(' ')
+
     return [
-      `<div class="arc-slider_${uid}" role="region" aria-roledescription="carousel" aria-label="${this.escape(String(label))}">`,
+      `<div class="${wrapperClass}" role="region" aria-roledescription="carousel" aria-label="${this.escape(String(label))}">`,
       navHtml,
       `<div id="${trackId}" class="arc-slider-track_${uid}"${style ? ` style="${style}"` : ''}>`,
       slidesHtml,
@@ -1079,13 +1114,27 @@ class HtmlEmitter {
   }
 
   // Wrap an element that has a tooltip="" attr as a tooltip-anchor.
-  _sliderScript(uid, trackId, showDots, autoplay, timeout) {
+  _sliderScript(uid, trackId, showDots, autoplay, timeout, keyboard, wrap, items) {
     const dotsJs = showDots
       ? `var sl=t.children,dt=t.parentElement.querySelectorAll('.arc-slider-dot_${uid}');` +
         `if(dt.length){var ob=new IntersectionObserver(function(es){es.forEach(function(e){` +
         `if(e.isIntersecting){var i=Array.prototype.indexOf.call(sl,e.target);` +
         `dt.forEach(function(d,j){d.setAttribute('aria-current',i===j?'true':'false');});}` +
         `});},{root:t,threshold:.5});Array.prototype.forEach.call(sl,function(s){ob.observe(s);});}`
+      : ''
+    const keyboardJs = keyboard
+      ? `t.setAttribute('tabindex','0');` +
+        `t.addEventListener('keydown',function(e){` +
+        `var w=t.offsetWidth/${items};` +
+        `if(e.key==='ArrowLeft'){e.preventDefault();` +
+        (wrap
+          ? `if(t.scrollLeft<=1)t.scrollTo({left:t.scrollWidth,behavior:'smooth'});else t.scrollBy({left:-w,behavior:'smooth'});`
+          : `t.scrollBy({left:-w,behavior:'smooth'});`) +
+        `}else if(e.key==='ArrowRight'){e.preventDefault();` +
+        (wrap
+          ? `if(t.scrollLeft+t.offsetWidth>=t.scrollWidth-1)t.scrollTo({left:0,behavior:'smooth'});else t.scrollBy({left:w,behavior:'smooth'});`
+          : `t.scrollBy({left:w,behavior:'smooth'});`) +
+        `}});`
       : ''
     const autoplayJs = autoplay
       ? `var idx=0,sl2=t.children;` +
@@ -1094,7 +1143,7 @@ class HtmlEmitter {
         `function _fn(){idx=(idx+1)%sl2.length;sl2[idx].scrollIntoView({behavior:'smooth',block:'nearest',inline:'start'});}` +
         `var _ap=setInterval(_fn,${timeout});`
       : ''
-    return `<script>(function(){var t=document.getElementById('${trackId}');if(!t)return;${dotsJs}${autoplayJs}})();</script>`
+    return `<script>(function(){var t=document.getElementById('${trackId}');if(!t)return;${dotsJs}${keyboardJs}${autoplayJs}})();</script>`
   }
 
   // Add tabindex="0" so non-interactive wrapped elements (e.g. <span tooltip="...">)
@@ -1118,7 +1167,14 @@ class HtmlEmitter {
     // WARNING: node.html is emitted verbatim with no sanitization.
     // allowRaw must ONLY be used for trusted, developer-authored content.
     // Never pass user-supplied input through RawNode - use escape() instead.
-    return node.html
+    const html = node.html
+    // Hoist <link>, <style>, and <script type="application/ld+json"> to <head>.
+    // These tags only work correctly in <head> (e.g. font stylesheets, preconnects).
+    if (typeof html === 'string' && /^<(link|style|script)\b/i.test(html.trimStart())) {
+      this._headRaw.push(html)
+      return ''
+    }
+    return html
   }
 
   // ── Utilities ──────────────────────────────────────────────────────────────
@@ -1130,7 +1186,7 @@ class HtmlEmitter {
 
   getReactiveId(key) {
     if (!this.reactiveIds.has(key)) {
-      this.reactiveIds.set(key, `_a${++this.reactiveCounter}`)
+      this.reactiveIds.set(key, `_${(++this.reactiveCounter).toString(36)}`)
     }
     return this.reactiveIds.get(key)
   }
@@ -1158,6 +1214,13 @@ class HtmlEmitter {
     }
     if (expr.type === 'ArrayLiteral') {
       return expr.elements.every(e => this.isStaticExpr(e))
+    }
+    // Method calls: static if the receiver object is static and all args are static
+    if (expr.type === 'CallExpr') {
+      return expr.callee?.type === 'MemberExpr' &&
+             !expr.callee.computed &&
+             this.isStaticExpr(expr.callee.object) &&
+             (expr.args ?? []).every(a => this.isStaticExpr(a))
     }
     return false
   }
@@ -1200,6 +1263,17 @@ class HtmlEmitter {
     }
     if (expr.type === 'ArrayLiteral') {
       return expr.elements.map(e => this.evalStaticExpr(e))
+    }
+    // Method calls on a statically-known receiver: evaluate at build time
+    if (expr.type === 'CallExpr' && expr.callee?.type === 'MemberExpr' && !expr.callee.computed) {
+      const receiver = this.evalStaticExpr(expr.callee.object)
+      if (receiver === undefined || receiver === null) return undefined
+      const methodName = expr.callee.property?.name ?? expr.callee.property?.value
+      const fn = receiver[methodName]
+      if (typeof fn !== 'function') return undefined
+      const args = (expr.args ?? []).map(a => this.evalStaticExpr(a))
+      if (args.some(a => a === undefined)) return undefined
+      try { return fn.apply(receiver, args) } catch { return undefined }
     }
     return undefined
   }

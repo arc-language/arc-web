@@ -16,6 +16,168 @@ const { JsEmitter } = require('./js')
 const { compileRoutes, emitBunRoutesObject } = require('../compilers/route-compiler')
 const { emitAuthPreamble } = require('./auth-helpers')
 const { emitQueuePreamble, emitEmailPreamble, emitJobEnqueueWrapper } = require('./queue-helpers')
+const fs = require('fs')
+const path = require('path')
+
+// Detect if arc-jobs is installed in the project's node_modules
+function _isArcJobsInstalled() {
+  try {
+    const cwd = process.cwd()
+    return fs.existsSync(path.join(cwd, 'node_modules', 'arc-jobs', 'src', 'index.js'))
+  } catch (_) { return false }
+}
+
+// Detect if arc-storage is installed in the project's node_modules
+function _isArcStorageInstalled() {
+  try {
+    const cwd = process.cwd()
+    return fs.existsSync(path.join(cwd, 'node_modules', 'arc-storage', 'src', 'index.js'))
+  } catch (_) { return false }
+}
+
+// Render a JS object literal where ${ENV_VAR} string values become process.env lookups.
+function _emitStorageOpts(opts) {
+  const entries = Object.entries(opts).map(([k, v]) => {
+    if (typeof v === 'string') {
+      const m = v.match(/^\$\{([A-Z_][A-Z0-9_]*)\}$/)
+      if (m) return `${JSON.stringify(k)}: process.env[${JSON.stringify(m[1])}]`
+    }
+    return `${JSON.stringify(k)}: ${JSON.stringify(v)}`
+  })
+  return `{ ${entries.join(', ')} }`
+}
+
+// Emit import + instantiation block for arc-storage based on arc.config.storage.
+// Mirrors emitArcJobsImport — config-driven adapter wiring.
+function emitArcStorageImport(storage) {
+  // Normalize: if no config, default to a single FileAdapter named "default".
+  const cfg = (storage && Object.keys(storage).length > 0)
+    ? storage
+    : { default: { backend: 'file', root: 'public/uploads', urlPrefix: '/uploads' } }
+
+  const backends = new Set(Object.values(cfg).map(s => s.backend ?? 'file'))
+  const imports = ['createStorage']
+  if (backends.has('file')) imports.push('FileAdapter')
+  if (backends.has('s3'))   imports.push('S3Adapter')
+
+  const inits = Object.entries(cfg).map(([name, raw]) => {
+    const backend = raw.backend ?? 'file'
+    const opts = { name, ...raw }; delete opts.backend
+    const optsExpr = _emitStorageOpts(opts)
+    const adapter = backend === 's3' ? 'S3Adapter' : 'FileAdapter'
+    return `  ${JSON.stringify(name)}: createStorage(new ${adapter}(${optsExpr}))`
+  }).join(',\n')
+
+  return `
+// ── arc-storage ──────────────────────────────────────────────────────────────
+import { ${imports.join(', ')} } from 'arc-storage'
+const _storages = {
+${inits}
+}
+const Storage = _storages.default
+const storage = _storages`.trim()
+}
+
+// Compute the static-serve dispatch table at build time.
+// For each storage with a urlPrefix, emit a check: if pathname starts with that prefix,
+// strip it and call _storages[name].serve(key, req).
+function _storageServeBlock(storage) {
+  const cfg = (storage && Object.keys(storage).length > 0)
+    ? storage
+    : { default: { backend: 'file', urlPrefix: '/uploads' } }
+  // Sort by urlPrefix length desc so longer (more specific) prefixes win.
+  const entries = Object.entries(cfg)
+    .map(([name, raw]) => ({ name, prefix: (raw.urlPrefix ?? '/uploads').replace(/\/$/, '') }))
+    .sort((a, b) => b.prefix.length - a.prefix.length)
+  return entries.map(({ name, prefix }) => {
+    const p = JSON.stringify(prefix + '/')
+    return `if (req.method === 'GET' && pathname.startsWith(${p})) { return _storages[${JSON.stringify(name)}].serve(decodeURIComponent(pathname.slice(${prefix.length + 1})), req) }`
+  }).join('\n  ')
+}
+
+// Emit import block for arc-jobs adapters based on arc.config.queues
+function emitArcJobsImport(queues = {}) {
+  const backends = new Set(Object.values(queues).map(q => q.backend ?? 'memory'))
+  if (backends.size === 0) backends.add('memory')
+
+  const imports = ['createQueue']
+  if (backends.has('sqlite')) imports.push('SqliteAdapter')
+  if (backends.has('redis')) imports.push('RedisAdapter')
+  if (backends.has('memory') || backends.size === 0) imports.push('MemoryAdapter')
+
+  const queueNames = Object.keys(queues).length > 0 ? queues : { default: { backend: 'memory' } }
+  const queueInits = Object.entries(queueNames).map(([name, cfg]) => {
+    const backend = cfg.backend ?? 'memory'
+    if (backend === 'sqlite') {
+      return `  ${name}: createQueue(new SqliteAdapter({ name: ${JSON.stringify(name)}, db: globalThis.db }))`
+    } else if (backend === 'redis') {
+      const url = cfg.url ?? '${REDIS_URL}'
+      const resolvedUrl = url.startsWith('${') ? `process.env.${url.slice(2, -1)}` : JSON.stringify(url)
+      return `  ${name}: createQueue(new RedisAdapter({ name: ${JSON.stringify(name)}, url: ${resolvedUrl} }))`
+    }
+    return `  ${name}: createQueue(new MemoryAdapter({ name: ${JSON.stringify(name)} }))`
+  }).join(',\n')
+
+  return `
+// ── arc-jobs ──────────────────────────────────────────────────────────────────
+import { ${imports.join(', ')} } from 'arc-jobs'
+
+const _queues = {
+${queueInits}
+}
+
+// Backwards-compatible Queue alias (uses default queue)
+const Queue = {
+  enqueue: (fn, ...args) => _queues.default.enqueue(fn?.name ?? String(fn), args),
+  size: () => _queues.default.size(),
+  dead: () => _queues.default.dead(),
+  replayDead: () => _queues.default.replayDead(),
+  drain: (ms) => _queues.default.drain(ms),
+  status: (id) => _queues.default.status(id),
+}`.trim()
+}
+
+// Emit job registry to wire handlers into arc-jobs queues
+function emitJobRegistry(jobs, queues = {}) {
+  const lines = jobs.map(job => {
+    const queueName = job.queueName ?? 'default'
+    const opts = {
+      timeoutMs: job.timeoutMs,
+      maxRetries: job.maxRetries,
+      backoffMs: job.backoffMs,
+      priority: job.priority !== 'normal' ? job.priority : undefined,
+      hasProgress: job.hasProgress || undefined,
+      thenJob: job.thenJob || undefined,
+      schedule: job.schedule || undefined,
+    }
+    const optsStr = JSON.stringify(Object.fromEntries(Object.entries(opts).filter(([, v]) => v != null)))
+    return `_queues[${JSON.stringify(queueName)}]?.register(${JSON.stringify(job.name)}, _job_${job.name}, ${optsStr})`
+  })
+
+  const startLines = [...new Set(jobs.map(j => j.queueName ?? 'default'))]
+    .map(qn => `_queues[${JSON.stringify(qn)}]?.start()`)
+
+  return `
+// ── Job registry ──────────────────────────────────────────────────────────────
+${lines.join('\n')}
+
+// Start queue processors
+${startLines.join('\n')}`.trim()
+}
+
+// Emit scheduler block for @schedule jobs
+function emitSchedulerBlock(scheduledJobs, queues = {}) {
+  const schedules = scheduledJobs.map(job => {
+    return `{ expr: ${JSON.stringify(job.schedule)}, jobName: ${JSON.stringify(job.name)}, queueName: ${JSON.stringify(job.queueName ?? 'default')} }`
+  }).join(',\n  ')
+
+  return `
+// ── Scheduler ────────────────────────────────────────────────────────────────
+import { startScheduler } from 'arc-jobs'
+const _arcScheduler = startScheduler([
+  ${schedules}
+], _queues)`.trim()
+}
 const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
 const { routeHandlerName, isValidRoute, routeTypeLabel } = require('./route-utils')
 const { SHARED_RESPONSE_HELPERS } = require('./emitter-preamble')
@@ -82,6 +244,7 @@ class BunServerEmitter {
     this.bunRoutes = options.bunRoutes ?? false
     this.cors = options.cors ?? null
     this.profile = options.profile ?? false
+    this.storage = options.storage ?? null
     this.jsEmitter = new JsEmitter(options)
   }
 
@@ -116,8 +279,20 @@ class BunServerEmitter {
       }
     }
 
-    // Queue + email always emitted (tiny, zero deps)
-    parts.push(emitQueuePreamble())
+    // Queue + email: use arc-jobs if installed, otherwise fall back to inline queue
+    const arcJobsInstalled = _isArcJobsInstalled()
+    const queues = this.options.queues ?? {}
+    if (arcJobsInstalled && jobs.length > 0) {
+      parts.push(emitArcJobsImport(queues))
+    } else {
+      parts.push(emitQueuePreamble())
+    }
+
+    // Storage adapters — emit when arc-storage is installed in the project.
+    // Defaults to one FileAdapter with the legacy /uploads paths if no config block is present.
+    if (_isArcStorageInstalled()) {
+      parts.push(emitArcStorageImport(this.storage))
+    }
     parts.push(emitEmailPreamble())
 
     if (this.isPg && schemas.length > 0) {
@@ -133,8 +308,20 @@ class BunServerEmitter {
 
     for (const job of jobs) {
       parts.push(this.emitJobHandler(job))
-      // Public enqueue wrapper: `const SendEmail = (...args) => Queue.enqueue(_job_SendEmail, ...args)`
-      parts.push(emitJobEnqueueWrapper(job.name))
+      // Pass full job object when arc-jobs is installed (enables @queue, @priority, @unique etc.)
+      // Fall back to legacy string form (backwards-compatible inline queue) otherwise
+      parts.push(emitJobEnqueueWrapper(arcJobsInstalled ? job : job.name))
+    }
+
+    // Job registry + arc-jobs wiring (only when arc-jobs is installed)
+    if (arcJobsInstalled && jobs.length > 0) {
+      parts.push(emitJobRegistry(jobs, queues))
+    }
+
+    // Scheduler (only when @schedule jobs exist)
+    const scheduledJobs = jobs.filter(j => j.schedule)
+    if (scheduledJobs.length > 0) {
+      parts.push(emitSchedulerBlock(scheduledJobs, queues))
     }
 
     // Emit one shared guard function per group (replaces N inline auth checks)
@@ -188,9 +375,18 @@ class BunServerEmitter {
     const rateLimiter = this.noRateLimit ? '' : this._rateLimiterBlock()
 
     const corsDecl = `const _CORS_ORIGIN = ${this.cors ? JSON.stringify(this.cors) : 'null'}`
+
+    // Storage-served prefix dispatch — generated when arc-storage is installed.
+    // For each configured storage, check pathname prefix and delegate to _storages[name].serve().
+    const _storageServeDispatch = _isArcStorageInstalled()
+      ? _storageServeBlock(this.storage)
+      : ''
     const staticFallback = `
 const _path = require('path')
 const _fs = require('fs')
+// Bun exposes the Web Crypto API on globalThis.crypto but not Node.js crypto methods.
+// Assign them so user code can call crypto.scryptSync / crypto.randomBytes directly.
+;(function(){ const _nc = require('node:crypto'); if (!crypto.scryptSync) crypto.scryptSync = _nc.scryptSync.bind(_nc); if (!crypto.randomBytes) crypto.randomBytes = _nc.randomBytes.bind(_nc); })()
 const _DIST_DIR = _path.dirname(require.main?.filename ?? __filename)
 const _MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.json': 'application/json' }
 const _UPLOAD_MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml', '.pdf': 'application/pdf' }
@@ -199,9 +395,11 @@ const _ATTACHMENT_EXTS = new Set(['.svg', '.pdf'])
 // Pre-populate known static file paths at startup to avoid existsSync() on every request.
 // Built lazily on first request so the process starts fast even with many dist files.
 let _staticFiles = null
+let _dynamicRoutes = null
 function _getStaticFiles() {
   if (_staticFiles) return _staticFiles
   _staticFiles = new Set()
+  _dynamicRoutes = []
   try {
     const _walkDir = (dir) => {
       for (const entry of _fs.readdirSync(dir, { withFileTypes: true })) {
@@ -211,8 +409,47 @@ function _getStaticFiles() {
       }
     }
     _walkDir(_DIST_DIR)
+    // Build dynamic-route list from files whose path contains [param] or [[...rest]] segments.
+    // Patterns match URL paths to dist files: /admin/pages/3 → dist/admin/pages/[id].html
+    const _BRACKET_RE = /\\[[^\\]]+\\]/
+    const _CATCHALL_RE = /\\[\\[\\.\\.\\.([^\\]]+)\\]\\]/g
+    const _PARAM_RE = /\\[([^\\]]+)\\]/g
+    const _RE_ESCAPE = /[.+^\${}()|]/g
+    for (const fp of _staticFiles) {
+      const rel = '/' + _path.relative(_DIST_DIR, fp).split(_path.sep).join('/')
+      if (!_BRACKET_RE.test(rel)) continue
+      const variants = []
+      if (rel.endsWith('/index.html')) variants.push(rel.slice(0, -'/index.html'.length) || '/')
+      if (rel.endsWith('.html')) variants.push(rel.slice(0, -'.html'.length))
+      variants.push(rel)
+      for (const variant of variants) {
+        let numIdParams = 0
+        const pat = variant
+          .replace(_RE_ESCAPE, '\\\\$&')
+          .replace(_CATCHALL_RE, '(.+)')
+          .replace(_PARAM_RE, (_, name) => {
+            if (name === 'id') { numIdParams++; return '(\\\\d+)' }
+            return '([^/]+)'
+          })
+        // Sort key: more numeric [id] segments first (higher specificity than [slug]/[name]),
+        // then fewer brackets first (more literal segments = more specific).
+        _dynamicRoutes.push({
+          regex: new RegExp('^' + pat + '$'),
+          file: fp,
+          specificity: -numIdParams * 10 + variant.split('[').length
+        })
+      }
+    }
+    _dynamicRoutes.sort((a, b) => a.specificity - b.specificity)
   } catch (_e) { /* dist may not exist yet - ENOENT is expected at first build */ }
   return _staticFiles
+}
+function _matchDynamicRoute(pathname) {
+  if (!_dynamicRoutes) return null
+  for (const r of _dynamicRoutes) {
+    if (r.regex.test(pathname)) return r.file
+  }
+  return null
 }
 // Cached path -> required role table from server/admin-roles.json (arc-cms config).
 // null = no config (fall back to session-only guard).
@@ -240,7 +477,9 @@ function _roleOk(have, need) {
   return (ranks[have] ?? 0) >= (ranks[need] ?? 0)
 }
 async function _serveStatic(req, pathname) {
+  ${_storageServeDispatch}
   // Serve user-uploaded media from public/uploads/ with safe headers (no auth — public assets).
+  // Legacy path — only reached when arc-storage isn't installed.
   if (req.method === 'GET' && pathname.startsWith('/uploads/')) {
     const _uf = _path.join(process.cwd(), 'public', pathname)
     if (_getStaticFiles().has(_uf)) {
@@ -256,6 +495,17 @@ async function _serveStatic(req, pathname) {
   // to the static-page admin guard below.
   const _r = _dispatch(req, pathname)
   if (!(_r instanceof Response) || _r.status !== 404) return _r
+  // arc-cms public page renderer: /p/:slug → server/cms/page-renderer.js if present.
+  // Opt-in: only fires if the project ships the module (cms init copies it).
+  if (req.method === 'GET' && pathname.startsWith('/p/')) {
+    const _slug = pathname.slice(3)
+    if (/^[a-z0-9][a-z0-9-]*$/i.test(_slug)) {
+      try {
+        const _pr = require(_path.join(process.cwd(), 'server', 'cms', 'page-renderer.js'))
+        if (_pr && _pr.renderCmsPage) return _pr.renderCmsPage(req, _db, _slug)
+      } catch (_e) { /* module missing or threw — fall through */ }
+    }
+  }
   // Guard unmatched /admin/* paths (these resolve to static admin HTML pages).
   // Routes that exist as @route handlers are already past us by this point.
   if (pathname === '/admin' || pathname.startsWith('/admin/')) {
@@ -266,14 +516,21 @@ async function _serveStatic(req, pathname) {
       if (!_roleOk(_sess.role, _need)) return Response.redirect('/admin/403', 302)
     }
   }
-  // Try dist/path.html then dist/path/index.html
+  // Try dist/path (literal), then dist/path.html, then dist/path/index.html
   const _sf = _getStaticFiles()
-  for (const _try of [pathname.replace(/\\/$/, '') + '.html', pathname.replace(/\\/$/, '') + '/index.html']) {
+  const _clean = pathname.replace(/\\/$/, '')
+  for (const _try of [_clean, _clean + '.html', _clean + '/index.html']) {
     const _fp = _path.join(_DIST_DIR, _try)
-    if (_sf.has(_fp)) {
+    if (_sf.has(_fp) || (_fs.existsSync(_fp) && _fs.statSync(_fp).isFile() && (_sf.add(_fp), true))) {
       const _ext = _path.extname(_fp)
       return new Response(Bun.file(_fp), { headers: { 'Content-Type': _MIME[_ext] ?? 'text/plain' } })
     }
+  }
+  // Dynamic-route fallback: try files like dist/admin/pages/[id].html for /admin/pages/3
+  const _dynFp = _matchDynamicRoute(_clean)
+  if (_dynFp) {
+    const _ext = _path.extname(_dynFp)
+    return new Response(Bun.file(_dynFp), { headers: { 'Content-Type': _MIME[_ext] ?? 'text/plain' } })
   }
   return _r
 }`
@@ -391,7 +648,7 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
       const _ob = opts?.orderBy ? Object.entries(opts.orderBy).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
       const _order = _ob ? \` ORDER BY \${_ob}\` : ''
       if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT ? OFFSET ?\`).all(Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
-      const _fs = new Set(_${tableName}_fields)
+      const _fs = new Set([..._${tableName}_fields, 'id'])
       const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${tableName}.findMany: unknown field: \${k}\`); return \`"\${k}" = ?\` })
       return _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')}\${_order} LIMIT ? OFFSET ?\`).all(...Object.values(_w), Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
     },
@@ -400,13 +657,13 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
       const _ob = opts?.orderBy ? Object.entries(opts.orderBy).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
       const _order = _ob ? \` ORDER BY \${_ob}\` : ''
       if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT 1\`).get() ?? null
-      const _fs = new Set(_${tableName}_fields)
+      const _fs = new Set([..._${tableName}_fields, 'id'])
       const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${tableName}.findFirst: unknown field: \${k}\`); return \`"\${k}" = ?\` })
       return _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')}\${_order} LIMIT 1\`).get(...Object.values(_w)) ?? null
     },
     findUnique: (opts = {}) => {
       const _w = opts?.where; if (!_w) throw new Error('${tableName}.findUnique: where is required')
-      const _fs = new Set(_${tableName}_fields)
+      const _fs = new Set([..._${tableName}_fields, 'id'])
       const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${tableName}.findUnique: unknown field: \${k}\`); return \`"\${k}" = ?\` })
       const _rs = _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')} LIMIT 2\`).all(...Object.values(_w))
       if (_rs.length > 1) throw Object.assign(new Error('${tableName}.findUnique: multiple rows'), { status: 400 })
@@ -414,7 +671,7 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
     },
     find: (id) => _q_${tableName}_find.get(id) ?? null,
     ${colList ? `create: (data) => { const _d = _pick(data, _${tableName}_fields); const _miss = _${tableName}_required.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${tableName}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _q_${tableName}_create.get(${fields.map(f => `_d.${f.name}`).join(', ')}) },` : ''}
-    ${colList ? `update: (id, data) => { const _d = _pick(data, _${tableName}_fields); return _q_${tableName}_update.get(${fields.map(f => `_d.${f.name}`).join(', ')}, id) },` : ''}
+    ${colList ? `update: (idOrOpts, data) => { let _id = idOrOpts, _dd = data; if (idOrOpts !== null && typeof idOrOpts === 'object' && idOrOpts.where) { _id = idOrOpts.where.id; _dd = idOrOpts.data ?? {}; } const _d = _pick(_dd ?? {}, _${tableName}_fields); const _ks = Object.keys(_d); if (!_ks.length) return null; const _sets = _ks.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(', '); return _db.query('UPDATE ${tableName} SET ' + _sets + ' WHERE id = ?' + (_ks.length + 1) + ' RETURNING *').get(..._ks.map(k => _d[k]), _id) ?? null },` : ''}
     delete: (id) => (_q_${tableName}_delete.run(id), true),
     count: () => _q_${tableName}_count.get()?.count ?? 0,
   }
@@ -532,10 +789,26 @@ ${dbEntries}
     const body = job.body?.type === 'BlockStatement'
       ? emitRouteBody(job.body.body, this.jsEmitter)
       : ''
+
+    const meta = []
+    if (job.schedule) meta.push(`@schedule ${job.schedule}`)
+    if (job.priority !== 'normal') meta.push(`@priority ${job.priority}`)
+    if (job.unique) meta.push(`@unique`)
+
+    // @progress: inject `job` context with progress() method
+    const progressInject = job.hasProgress
+      ? `const job = { progress: async (pct, meta = {}) => { if (typeof _currentJobId !== 'undefined') { await _queues?.${job.queueName ?? 'default'}?.updateProgress(_currentJobId, pct, meta) } } }`
+      : ''
+
+    // @then: auto-enqueue target job on success (emitted after body)
+    const thenChain = job.thenJob && _SAFE_IDENT.test(job.thenJob)
+      ? `await ${job.thenJob}(...[${params}])`
+      : ''
+
     return `
-// Job: ${job.name}
+// Job: ${job.name}${meta.length ? ' ' + meta.join(' ') : ''}
 async function _job_${job.name}(${params}) {
-  ${body}
+  ${progressInject ? progressInject + '\n  ' : ''}${body}${thenChain ? '\n  ' + thenChain : ''}
 }`.trim()
   }
 
@@ -572,12 +845,13 @@ async function _job_${job.name}(${params}) {
       walk(node.body)
       walk(node.left); walk(node.right)
       walk(node.test); walk(node.consequent); walk(node.alternate)
-      walk(node.callee); walk(node.arguments)
+      walk(node.callee); walk(node.args); walk(node.arguments)
       walk(node.object); walk(node.property)
       walk(node.elements); walk(node.properties)
       walk(node.value); walk(node.init)
-      walk(node.expression); walk(node.declarations)
+      walk(node.expression); walk(node.expr); walk(node.declarations)
       walk(node.argument); walk(node.params)
+      walk(node.subject); walk(node.arms); walk(node.pattern)
     }
     for (const n of nodes) walk(n)
     return refs
@@ -693,9 +967,15 @@ async function ${name}(req, params) {
 }`.trim()
     }
 
-    const body = route.body?.type === 'BlockStatement'
-      ? emitRouteBody(route.body.body, this.jsEmitter)
-      : ''
+    let body
+    try {
+      body = route.body?.type === 'BlockStatement'
+        ? emitRouteBody(route.body.body, this.jsEmitter)
+        : ''
+    } catch (_e) {
+      console.error(`arc: emitter crash on route ${route.method} ${route.path}: ${_e?.message}`)
+      throw _e
+    }
 
     // Item 11: RBAC auth guard
     // If route belongs to a group, use the shared guard function (1 line vs 12 inline)

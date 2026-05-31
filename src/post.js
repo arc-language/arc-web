@@ -16,6 +16,12 @@ const _CSS_WS_RE = /\s+/g
 const _CSS_TOKEN_RE = /\s*([{}:;,>+~])\s*/g
 const _CSS_SEMI_BRACE_RE = /;}/g
 const _CSS_RESTORE_RE = /__S(\d+)__/g
+const _CSS_ZERO_UNIT_RE = /\b0(px|em|rem|pt|ex|ch|cm|mm|in|vw|vh|vmin|vmax)\b/g
+const _CSS_LEAD_ZERO_RE = /(^|[:\s,\(])(-?)0\.(\d)/g
+const _CSS_TRAIL_ZERO_RE = /(\.\d*[1-9])0+(?=[\s;},\)]|$)/g
+const _CSS_HEX6_RE = /#([0-9a-f])\1([0-9a-f])\2([0-9a-f])\3\b/gi
+const _CSS_4VAL_1_RE = /\b(margin|padding|border-radius|border-width|inset):([\w.%]+) \2 \2 \2(?=[;}])/g
+const _CSS_4VAL_2_RE = /\b(margin|padding|border-radius|border-width|inset):([\w.%]+) ([\w.%]+) \2 \3(?=[;}])/g
 const _RH_EXTERNAL_RE = /(?:href|src)="(https?:\/\/[^/"]+)/g
 
 class PostProcessor {
@@ -109,6 +115,18 @@ class PostProcessor {
     s = s.replace(_CSS_TOKEN_RE, '$1')
     // Drop trailing ; right before }
     s = s.replace(_CSS_SEMI_BRACE_RE, '}')
+    // Strip units from zero values: 0px → 0, 0em → 0, etc.
+    s = s.replace(_CSS_ZERO_UNIT_RE, '0')
+    // Strip leading zeros: 0.5 → .5
+    s = s.replace(_CSS_LEAD_ZERO_RE, (_, pre, sign, digits) => `${pre}${sign}.${digits}`)
+    // Strip trailing zeros after decimal: .10 → .1
+    s = s.replace(_CSS_TRAIL_ZERO_RE, '$1')
+    // Shorten 6-digit hex to 3-digit where possible: #aabbcc → #abc
+    s = s.replace(_CSS_HEX6_RE, '#$1$2$3')
+    // Collapse identical 4-value shorthands: margin:8px 8px 8px 8px → margin:8px
+    s = s.replace(_CSS_4VAL_1_RE, '$1:$2')
+    // Collapse symmetric 4-value shorthands: margin:8px 16px 8px 16px → margin:8px 16px
+    s = s.replace(_CSS_4VAL_2_RE, '$1:$2 $3')
     s = s.trim()
     // Restore strings
     s = s.replace(_CSS_RESTORE_RE, (_, i) => strings[parseInt(i, 10)])

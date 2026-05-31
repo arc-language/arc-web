@@ -266,10 +266,31 @@ class Optimizer {
       return undefined
     }
 
+    if (expr.type === 'TernaryExpr') {
+      const cond = this.resolveExprWithBindings(expr.condition, bindings)
+      if (cond !== undefined) {
+        return cond
+          ? this.resolveExprWithBindings(expr.consequent, bindings)
+          : this.resolveExprWithBindings(expr.alternate, bindings)
+      }
+      return undefined
+    }
+
     if (expr.type === 'NullCoalesce') {
       const l = this.resolveExprWithBindings(expr.left, bindings)
       if (l !== null && l !== undefined) return l
       return this.resolveExprWithBindings(expr.right, bindings)
+    }
+
+    if (expr.type === 'CallExpr' && expr.callee?.type === 'MemberExpr' && !expr.callee.computed) {
+      const receiver = this.resolveExprWithBindings(expr.callee.object, bindings)
+      if (receiver === undefined || receiver === null) return undefined
+      const methodName = expr.callee.property?.name ?? expr.callee.property?.value
+      const fn = receiver[methodName]
+      if (typeof fn !== 'function') return undefined
+      const args = (expr.args ?? []).map(a => this.resolveExprWithBindings(a, bindings))
+      if (args.some(a => a === undefined)) return undefined
+      try { return fn.apply(receiver, args) } catch { return undefined }
     }
 
     return undefined
@@ -278,15 +299,56 @@ class Optimizer {
   substituteExpr(expr, bindings) {
     if (!expr || typeof expr !== 'object') return expr
     const val = this.resolveExprWithBindings(expr, bindings)
-    if (val === undefined) return expr
-    // Only inline primitives. Objects/arrays wrapped in Literal would serialize
-    // as `[object Object]` via String(val), corrupting downstream emitters that
-    // read .raw. Leave them as the original expression.
-    const t = typeof val
-    if (t !== 'string' && t !== 'number' && t !== 'boolean' && val !== null) {
+    if (val !== undefined) {
+      // Only inline primitives. Objects/arrays wrapped in Literal would serialize
+      // as `[object Object]` via String(val), corrupting downstream emitters that
+      // read .raw. Leave them as the original expression.
+      const t = typeof val
+      if (t === 'string' || t === 'number' || t === 'boolean' || val === null) {
+        return N.Literal(val, String(val), expr.line)
+      }
       return expr
     }
-    return N.Literal(val, String(val), expr.line)
+    // Can't fully resolve — recursively substitute into sub-expressions so that
+    // partially-known bindings (e.g. item.href within a ternary) are inlined.
+    // This prevents unresolved loop-variable identifiers from leaking into the
+    // HtmlEmitter where they'd be misclassified as reactive state references.
+    return this._deepSubstituteExpr(expr, bindings)
+  }
+
+  _deepSubstituteExpr(expr, bindings) {
+    if (!expr || typeof expr !== 'object') return expr
+    switch (expr.type) {
+      case 'Literal': return expr
+      case 'Identifier':
+      case 'MemberExpr':
+      case 'OptionalChain':
+      case 'CallExpr': {
+        // Try full resolution first
+        const v = this.resolveExprWithBindings(expr, bindings)
+        if (v !== undefined) {
+          const t = typeof v
+          if (t === 'string' || t === 'number' || t === 'boolean' || v === null) {
+            return N.Literal(v, String(v), expr.line)
+          }
+        }
+        return expr
+      }
+      case 'BinaryExpr':
+        return { ...expr, left: this._deepSubstituteExpr(expr.left, bindings), right: this._deepSubstituteExpr(expr.right, bindings) }
+      case 'UnaryExpr':
+        return { ...expr, operand: this._deepSubstituteExpr(expr.operand, bindings) }
+      case 'LogicalExpr':
+        return { ...expr, left: this._deepSubstituteExpr(expr.left, bindings), right: this._deepSubstituteExpr(expr.right, bindings) }
+      case 'TernaryExpr':
+        return { ...expr, condition: this._deepSubstituteExpr(expr.condition, bindings), consequent: this._deepSubstituteExpr(expr.consequent, bindings), alternate: this._deepSubstituteExpr(expr.alternate, bindings) }
+      case 'NullCoalesce':
+        return { ...expr, left: this._deepSubstituteExpr(expr.left, bindings), right: this._deepSubstituteExpr(expr.right, bindings) }
+      case 'TemplateLiteral':
+        return { ...expr, parts: expr.parts.map(p => this._deepSubstituteExpr(p, bindings)) }
+      default:
+        return expr
+    }
   }
 
   applyOp(op, l, r) {

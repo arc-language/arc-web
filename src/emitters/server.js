@@ -14,8 +14,7 @@ const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
 // Inlined ADP encode/decode for generated edge workers (no require() in CF Workers ESM)
 const ADP_EDGE_RUNTIME = `
-// ADP encode/decode: inlined by Arc compiler (singletons avoid per-call allocation)
-const _adpTenc=new TextEncoder();const _adpTdec=new TextDecoder()
+const _adpTenc=new TextEncoder(),_adpTdec=new TextDecoder()
 function _adpEncode(val){
   const b=[]
   function w(v){
@@ -38,7 +37,6 @@ function _adpEncodeArray(items){
   vi(items.length);for(const item of items){const r=_adpEncode(item);for(const x of r)b.push(x)}
   return new Uint8Array(b)
 }
-// ADP decode: inlined by Arc compiler
 function _adpDecode(buf){
   let p=0
   function rv(){
@@ -115,64 +113,56 @@ class ServerEmitter {
     }).join('; ')
 
     return [
-      `// @server fn ${fn.name}`,
-      `async function _handler_${fn.name}(req) {`,
-      `  const _clientId = req.headers.get('x-request-id') ?? ''`,
-      `  const _traceId = /^[a-zA-Z0-9_-]{1,64}$/.test(_clientId) ? _clientId : Math.random().toString(36).slice(2, 10)`,
-      `  try {`,
-      `    // Parse ADP or JSON request body`,
-      `    const _body = req.method === 'POST' ? await _parseBody(req) : {}`,
-      paramExtract ? `    ${paramExtract}` : '',
-      `    const _session = req._arc_session ?? {}  // injected by auth middleware`,
-      `    const _result = await (async function() {`,
-      `      ${body}`,
-      `    })()`,
-      `    const _encoded = Array.isArray(_result) ? _adpEncodeArray(_result) : _adpEncode(_result)`,
-      `    return new Response(_encoded, {`,
-      `      headers: { 'Content-Type': 'application/x-adp', 'Content-Length': String(_encoded.length) }`,
-      `    })`,
-      `  } catch (_e) {`,
-      `    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, fn: '${fn.name}', msg: _e?.message ?? String(_e) }))`,
-      `    return new Response(JSON.stringify({ error: 'Internal server error' }), {`,
-      `      status: 500, headers: { 'Content-Type': 'application/json' }`,
-      `    })`,
-      `  }`,
+      `async function _handler_${fn.name}(req){`,
+      `const _clientId=req.headers.get('x-request-id')??''`,
+      `const _traceId=/^[a-zA-Z0-9_-]{1,64}$/.test(_clientId)?_clientId:Math.random().toString(36).slice(2,10)`,
+      `try{`,
+      `const _body=req.method==='POST'?await _parseBody(req):{}`,
+      paramExtract ? `${paramExtract}` : '',
+      `const _session=req._arc_session??{}`,
+      `const _result=await(async function(){`,
+      `${body}`,
+      `})()`,
+      `const _encoded=Array.isArray(_result)?_adpEncodeArray(_result):_adpEncode(_result)`,
+      `return new Response(_encoded,{headers:{'Content-Type':'application/x-adp','Content-Length':String(_encoded.length)}})`,
+      `}catch(_e){`,
+      `console.error(JSON.stringify({ts:new Date().toISOString(),level:'error',traceId:_traceId,fn:'${fn.name}',msg:_e?.message??String(_e)}))`,
+      `return new Response(JSON.stringify({error:'Internal server error'}),{status:500,headers:{'Content-Type':'application/json'}})`,
+      `}`,
       `}`,
       ``,
-    ].filter(s => s !== '').join('\n')
+    ].filter(Boolean).join('\n')
   }
 
   emitEdgeRouter(serverFns) {
     const cases = serverFns.map(fn =>
-      `  if (_path === '/_arc/fn/${fn.name}') return _handler_${fn.name}(req)`
+      `if(_path==='/_arc/fn/${fn.name}')return _handler_${fn.name}(req)`
     ).join('\n')
 
     return [
-      `async function _parseBody(req) {`,
-      `  const ct = req.headers.get?.('content-type') ?? req.headers['content-type'] ?? ''`,
-      `  const cl = Number(req.headers.get?.('content-length') ?? req.headers['content-length'] ?? '0')`,
-      `  if (Number.isInteger(cl) && cl > 1048576) throw new Error('Request body too large (max 1MB)')`,
-      `  const buf = await req.arrayBuffer()`,
-      `  if (buf.byteLength > 1048576) throw new Error('Request body too large (max 1MB)')`,
-      `  if (ct.includes('application/x-adp')) {`,
-      `    const decoded = _adpDecode(new Uint8Array(buf))`,
-      `    return (decoded !== null && typeof decoded === 'object' && !Array.isArray(decoded)) ? decoded : {}`,
-      `  }`,
-      `  const text = _adpTdec.decode(buf) || '{}'`,
-      `  try { const p = JSON.parse(text); return (p !== null && typeof p === 'object' && !Array.isArray(p)) ? p : {} } catch { throw new Error('Invalid request body: expected JSON or ADP') }`,
+      `async function _parseBody(req){`,
+      `const ct=req.headers.get?.('content-type')??req.headers['content-type']??''`,
+      `const cl=Number(req.headers.get?.('content-length')??req.headers['content-length']??'0')`,
+      `if(Number.isInteger(cl)&&cl>1048576)throw new Error('Request body too large (max 1MB)')`,
+      `const buf=await req.arrayBuffer()`,
+      `if(buf.byteLength>1048576)throw new Error('Request body too large (max 1MB)')`,
+      `if(ct.includes('application/x-adp')){`,
+      `const decoded=_adpDecode(new Uint8Array(buf))`,
+      `return(decoded!==null&&typeof decoded==='object'&&!Array.isArray(decoded))?decoded:{}`,
+      `}`,
+      `const text=_adpTdec.decode(buf)||'{}'`,
+      `try{const p=JSON.parse(text);return(p!==null&&typeof p==='object'&&!Array.isArray(p))?p:{}}catch{throw new Error('Invalid request body: expected JSON or ADP')}`,
       `}`,
       ``,
-      `// Cloudflare Workers / WinterCG fetch handler`,
-      `export default {`,
-      `  async fetch(req) {`,
-      `    let _path; try { _path = new URL(req.url).pathname } catch { return new Response('Bad Request', { status: 400 }) }`,
+      `export default{`,
+      `async fetch(req){`,
+      `let _path;try{_path=new URL(req.url).pathname}catch{return new Response('Bad Request',{status:400})}`,
       `${cases}`,
-      `    return new Response('Not Found', { status: 404 })`,
-      `  }`,
+      `return new Response('Not Found',{status:404})`,
+      `}`,
       `}`,
       ``,
-      `// Node.js / Bun / Deno adapter`,
-      `if (typeof module !== 'undefined') module.exports = { ${serverFns.map(f => `_handler_${f.name}`).join(', ')} }`,
+      `if(typeof module!=='undefined')module.exports={${serverFns.map(f => `_handler_${f.name}`).join(',')}}`,
     ].join('\n')
   }
 
@@ -187,7 +177,7 @@ class ServerEmitter {
       parts.push(this.emitClientStub(fn))
     }
 
-    return parts.join('\n')
+    return parts.join('')
   }
 
   emitClientStub(fn) {
@@ -203,25 +193,25 @@ class ServerEmitter {
       : 'null'
 
     return [
-      `async function ${fn.name}(${params}) {`,
-      `  const _ctrl = new AbortController()`,
-      `  const _tid = setTimeout(() => _ctrl.abort(), 30000)`,
-      `  try {`,
-      `    const _res = await fetch('/_arc/fn/${fn.name}', {`,
-      `      method: 'POST',`,
-      `      headers: {'Content-Type': 'application/x-adp'},`,
-      `      body: _adpEncode(${argObj}),`,
-      `      signal: _ctrl.signal`,
-      `    })`,
-      `    if (!_res.ok) {`,
-      `      const _et = await _res.text()`,
-      `      let _em; try { _em = JSON.parse(_et).error ?? _et } catch { _em = _et }`,
-      `      throw new Error(_em)`,
-      `    }`,
-      `    const _buf = await _res.arrayBuffer()`,
-      `    if (_buf.byteLength > 10 * 1024 * 1024) throw new Error('Response too large')`,
-      `    return _adpDecode(new Uint8Array(_buf))`,
-      `  } finally { clearTimeout(_tid) }`,
+      `async function ${fn.name}(${params}){`,
+      `const _ctrl=new AbortController()`,
+      `const _tid=setTimeout(()=>_ctrl.abort(),30000)`,
+      `try{`,
+      `const _res=await fetch('/_arc/fn/${fn.name}',{`,
+      `method:'POST',`,
+      `headers:{'Content-Type':'application/x-adp'},`,
+      `body:_adpEncode(${argObj}),`,
+      `signal:_ctrl.signal`,
+      `})`,
+      `if(!_res.ok){`,
+      `const _et=await _res.text()`,
+      `let _em;try{_em=JSON.parse(_et).error??_et}catch{_em=_et}`,
+      `throw new Error(_em)`,
+      `}`,
+      `const _buf=await _res.arrayBuffer()`,
+      `if(_buf.byteLength>10*1024*1024)throw new Error('Response too large')`,
+      `return _adpDecode(new Uint8Array(_buf))`,
+      `}finally{clearTimeout(_tid)}`,
       `}`,
     ].join('\n')
   }
