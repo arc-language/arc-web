@@ -1,6 +1,5 @@
 page "Sign in - Admin"
 
-  @raw '<link rel="preconnect" href="https://api.fontshare.com"><link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=chillax@400,500,600,700&f[]=satoshi@400,500,700&display=swap">'
   @raw '<link rel="stylesheet" href="/arc-ui/arc-ui.css">'
   @raw '<style>:root{--brand-from:#00e5ff;--brand-to:#7b2fff;--ui-bg:#f0f7ff;--ui-fg:#050d1f;--ui-fg-2:#1e3a5f;--ui-fg-3:#4a6080;--ui-border:rgba(123,47,255,.28);--ui-accent:#7b2fff;--ui-accent-glass:rgba(123,47,255,.12);--ui-error:#dc2626;--glass-bg:rgba(0,0,0,.04);--glass-border:rgba(123,47,255,.18);--glass-blur:0px;--glass-saturate:100%}.input{color:#050d1f!important;background:rgba(255,255,255,.8)!important;color-scheme:light}@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ui-bg:#03040f;--ui-fg:#edf4ff;--ui-fg-2:#8ba8d4;--ui-fg-3:#3d5475;--ui-border:rgba(0,229,255,.14);--ui-accent:#00e5ff;--ui-accent-glass:rgba(0,229,255,.12)}}:root[data-theme="dark"]{--ui-bg:#03040f;--ui-fg:#edf4ff;--ui-fg-2:#8ba8d4;--ui-fg-3:#3d5475;--ui-border:rgba(0,229,255,.14);--ui-accent:#00e5ff;--ui-accent-glass:rgba(0,229,255,.12)}</style>'
 
