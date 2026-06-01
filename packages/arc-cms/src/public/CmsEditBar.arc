@@ -16,6 +16,7 @@ widget CmsEditBar(pageId: String, pageTitle: String, published: Bool = false)
 #cms-edit-bar .ceb-publish:hover{background:rgba(255,255,255,0.25);}
 #cms-edit-bar .ceb-publish:focus-visible{outline:2px solid rgba(255,255,255,0.5);outline-offset:3px;}
 #cms-edit-bar .ceb-publish.published{background:rgba(74,222,128,0.2);color:#4ade80;}
+#cms-edit-bar .ceb-publish:disabled{opacity:0.4;cursor:not-allowed;}
 </style>`
 
   div id="cms-edit-bar" data-cms-page="{pageId}"
@@ -73,7 +74,7 @@ widget CmsEditBar(pageId: String, pageTitle: String, published: Bool = false)
       el.addEventListener("mouseover",function(){if(document.activeElement!==el){el.style.outline="2px solid rgba(92,143,255,0.6)";el.style.outlineOffset="3px";}});
       el.addEventListener("mouseout",function(){if(document.activeElement!==el)el.style.outline="";});
       var escaping=false;
-      el.addEventListener("click",function(e){e.stopPropagation();el._origVal=el.textContent;el.contentEditable="true";el.style.outline="2px solid rgba(92,143,255,1)";el.focus();});
+      el.addEventListener("click",function(e){e.stopPropagation();if(el.contentEditable!=="true")el._origVal=el.textContent;el.contentEditable="true";el.style.outline="2px solid rgba(92,143,255,1)";el.focus();});
       el.addEventListener("blur",function(){el.contentEditable="false";el.style.outline="";if(escaping){escaping=false;return;}var val=isMultiline?el.textContent:el.textContent.replace(/[\r\n]/g,"");if(el._origVal!==undefined&&val===el._origVal)return;var key=blockId+"."+field+(itemIndex!==undefined?"."+itemIndex:"");dirty[key]={blockId:blockId,field:field,value:val,itemIndex:itemIndex};scheduleFlush();});
       el.addEventListener("keydown",function(e){if(!isMultiline&&e.key==="Enter"){e.preventDefault();el.blur();}if(e.key==="Escape"){escaping=true;el.textContent=el._origVal!==undefined?el._origVal:el.textContent;el.blur();}});
     });
@@ -94,13 +95,13 @@ widget CmsEditBar(pageId: String, pageTitle: String, published: Bool = false)
       var cancel=document.createElement("button");cancel.textContent="Cancel";cancel.style.cssText="padding:6px 14px;border-radius:7px;border:none;background:rgba(255,255,255,0.1);color:#e6edf3;cursor:pointer;font-size:13px;";
       var save=document.createElement("button");save.textContent="Save";save.style.cssText="padding:6px 14px;border-radius:7px;border:none;background:rgba(92,143,255,0.8);color:#fff;cursor:pointer;font-size:13px;font-weight:600;";
       cancel.onclick=function(){document.body.removeChild(overlay);_trigger.focus();};
-      overlay.addEventListener("keydown",function(e){if(e.key==="Escape")cancel.onclick();});
+      overlay.addEventListener("keydown",function(e){if(e.key==="Escape"){cancel.onclick();return;}if(e.key==="Tab"){var fl=[ta,cancel,save];var ci=fl.indexOf(document.activeElement);if(e.shiftKey){e.preventDefault();fl[(ci-1+fl.length)%fl.length].focus();}else if(ci===fl.length-1){e.preventDefault();fl[0].focus();}}});
       save.onclick=function(){var val=ta.value;var codeEl=pre.querySelector("code");if(codeEl)codeEl.textContent=val;dirty[blockId+".source"]={blockId:blockId,field:"source",value:val};scheduleFlush();document.body.removeChild(overlay);_trigger.focus();};
       btns.appendChild(cancel);btns.appendChild(save);box.appendChild(label);box.appendChild(ta);box.appendChild(btns);overlay.appendChild(box);document.body.appendChild(overlay);ta.focus();
     });
   });
   document.getElementById("cms-publish-btn").addEventListener("click",async function(){
-    var btn=this;btn.disabled=true;setStatus("Publishing…");
+    var btn=this;btn.disabled=true;clearTimeout(flushTimer);setStatus("Publishing…");
     try{if(flushPromise)await flushPromise;await flush();if(Object.keys(dirty).length){setStatus("Some edits failed to save","err");return;}
     var res=await fetch("/admin/pages/"+PAGE_ID+"/publish",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({published:true})});
     if(res.ok){setStatus("Published ✓","ok");btn.textContent="✓ Published";btn.className="ceb-publish published";}else{setStatus("Publish failed","err");}}catch(e){setStatus("Publish failed","err");}finally{btn.disabled=false;}
