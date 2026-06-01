@@ -1,7 +1,7 @@
-widget CodeBlock(language: String = "js", source: String = "", style: Any = {})
-  col class="cms-code" style="padding:{style.padding ?? '32px 24px'}; background:{style.background ?? 'transparent'}; text-align:{style.align ?? 'left'}"
+widget CodeBlock(blockId: String = "", language: String = "js", source: String = "", style: Any = {})
+  col class="cms-code" data-cms-block="{blockId}" style="padding:{style.padding ?? '32px 24px'}; background:{style.background ?? 'transparent'}; text-align:{style.align ?? 'left'}"
     col class="cms-code-inner" style="max-width:{style.maxWidth ?? '900px'}"
-      @raw '<pre class="cms-code-pre"><code class="lang-' + language + '">' + source + '</code></pre>'
+      @raw (function(){var _e=function(s){return String(s??'').replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]});};return '<pre class="cms-code-pre" data-cms-field="source" data-cms-lang="'+_e(language)+'"><code class="lang-'+_e(language)+'">'+_e(source)+'</code></pre>';})();
 
   design
     .cms-code
@@ -20,3 +20,7 @@ widget CodeBlock(language: String = "js", source: String = "", style: Any = {})
       line-height: 1.6
       overflow-x: auto
       margin: 0
+      cursor: pointer
+    .cms-code-pre:hover
+      outline: 2px solid rgba(92,143,255,0.6)
+      outline-offset: 3px

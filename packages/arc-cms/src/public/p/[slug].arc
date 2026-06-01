@@ -4,23 +4,25 @@ import FeaturesBlock from "site/blocks/FeaturesBlock.arc"
 import CtaBlock      from "site/blocks/CtaBlock.arc"
 import CodeBlock     from "site/blocks/CodeBlock.arc"
 import FaqBlock      from "site/blocks/FaqBlock.arc"
+import CmsEditBar    from "site/CmsEditBar.arc"
 
 page "Page"
 
   @param slug
 
   @server fn loadPage(pageSlug: String) -> Any
+    const isEditor = session && (session.role == "admin" || session.role == "editor")
     const pg = db.pages.findFirst({ where: { slug: pageSlug } })
     if !pg
-      return { found: false, page: null, blocks: [], theme: null }
-    if !pg.published
-      return { found: false, page: pg, blocks: [], theme: null }
+      return { found: false, page: null, blocks: [], theme: null, editable: false }
+    if !pg.published && !isEditor
+      return { found: false, page: pg, blocks: [], theme: null, editable: false }
     const blocks = db.pageblocks.findMany({ where: { page: pageSlug, visible: true }, orderBy: { order: "asc" } })
     const parsed = blocks.map(b => ({ id: b.id, type: b.type, data: JSON.parse(b.data ?? "{}") }))
     let theme = null
     if pg.themeId
       theme = db.themes.find(pg.themeId)
-    return { found: true, page: pg, blocks: parsed, theme: theme }
+    return { found: true, page: pg, blocks: parsed, theme: theme, editable: isEditor }
 
   @live const ctx = loadPage(slug)
 
@@ -36,22 +38,25 @@ page "Page"
     if ctx.page.ogImage
       meta og:image="{ctx.page.ogImage}"
 
-    @raw '<style>:root{' + (ctx.theme && ctx.theme.tokens ? Object.entries(JSON.parse(ctx.theme.tokens)).map(([k,v]) => '--cms-' + k + ':' + v).join(';') : '') + '}</style>'
+    @raw '<style>:root{' + (function(){try{if(!ctx.theme||!ctx.theme.tokens)return '';return Object.entries(JSON.parse(ctx.theme.tokens)).filter(function(e){return /^[a-zA-Z0-9-]+$/.test(e[0])}).map(function(e){return '--cms-'+e[0]+':'+String(e[1]).replace(/[{};<>"\']/g,'')}).join(';')}catch(e){return ''}})() + '}</style>'
+
+    if ctx.editable
+      CmsEditBar pageId="{ctx.page.id}" pageTitle="{ctx.page.title}" published={ctx.page.published}
 
     col class="cms-page"
       for block in ctx.blocks
         if block.type == "hero"
-          HeroBlock title="{block.data.title}" subtitle="{block.data.subtitle}" ctaLabel="{block.data.ctaLabel}" ctaHref="{block.data.ctaHref}" style={block.data._style}
+          HeroBlock blockId="{block.id}" title="{block.data.title}" subtitle="{block.data.subtitle}" ctaLabel="{block.data.ctaLabel}" ctaHref="{block.data.ctaHref}" style={block.data._style}
         if block.type == "text"
-          TextBlock heading="{block.data.heading}" body="{block.data.body}" style={block.data._style}
+          TextBlock blockId="{block.id}" heading="{block.data.heading}" body="{block.data.body}" style={block.data._style}
         if block.type == "features"
-          FeaturesBlock heading="{block.data.heading}" items={block.data.items} style={block.data._style}
+          FeaturesBlock blockId="{block.id}" heading="{block.data.heading}" items={block.data.items} style={block.data._style}
         if block.type == "cta"
-          CtaBlock heading="{block.data.heading}" buttonLabel="{block.data.buttonLabel}" buttonHref="{block.data.buttonHref}" style={block.data._style}
+          CtaBlock blockId="{block.id}" heading="{block.data.heading}" buttonLabel="{block.data.buttonLabel}" buttonHref="{block.data.buttonHref}" style={block.data._style}
         if block.type == "code"
-          CodeBlock language="{block.data.language}" source="{block.data.source}" style={block.data._style}
+          CodeBlock blockId="{block.id}" language="{block.data.language}" source="{block.data.source}" style={block.data._style}
         if block.type == "faq"
-          FaqBlock items={block.data.items} style={block.data._style}
+          FaqBlock blockId="{block.id}" items={block.data.items} style={block.data._style}
 
   design
     body
