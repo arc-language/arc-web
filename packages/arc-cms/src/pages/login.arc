@@ -31,7 +31,7 @@ page "Sign in - Admin"
   design
     body
       margin: 0
-      font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif
+      font-family: var(--font-body)
       background-color: #f0f4ff
     .login-bg
       min-height: 100vh
