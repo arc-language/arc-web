@@ -343,7 +343,7 @@ class CssEmitter {
     return `@layer base {
   *, *::before, *::after { box-sizing: border-box }
   :root {
-    --arc-font-sans: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+    --arc-font-sans: 'Satoshi', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     --arc-font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
     --arc-font-serif: Lora, Georgia, serif;
     --arc-radius-sm: 4px;
