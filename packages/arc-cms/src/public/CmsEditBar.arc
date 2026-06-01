@@ -74,13 +74,14 @@ widget CmsEditBar(pageId: String, pageTitle: String, published: Bool = false)
       el.addEventListener("mouseout",function(){if(document.activeElement!==el)el.style.outline="";});
       var escaping=false;
       el.addEventListener("click",function(e){e.stopPropagation();el._origVal=el.textContent;el.contentEditable="true";el.style.outline="2px solid rgba(92,143,255,1)";el.focus();});
-      el.addEventListener("blur",function(){el.contentEditable="false";el.style.outline="";if(escaping){escaping=false;return;}var val=isMultiline?el.textContent:el.textContent.replace(/[\r\n]/g,"");var key=blockId+"."+field+(itemIndex!==undefined?"."+itemIndex:"");dirty[key]={blockId:blockId,field:field,value:val,itemIndex:itemIndex};scheduleFlush();});
+      el.addEventListener("blur",function(){el.contentEditable="false";el.style.outline="";if(escaping){escaping=false;return;}var val=isMultiline?el.textContent:el.textContent.replace(/[\r\n]/g,"");if(el._origVal!==undefined&&val===el._origVal)return;var key=blockId+"."+field+(itemIndex!==undefined?"."+itemIndex:"");dirty[key]={blockId:blockId,field:field,value:val,itemIndex:itemIndex};scheduleFlush();});
       el.addEventListener("keydown",function(e){if(!isMultiline&&e.key==="Enter"){e.preventDefault();el.blur();}if(e.key==="Escape"){escaping=true;el.textContent=el._origVal!==undefined?el._origVal:el.textContent;el.blur();}});
     });
   });
   document.querySelectorAll("[data-cms-block] [data-cms-field='source']").forEach(function(pre){
     var block=pre.closest("[data-cms-block]");
     var blockId=block.getAttribute("data-cms-block");
+    pre.setAttribute("role","button");pre.setAttribute("tabindex","0");pre.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();pre.click();}});
     pre.addEventListener("click",function(){
       var lang=pre.getAttribute("data-cms-lang")||"js";
       var cur=(pre.querySelector("code")||{}).textContent||"";
@@ -88,22 +89,21 @@ widget CmsEditBar(pageId: String, pageTitle: String, published: Bool = false)
       var overlay=document.createElement("div");overlay.style.cssText="position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;";overlay.setAttribute("role","dialog");overlay.setAttribute("aria-modal","true");overlay.setAttribute("aria-label","Edit code");
       var box=document.createElement("div");box.style.cssText="background:#0d1117;border-radius:12px;padding:20px;width:min(800px,90vw);display:flex;flex-direction:column;gap:12px;";
       var label=document.createElement("div");label.style.cssText="color:#e6edf3;font-size:13px;font-weight:600;";label.textContent="Edit code ("+lang+")";
-      var ta=document.createElement("textarea");ta.value=cur;ta.style.cssText="width:100%;height:280px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:12px;font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:13px;line-height:1.6;resize:vertical;box-sizing:border-box;";
+      var ta=document.createElement("textarea");ta.value=cur;ta.style.cssText="width:100%;height:280px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:12px;font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:13px;line-height:1.6;resize:vertical;box-sizing:border-box;";ta.spellcheck=false;ta.setAttribute("autocorrect","off");ta.setAttribute("autocapitalize","off");ta.setAttribute("autocomplete","off");
       var btns=document.createElement("div");btns.style.cssText="display:flex;gap:8px;justify-content:flex-end;";
       var cancel=document.createElement("button");cancel.textContent="Cancel";cancel.style.cssText="padding:6px 14px;border-radius:7px;border:none;background:rgba(255,255,255,0.1);color:#e6edf3;cursor:pointer;font-size:13px;";
       var save=document.createElement("button");save.textContent="Save";save.style.cssText="padding:6px 14px;border-radius:7px;border:none;background:rgba(92,143,255,0.8);color:#fff;cursor:pointer;font-size:13px;font-weight:600;";
       cancel.onclick=function(){document.body.removeChild(overlay);_trigger.focus();};
       overlay.addEventListener("keydown",function(e){if(e.key==="Escape")cancel.onclick();});
-      save.onclick=function(){var val=ta.value;pre.querySelector("code").textContent=val;dirty[blockId+".source"]={blockId:blockId,field:"source",value:val};scheduleFlush();document.body.removeChild(overlay);};
+      save.onclick=function(){var val=ta.value;var codeEl=pre.querySelector("code");if(codeEl)codeEl.textContent=val;dirty[blockId+".source"]={blockId:blockId,field:"source",value:val};scheduleFlush();document.body.removeChild(overlay);_trigger.focus();};
       btns.appendChild(cancel);btns.appendChild(save);box.appendChild(label);box.appendChild(ta);box.appendChild(btns);overlay.appendChild(box);document.body.appendChild(overlay);ta.focus();
     });
   });
   document.getElementById("cms-publish-btn").addEventListener("click",async function(){
-    if(flushPromise)await flushPromise;
-    await flush();
-    setStatus("Publishing…");
-    try{var res=await fetch("/admin/pages/"+PAGE_ID+"/publish",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({published:true})});
-    if(res.ok){setStatus("Published ✓","ok");var btn=document.getElementById("cms-publish-btn");btn.textContent="✓ Published";btn.className="ceb-publish published";}else{setStatus("Publish failed","err");}}catch(e){setStatus("Publish failed","err");}
+    var btn=this;btn.disabled=true;setStatus("Publishing…");
+    try{if(flushPromise)await flushPromise;await flush();if(Object.keys(dirty).length){setStatus("Some edits failed to save","err");return;}
+    var res=await fetch("/admin/pages/"+PAGE_ID+"/publish",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({published:true})});
+    if(res.ok){setStatus("Published ✓","ok");btn.textContent="✓ Published";btn.className="ceb-publish published";}else{setStatus("Publish failed","err");}}catch(e){setStatus("Publish failed","err");}finally{btn.disabled=false;}
   });
   return true;
   }

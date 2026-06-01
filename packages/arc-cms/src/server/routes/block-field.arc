@@ -18,7 +18,11 @@
   if !block
     return json({ error: "Block not found" }, 404)
 
-  const data = JSON.parse(block.data ?? "{}")
+  let data = {}
+  try
+    data = JSON.parse(block.data ?? "{}")
+  catch
+    return json({ error: "Block data corrupted" }, 500)
 
   # Item field for array blocks like features or faq
   if body.itemIndex != null
@@ -29,7 +33,7 @@
   else
     data[field] = value
 
-  db.pageblocks.update(blockId, { data: JSON.stringify(data) })
+  db.pageblocks.update(blockId, { data: JSON.stringify(data), updatedAt: now() })
 
   if session
     db.auditlogs.create({ actorId: session.userId, action: "update", entityType: "Block", entityId: String(blockId) })
