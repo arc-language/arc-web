@@ -40,6 +40,7 @@ widget CmsEditBar(pageId: String, pageTitle: String, published: Bool = false)
   var dirty={};
   var flushing=false;
   var flushTimer=null;
+  var flushPromise=null;
   var status=document.getElementById("cms-status");
   function setStatus(msg,cls){status.textContent=msg;status.className="ceb-status"+(cls?" "+cls:"");if(cls==="ok")setTimeout(function(){status.textContent="";status.className="ceb-status";},2500);}
   function scheduleFlush(){clearTimeout(flushTimer);flushTimer=setTimeout(flush,700);}
@@ -48,8 +49,7 @@ widget CmsEditBar(pageId: String, pageTitle: String, published: Bool = false)
     flushing=true;
     setStatus("Saving…");
     var snapshot=dirty;dirty={};var ok=true;
-    await Promise.all(Object.entries(snapshot).map(function(kv){var key=kv[0],p=kv[1];return fetch("/admin/api/blocks/"+p.blockId+"/field",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({field:p.field,value:p.value,itemIndex:p.itemIndex})}).then(function(r){if(!r.ok){dirty[key]=p;ok=false;}}).catch(function(){dirty[key]=p;ok=false;});}));
-    flushing=false;
+    try{flushPromise=Promise.all(Object.entries(snapshot).map(function(kv){var key=kv[0],p=kv[1];return fetch("/admin/api/blocks/"+p.blockId+"/field",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({field:p.field,value:p.value,itemIndex:p.itemIndex})}).then(function(r){if(!r.ok){dirty[key]=p;ok=false;}}).catch(function(){dirty[key]=p;ok=false;});}));await flushPromise;}finally{flushing=false;flushPromise=null;}
     setStatus(ok?"Saved ✓":"Error saving",ok?"ok":"err");
   }
   document.querySelectorAll("[data-cms-block]").forEach(function(block){
@@ -73,8 +73,8 @@ widget CmsEditBar(pageId: String, pageTitle: String, published: Bool = false)
       el.addEventListener("mouseover",function(){if(document.activeElement!==el){el.style.outline="2px solid rgba(92,143,255,0.6)";el.style.outlineOffset="3px";}});
       el.addEventListener("mouseout",function(){if(document.activeElement!==el)el.style.outline="";});
       var escaping=false;
-      el.addEventListener("click",function(e){e.stopPropagation();el._origVal=el.textContent;el.contentEditable=isMultiline?"true":"plaintext-only";el.style.outline="2px solid rgba(92,143,255,1)";el.focus();});
-      el.addEventListener("blur",function(){el.contentEditable="false";el.style.outline="";if(escaping){escaping=false;return;}var val=el.textContent;var key=blockId+"."+field+(itemIndex!==undefined?"."+itemIndex:"");dirty[key]={blockId:blockId,field:field,value:val,itemIndex:itemIndex};scheduleFlush();});
+      el.addEventListener("click",function(e){e.stopPropagation();el._origVal=el.textContent;el.contentEditable="true";el.style.outline="2px solid rgba(92,143,255,1)";el.focus();});
+      el.addEventListener("blur",function(){el.contentEditable="false";el.style.outline="";if(escaping){escaping=false;return;}var val=isMultiline?el.textContent:el.textContent.replace(/[\r\n]/g,"");var key=blockId+"."+field+(itemIndex!==undefined?"."+itemIndex:"");dirty[key]={blockId:blockId,field:field,value:val,itemIndex:itemIndex};scheduleFlush();});
       el.addEventListener("keydown",function(e){if(!isMultiline&&e.key==="Enter"){e.preventDefault();el.blur();}if(e.key==="Escape"){escaping=true;el.textContent=el._origVal!==undefined?el._origVal:el.textContent;el.blur();}});
     });
   });
@@ -84,6 +84,7 @@ widget CmsEditBar(pageId: String, pageTitle: String, published: Bool = false)
     pre.addEventListener("click",function(){
       var lang=pre.getAttribute("data-cms-lang")||"js";
       var cur=(pre.querySelector("code")||{}).textContent||"";
+      var _trigger=pre;
       var overlay=document.createElement("div");overlay.style.cssText="position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;";overlay.setAttribute("role","dialog");overlay.setAttribute("aria-modal","true");overlay.setAttribute("aria-label","Edit code");
       var box=document.createElement("div");box.style.cssText="background:#0d1117;border-radius:12px;padding:20px;width:min(800px,90vw);display:flex;flex-direction:column;gap:12px;";
       var label=document.createElement("div");label.style.cssText="color:#e6edf3;font-size:13px;font-weight:600;";label.textContent="Edit code ("+lang+")";
@@ -91,13 +92,14 @@ widget CmsEditBar(pageId: String, pageTitle: String, published: Bool = false)
       var btns=document.createElement("div");btns.style.cssText="display:flex;gap:8px;justify-content:flex-end;";
       var cancel=document.createElement("button");cancel.textContent="Cancel";cancel.style.cssText="padding:6px 14px;border-radius:7px;border:none;background:rgba(255,255,255,0.1);color:#e6edf3;cursor:pointer;font-size:13px;";
       var save=document.createElement("button");save.textContent="Save";save.style.cssText="padding:6px 14px;border-radius:7px;border:none;background:rgba(92,143,255,0.8);color:#fff;cursor:pointer;font-size:13px;font-weight:600;";
-      cancel.onclick=function(){document.body.removeChild(overlay);};
+      cancel.onclick=function(){document.body.removeChild(overlay);_trigger.focus();};
       overlay.addEventListener("keydown",function(e){if(e.key==="Escape")cancel.onclick();});
       save.onclick=function(){var val=ta.value;pre.querySelector("code").textContent=val;dirty[blockId+".source"]={blockId:blockId,field:"source",value:val};scheduleFlush();document.body.removeChild(overlay);};
       btns.appendChild(cancel);btns.appendChild(save);box.appendChild(label);box.appendChild(ta);box.appendChild(btns);overlay.appendChild(box);document.body.appendChild(overlay);ta.focus();
     });
   });
   document.getElementById("cms-publish-btn").addEventListener("click",async function(){
+    if(flushPromise)await flushPromise;
     await flush();
     setStatus("Publishing…");
     try{var res=await fetch("/admin/pages/"+PAGE_ID+"/publish",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({published:true})});

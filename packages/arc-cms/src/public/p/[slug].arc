@@ -38,7 +38,7 @@ page "Page"
     if ctx.page.ogImage
       meta og:image="{ctx.page.ogImage}"
 
-    @raw '<style>:root{' + (function(){try{if(!ctx.theme||!ctx.theme.tokens)return '';return Object.entries(JSON.parse(ctx.theme.tokens)).filter(function(e){return /^[a-zA-Z0-9-]+$/.test(e[0])}).map(function(e){return '--cms-'+e[0]+':'+String(e[1]).replace(/[{};<>"\']/g,'')}).join(';')}catch(e){return ''}})() + '}</style>'
+    @raw '<style>:root{' + (function(){try{if(!ctx.theme||!ctx.theme.tokens)return '';return Object.entries(JSON.parse(ctx.theme.tokens)).filter(function(e){return /^[a-zA-Z0-9-]+$/.test(e[0])}).map(function(e){var v=String(e[1]);return /^[\w\s.,#%()\-\/]+$/.test(v)?'--cms-'+e[0]+':'+v:''}).filter(Boolean).join(';')}catch(e){return ''}})() + '}</style>'
 
     if ctx.editable
       CmsEditBar pageId="{ctx.page.id}" pageTitle="{ctx.page.title}" published={ctx.page.published}
