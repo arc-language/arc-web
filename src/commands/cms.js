@@ -602,4 +602,95 @@ async function cmsEject(projectDir, name, opts = {}) {
   process.exit(1)
 }
 
-module.exports = { cmsInit, cmsCreateSuperuser, cmsEject }
+// ── arc cms add tree ─────────────────────────────────────────────────────────
+// Installs the arc-tree package into the current project:
+//   1. Adds "arc-tree" to arc.config.json packages array
+//   2. Runs the materialized-path migration SQL for each configured model
+//
+// Models to migrate are read from arc.config.json "tree.models" (default: ["pages"]).
+// Uses bun:sqlite or better-sqlite3 for migration, same as arc db migrate.
+async function cmsAddTree(projectDir = '.', opts = {}) {
+  const absDir  = path.resolve(projectDir)
+  const cfgPath = path.join(absDir, 'arc.config.json')
+
+  // 1. Read + update arc.config.json
+  let cfg = {}
+  try { cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) } catch (_) {}
+  if (!cfg.packages) cfg.packages = []
+  if (!cfg.packages.includes('arc-tree')) cfg.packages.push('arc-tree')
+  if (!cfg.tree) cfg.tree = {}
+  if (!cfg.tree.models) cfg.tree.models = ['pages']
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n')
+  console.log(`${_GREEN}✓${_RST}  arc.config.json updated — "arc-tree" added to packages`)
+
+  // 2. Read migrate.sql template
+  let migrateSqlTpl = ''
+  try {
+    // Prefer installed npm package; fall back to sibling in monorepo
+    let tplPath
+    try {
+      const pkgJson = require.resolve('arc-tree/package.json', { paths: [absDir] })
+      tplPath = path.join(path.dirname(pkgJson), 'src', 'schema', 'migrate.sql')
+    } catch (_) {
+      tplPath = path.resolve(__dirname, '..', '..', '..', 'arc-tree', 'src', 'schema', 'migrate.sql')
+    }
+    migrateSqlTpl = fs.readFileSync(tplPath, 'utf8')
+  } catch (e) {
+    console.error(`${_RED}arc cms add tree: could not find migrate.sql — is arc-tree installed?${_RST}`)
+    console.error(`  Run: npm install arc-tree`)
+    process.exit(1)
+  }
+
+  // 3. Open SQLite and run migration for each model
+  const dbUrl = (cfg.db && cfg.db.url) ? path.join(absDir, cfg.db.url) : path.join(absDir, 'app.db')
+  let Database
+  try { ({ Database } = require('bun:sqlite')) } catch (_) {
+    try { Database = require('better-sqlite3') } catch (_) {
+      console.log(`${_DIM}  Could not open SQLite (install better-sqlite3 or run with bun).${_RST}`)
+      console.log(`  Run this SQL manually for each model in ${cfg.tree.models.join(', ')}:`)
+      console.log('')
+      console.log(migrateSqlTpl)
+      return
+    }
+  }
+
+  if (!fs.existsSync(dbUrl)) {
+    console.log(`${_DIM}  Database not found at ${dbUrl} — skipping auto-migration.${_RST}`)
+    console.log(`  Run \`arc build-server && bun dist/server.js\` once to create the DB, then re-run \`arc cms add tree\`.`)
+    return
+  }
+
+  const _SAFE_MODEL = /^[a-z_][a-z0-9_]*$/i
+  const db = new Database(dbUrl)
+  for (const model of cfg.tree.models) {
+    if (!_SAFE_MODEL.test(model)) {
+      console.error(`${_RED}arc cms add tree: unsafe model name "${model}" — must match /^[a-z_][a-z0-9_]*$/i${_RST}`)
+      continue
+    }
+    const sql = migrateSqlTpl.replace(/{model}/g, model)
+    const stmts = sql.split(';').map(s => s.trim()).filter(s => s && !s.startsWith('--'))
+    let ok = 0
+    for (const stmt of stmts) {
+      try {
+        if (db.query) db.query(stmt).run()
+        else          db.prepare(stmt).run()
+        ok++
+      } catch (e) {
+        // ALTER TABLE ADD COLUMN IF NOT EXISTS is idempotent; index creation may warn on re-run
+        if (!e.message.includes('already exists') && !e.message.includes('duplicate column')) {
+          console.error(`${_RED}  ✗ ${model}: ${e.message}${_RST}`)
+        }
+      }
+    }
+    console.log(`${_GREEN}✓${_RST}  ${model}: path + depth columns migrated (${ok} statements)`)
+  }
+  try { db.close() } catch (_) {}
+
+  console.log('')
+  console.log(`${_GREEN}arc-tree installed.${_RST} Next steps:`)
+  console.log(`  1. Import CmsTreeTable in any list page: ${_CYAN}import CmsTreeTable from "@arc-tree/widgets/CmsTreeTable.arc"${_RST}`)
+  console.log(`  2. Replace the inline table with: ${_CYAN}CmsTreeTable rows=treeRows entityUrl="/admin/pages" moveUrl="/admin/tree/pages"${_RST}`)
+  console.log(`  3. Each row needs: id, parentId, depth, label (pre-compute label in your @server fn)`)
+}
+
+module.exports = { cmsInit, cmsCreateSuperuser, cmsEject, cmsAddTree }

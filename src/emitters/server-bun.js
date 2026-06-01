@@ -27,11 +27,15 @@ function _isArcJobsInstalled() {
   } catch (_) { return false }
 }
 
-// Detect if arc-storage is installed in the project's node_modules
+// Detect if arc-storage is installed — checks both scoped (@arc-lang/arc-storage) and legacy name.
 function _isArcStorageInstalled() {
   try {
-    const cwd = process.cwd()
-    return fs.existsSync(path.join(cwd, 'node_modules', 'arc-storage', 'src', 'index.js'))
+    const roots = [process.cwd(), path.join(process.cwd(), '..')]
+    for (const r of roots) {
+      if (fs.existsSync(path.join(r, 'node_modules', '@arc-lang', 'arc-storage', 'src', 'index.js'))) return true
+      if (fs.existsSync(path.join(r, 'node_modules', 'arc-storage', 'src', 'index.js'))) return true
+    }
+    return false
   } catch (_) { return false }
 }
 
@@ -70,7 +74,7 @@ function emitArcStorageImport(storage) {
 
   return `
 // ── arc-storage ──────────────────────────────────────────────────────────────
-import { ${imports.join(', ')} } from 'arc-storage'
+import { ${imports.join(', ')} } from '@arc-lang/arc-storage'
 const _storages = {
 ${inits}
 }
@@ -303,7 +307,15 @@ class BunServerEmitter {
       for (const schema of schemas) {
         parts.push(this.emitModelHelpers(schema))
       }
-      if (schemas.length > 0) parts.push('const db = globalThis.db')
+      if (schemas.length > 0) {
+        parts.push('const db = globalThis.db')
+        // Expose db.transaction for atomic multi-row operations (SQLite only)
+        parts.push(`if (typeof _db?.transaction === 'function') globalThis.db.transaction = (fn) => { _db.transaction(fn)(); };`)
+      }
+    }
+
+    if (this.options.versioningEnabled) {
+      parts.push(this._emitVersioningWrapper(this.options.versioningConfig ?? {}))
     }
 
     for (const job of jobs) {
@@ -451,6 +463,23 @@ function _matchDynamicRoute(pathname) {
   }
   return null
 }
+// Cache of dist/**/_arc/functions.js paths for @live page @server function dispatch.
+let _arcFnFiles = null
+function _getArcFnFiles() {
+  if (_arcFnFiles) return _arcFnFiles
+  _arcFnFiles = []
+  function _walkFn(dir) {
+    try {
+      for (const e of _fs.readdirSync(dir, { withFileTypes: true })) {
+        const f = _path.join(dir, e.name)
+        if (e.isDirectory()) _walkFn(f)
+        else if (e.name === 'functions.js' && _path.basename(dir) === '_arc') _arcFnFiles.push(f)
+      }
+    } catch {}
+  }
+  _walkFn(_DIST_DIR)
+  return _arcFnFiles
+}
 // Cached path -> required role table from server/admin-roles.json (arc-cms config).
 // null = no config (fall back to session-only guard).
 let _adminRoles = undefined
@@ -494,16 +523,46 @@ async function _serveStatic(req, pathname) {
   // run with their own auth logic. Only unmatched paths (returns 404) fall through
   // to the static-page admin guard below.
   const _r = _dispatch(req, pathname)
-  if (!(_r instanceof Response) || _r.status !== 404) return _r
+  // Fall through to static files on 404 (unknown route) or on 405 for GET requests
+  // (route exists but only handles non-GET methods — static HTML page should be served instead).
+  if (!(_r instanceof Response) || (_r.status !== 404 && !(_r.status === 405 && req.method === 'GET'))) return _r
   // arc-cms public page renderer: /p/:slug → server/cms/page-renderer.js if present.
   // Opt-in: only fires if the project ships the module (cms init copies it).
+  // If renderCmsPage returns null the module signalled "skip me" (e.g. editor session
+  // detected) — fall through to the Arc SSR renderer so the edit bar is injected.
   if (req.method === 'GET' && pathname.startsWith('/p/')) {
     const _slug = pathname.slice(3)
     if (/^[a-z0-9][a-z0-9-]*$/i.test(_slug)) {
       try {
         const _pr = require(_path.join(process.cwd(), 'server', 'cms', 'page-renderer.js'))
-        if (_pr && _pr.renderCmsPage) return _pr.renderCmsPage(req, _db, _slug)
+        if (_pr && _pr.renderCmsPage) {
+          const _prRes = _pr.renderCmsPage(req, _db, _slug)
+          if (_prRes) return _prRes
+          // null → module requested fall-through (editor session bypass)
+        }
       } catch (_e) { /* module missing or threw — fall through */ }
+    }
+  }
+  // Handle /_arc/fn/* POSTs from @live page @server functions (reactive state updates).
+  // Must run BEFORE the admin guard so /_arc/fn/ paths aren't rejected as non-/admin/*.
+  if (req.method === 'POST' && pathname.startsWith('/_arc/fn/')) {
+    const _fnName = pathname.slice('/_arc/fn/'.length)
+    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(_fnName)) {
+      try {
+        req._arc_session = await auth.session(req) ?? {}
+        for (const _fnPath of _getArcFnFiles()) {
+          try {
+            const _fmod = await import(_fnPath)
+            const _handlerKey = '_handler_' + _fnName
+            if (typeof _fmod[_handlerKey] === 'function') {
+              return _fmod[_handlerKey](req)
+            }
+          } catch {}
+        }
+      } catch (_fnErr) {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] fn handler error', fn: pathname, error: _fnErr?.message ?? String(_fnErr) }))
+        return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+      }
     }
   }
   // Guard unmatched /admin/* paths (these resolve to static admin HTML pages).
@@ -514,6 +573,38 @@ async function _serveStatic(req, pathname) {
       if (!_sess) return Response.redirect('/admin/login', 302)
       const _need = _requiredRole(pathname)
       if (!_roleOk(_sess.role, _need)) return Response.redirect('/admin/403', 302)
+    }
+    // For GET requests, check if there's a @live renderer.js for this path.
+    // renderer.js does SSR: runs @server fn with real db → full pre-rendered HTML.
+    // Built by "arc build-site" into dist/<pathname>/_arc/renderer.js.
+    // For dynamic routes (/admin/blocks/code/123), fall back to the template dir
+    // (dist/admin/blocks/code/_arc/renderer.js from blocks/code/[id].arc).
+    if (req.method === 'GET') {
+      const _clean = pathname.endsWith('/') ? pathname.slice(0, -1) : pathname
+      let _rendererPath = _path.join(_DIST_DIR, _clean, '_arc', 'renderer.js')
+      if (!_fs.existsSync(_rendererPath)) {
+        const _dynFile = _matchDynamicRoute(_clean)
+        if (_dynFile) _rendererPath = _path.join(_path.dirname(_dynFile), '_arc', 'renderer.js')
+      }
+      if (_fs.existsSync(_rendererPath)) {
+        try {
+          const _rmod = await import(_rendererPath)
+          const _resolveData = _rmod._resolveData ?? _rmod.default?._resolveData
+          const _fillHtml = _rmod._fillHtml ?? _rmod.default?._fillHtml
+          if (_resolveData && _fillHtml) {
+            req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
+            const _ldata = await _resolveData(req)
+            if (_ldata && _ldata.__arc_render_error__) {
+              return new Response('<!DOCTYPE html><html><body><h1>Render error</h1></body></html>', { status: 500, headers: { 'Content-Type': 'text/html' } })
+            }
+            const _html = _fillHtml(_ldata)
+            return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-cache' } })
+          }
+        } catch (_rendErr) {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] admin renderer error', path: pathname, error: _rendErr?.message ?? String(_rendErr) }))
+          // fall through to static file serving
+        }
+      }
     }
   }
   // Try dist/path (literal), then dist/path.html, then dist/path/index.html
@@ -620,6 +711,97 @@ const _db = {
     return this._emitModelHelpersSqlite(schema)
   }
 
+  _emitVersioningWrapper(cfg = {}) {
+    const maxV = Number(cfg.maxVersionsPerRecord ?? 100)
+    const exclude = JSON.stringify(['_arc_versions', ...((cfg.excludeModels ?? []))])
+    return `
+// ── arc-versioning ────────────────────────────────────────────────────────────
+// Create _arc_versions table + indexes (idempotent)
+;(() => {
+  _db.run(\`CREATE TABLE IF NOT EXISTS _arc_versions (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    modelName TEXT    NOT NULL,
+    recordId  TEXT    NOT NULL,
+    action    TEXT    NOT NULL,
+    data      TEXT,
+    userId    TEXT,
+    createdAt TEXT    NOT NULL DEFAULT (datetime('now'))
+  )\`)
+  _db.run('CREATE INDEX IF NOT EXISTS _arc_versions_record ON _arc_versions (modelName, recordId, id DESC)')
+  _db.run('CREATE INDEX IF NOT EXISTS _arc_versions_recent ON _arc_versions (createdAt DESC)')
+  _db.run('CREATE INDEX IF NOT EXISTS _arc_versions_user   ON _arc_versions (userId, createdAt DESC)')
+  // Register _arc_versions db helpers
+  Object.assign(globalThis.db ?? (globalThis.db = {}), {
+    _arc_versions: {
+      findMany: (opts = {}) => {
+        const _w = opts.where, _ob = opts.orderBy, _lim = Math.min(opts.limit ?? 20, 10000), _off = opts.offset ?? 0
+        const _order = _ob ? ' ORDER BY ' + Object.entries(_ob).map(([k, d]) => '"' + k + '" ' + (d === 'desc' ? 'DESC' : 'ASC')).join(', ') : ' ORDER BY id DESC'
+        if (!_w || !Object.keys(_w).length) return _db.query('SELECT * FROM _arc_versions' + _order + ' LIMIT ? OFFSET ?').all(_lim, _off)
+        const _keys = Object.keys(_w), _vals = Object.values(_w)
+        const _wsql = _keys.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(' AND ')
+        return _db.query('SELECT * FROM _arc_versions WHERE ' + _wsql + _order + ' LIMIT ? OFFSET ?').all(..._vals, _lim, _off)
+      },
+      find: (id) => _db.query('SELECT * FROM _arc_versions WHERE id = ?1').get(id) ?? null,
+      create: (data) => {
+        const { modelName, recordId, action, data: d, userId } = data
+        return _db.query('INSERT INTO _arc_versions (modelName, recordId, action, data, userId) VALUES (?1,?2,?3,?4,?5) RETURNING *').get(modelName, String(recordId ?? ''), action, d ?? null, userId ?? null)
+      },
+      count: (opts = {}) => {
+        const _w = opts.where
+        if (!_w || !Object.keys(_w).length) return _db.query('SELECT COUNT(*) as count FROM _arc_versions').get()?.count ?? 0
+        const _keys = Object.keys(_w), _vals = Object.values(_w)
+        const _wsql = _keys.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(' AND ')
+        return _db.query('SELECT COUNT(*) as count FROM _arc_versions WHERE ' + _wsql).get(..._vals)?.count ?? 0
+      },
+      delete: (id) => (_db.run('DELETE FROM _arc_versions WHERE id = ?', [id]), true),
+    }
+  })
+  // Wrap all model mutations to auto-snapshot
+  const _skip = new Set(${exclude})
+  const _maxV = ${maxV}
+  const _trim = (modelName, recordId) => {
+    Promise.resolve().then(() => {
+      try {
+        const _rows = _db.query('SELECT id FROM _arc_versions WHERE modelName = ?1 AND recordId = ?2 ORDER BY id DESC LIMIT -1 OFFSET ' + _maxV).all(modelName, recordId)
+        if (_rows.length) _db.run('DELETE FROM _arc_versions WHERE id IN (' + _rows.map(r => r.id).join(',') + ')')
+      } catch {}
+    })
+  }
+  const _snap = (modelName, recordId, action, data) => {
+    try {
+      globalThis.db._arc_versions.create({ modelName, recordId: String(recordId ?? ''), action, data: JSON.stringify(data), userId: null })
+      _trim(modelName, String(recordId ?? ''))
+    } catch (e) { console.warn('[arc-versioning] snapshot failed:', e.message) }
+  }
+  for (const _m of Object.keys(globalThis.db ?? {})) {
+    if (_skip.has(_m)) continue
+    const _o = globalThis.db[_m]
+    if (typeof _o?.create !== 'function') continue
+    globalThis.db[_m] = Object.assign(Object.create(null), _o, {
+      create(data) {
+        const r = _o.create(data)
+        _snap(_m, r?.id, 'create', r)
+        return r
+      },
+      update(idOrOpts, data) {
+        const r = _o.update(idOrOpts, data)
+        const rid = typeof idOrOpts === 'object' && idOrOpts !== null ? (idOrOpts?.where?.id ?? idOrOpts) : idOrOpts
+        _snap(_m, rid, 'update', r)
+        return r
+      },
+      delete(id) {
+        let before = null
+        try { before = _o.find(id) } catch {}
+        const r = _o.delete(id)
+        _snap(_m, id, 'delete', before)
+        return r
+      }
+    })
+  }
+})()
+const db = globalThis.db`.trim()
+  }
+
   _emitModelHelpersSqlite(schema) {
     const { tableName, fields, colList, colDefs } = this._schemaVars(schema, 'sqlite')
     const placeholders = fields.map((_, i) => `?${i + 1}`).join(', ')
@@ -647,33 +829,47 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
       const _w = opts?.where
       const _ob = opts?.orderBy ? Object.entries(opts.orderBy).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
       const _order = _ob ? \` ORDER BY \${_ob}\` : ''
-      if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT ? OFFSET ?\`).all(Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
-      const _fs = new Set([..._${tableName}_fields, 'id'])
-      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${tableName}.findMany: unknown field: \${k}\`); return \`"\${k}" = ?\` })
-      return _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')}\${_order} LIMIT ? OFFSET ?\`).all(...Object.values(_w), Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0)
+      const _lim = Math.min(opts?.limit ?? 20, 100000), _off = opts?.offset ?? 0
+      if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT ? OFFSET ?\`).all(_lim, _off)
+      const { sql: _wsql, vals: _wv } = _arcWhere(_${tableName}_fields, _w)
+      if (_wsql === '0=1') return []
+      return _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_wsql}\${_order} LIMIT ? OFFSET ?\`).all(..._wv, _lim, _off)
     },
     findFirst: (opts = {}) => {
       const _w = opts?.where
       const _ob = opts?.orderBy ? Object.entries(opts.orderBy).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
       const _order = _ob ? \` ORDER BY \${_ob}\` : ''
       if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT 1\`).get() ?? null
-      const _fs = new Set([..._${tableName}_fields, 'id'])
-      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${tableName}.findFirst: unknown field: \${k}\`); return \`"\${k}" = ?\` })
-      return _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')}\${_order} LIMIT 1\`).get(...Object.values(_w)) ?? null
+      const { sql: _wsql, vals: _wv } = _arcWhere(_${tableName}_fields, _w)
+      if (_wsql === '0=1') return null
+      return _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_wsql}\${_order} LIMIT 1\`).get(..._wv) ?? null
     },
     findUnique: (opts = {}) => {
       const _w = opts?.where; if (!_w) throw new Error('${tableName}.findUnique: where is required')
-      const _fs = new Set([..._${tableName}_fields, 'id'])
-      const _cl = Object.keys(_w).map(k => { if (!_fs.has(k)) throw new Error(\`${tableName}.findUnique: unknown field: \${k}\`); return \`"\${k}" = ?\` })
-      const _rs = _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')} LIMIT 2\`).all(...Object.values(_w))
+      const { sql: _wsql, vals: _wv } = _arcWhere(_${tableName}_fields, _w)
+      if (_wsql === '0=1') return null
+      const _rs = _db.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_wsql} LIMIT 2\`).all(..._wv)
       if (_rs.length > 1) throw Object.assign(new Error('${tableName}.findUnique: multiple rows'), { status: 400 })
       return _rs[0] ?? null
     },
     find: (id) => _q_${tableName}_find.get(id) ?? null,
-    ${colList ? `create: (data) => { const _d = _pick(data, _${tableName}_fields); const _miss = _${tableName}_required.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${tableName}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _q_${tableName}_create.get(${fields.map(f => `_d.${f.name}`).join(', ')}) },` : ''}
+    ${colList ? `create: (data) => { const _d = _pick(data, _${tableName}_fields); const _miss = _${tableName}_required.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${tableName}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _q_${tableName}_create.get(${fields.map(f => this._isNowDefault(f) ? `(_d.${f.name} ?? new Date().toISOString())` : `_d.${f.name}`).join(', ')}) },` : ''}
     ${colList ? `update: (idOrOpts, data) => { let _id = idOrOpts, _dd = data; if (idOrOpts !== null && typeof idOrOpts === 'object' && idOrOpts.where) { _id = idOrOpts.where.id; _dd = idOrOpts.data ?? {}; } const _d = _pick(_dd ?? {}, _${tableName}_fields); const _ks = Object.keys(_d); if (!_ks.length) return null; const _sets = _ks.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(', '); return _db.query('UPDATE ${tableName} SET ' + _sets + ' WHERE id = ?' + (_ks.length + 1) + ' RETURNING *').get(..._ks.map(k => _d[k]), _id) ?? null },` : ''}
     delete: (id) => (_q_${tableName}_delete.run(id), true),
-    count: () => _q_${tableName}_count.get()?.count ?? 0,
+    deleteMany: (opts = {}) => {
+      const _w = opts?.where
+      if (!_w || !Object.keys(_w).length) throw new Error('${tableName}.deleteMany: where is required to prevent full-table deletion')
+      const { sql: _wsql, vals: _wv } = _arcWhere(_${tableName}_fields, _w)
+      if (_wsql === '0=1') return 0
+      return _db.query(\`DELETE FROM ${tableName} WHERE \${_wsql}\`).run(..._wv).changes
+    },
+    count: (opts = {}) => {
+      const _w = opts?.where
+      if (!_w || !Object.keys(_w).length) return _q_${tableName}_count.get()?.count ?? 0
+      const { sql: _wsql, vals: _wv } = _arcWhere(_${tableName}_fields, _w)
+      if (_wsql === '0=1') return 0
+      return _db.query(\`SELECT COUNT(*) as count FROM ${tableName} WHERE \${_wsql}\`).get(..._wv)?.count ?? 0
+    },
   }
 })`.trim()
   }
@@ -696,31 +892,45 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
       return `  ${tableName}: (() => { const _flds = ${fieldNames}; const _req = ${requiredFieldNames}; return {
     findMany: async (opts = {}) => {
       const _w = opts?.where
-      if (!_w || !Object.keys(_w).length) return _pool.query('SELECT ${selectCols} FROM ${tableName} LIMIT $1 OFFSET $2', [Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows)
-      const _fs = new Set(_flds); const _ks = Object.keys(_w)
-      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${tableName}.findMany: unknown field: \${k}\`); return \`"\${k}" = $\${i+1}\` })
-      return _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')} LIMIT $\${_ks.length+1} OFFSET $\${_ks.length+2}\`, [...Object.values(_w), Math.min(opts?.limit ?? 20, 100), opts?.offset ?? 0]).then(r => r.rows)
+      const _lim = Math.min(opts?.limit ?? 20, 100000), _off = opts?.offset ?? 0
+      if (!_w || !Object.keys(_w).length) return _pool.query('SELECT ${selectCols} FROM ${tableName} LIMIT $1 OFFSET $2', [_lim, _off]).then(r => r.rows)
+      const { sql: _wsql, vals: _wv } = _arcWherePg(_flds, _w, 1)
+      if (_wsql === '0=1') return []
+      return _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_wsql} LIMIT $\${_wv.length+1} OFFSET $\${_wv.length+2}\`, [..._wv, _lim, _off]).then(r => r.rows)
     },
     findFirst: async (opts = {}) => {
       const _w = opts?.where
       if (!_w || !Object.keys(_w).length) return _pool.query('SELECT ${selectCols} FROM ${tableName} LIMIT 1 OFFSET 0').then(r => r.rows[0] ?? null)
-      const _fs = new Set(_flds); const _ks = Object.keys(_w)
-      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${tableName}.findFirst: unknown field: \${k}\`); return \`"\${k}" = $\${i+1}\` })
-      return _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')} LIMIT 1\`, Object.values(_w)).then(r => r.rows[0] ?? null)
+      const { sql: _wsql, vals: _wv } = _arcWherePg(_flds, _w, 1)
+      if (_wsql === '0=1') return null
+      return _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_wsql} LIMIT 1\`, _wv).then(r => r.rows[0] ?? null)
     },
     findUnique: async (opts = {}) => {
       const _w = opts?.where; if (!_w) throw new Error('${tableName}.findUnique: where is required')
-      const _fs = new Set(_flds); const _ks = Object.keys(_w)
-      const _cl = _ks.map((k, i) => { if (!_fs.has(k)) throw new Error(\`${tableName}.findUnique: unknown field: \${k}\`); return \`\${k} = $\${i+1}\` })
-      const _rs = await _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_cl.join(' AND ')} LIMIT 2\`, Object.values(_w)).then(r => r.rows)
+      const { sql: _wsql, vals: _wv } = _arcWherePg(_flds, _w, 1)
+      if (_wsql === '0=1') return null
+      const _rs = await _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_wsql} LIMIT 2\`, _wv).then(r => r.rows)
       if (_rs.length > 1) throw Object.assign(new Error('${tableName}.findUnique: multiple rows'), { status: 400 })
       return _rs[0] ?? null
     },
     find: async (id) => _pool.query('SELECT ${selectCols} FROM ${tableName} WHERE id = $1', [id]).then(r => r.rows[0] ?? null),
-    ${colList ? `create: async (data) => { const _d = _pick(data, _flds); const _miss = _req.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${tableName}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _pool.query('INSERT INTO ${tableName} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}]).then(r => r.rows[0]) },` : ''}
+    ${colList ? `create: async (data) => { const _d = _pick(data, _flds); const _miss = _req.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${tableName}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _pool.query('INSERT INTO ${tableName} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => this._isNowDefault(f) ? `(_d.${f.name} ?? new Date().toISOString())` : `_d.${f.name}`).join(', ')}]).then(r => r.rows[0]) },` : ''}
     ${colList ? `update: async (id, data) => { const _d = _pick(data, _flds); return _pool.query('UPDATE ${tableName} SET ${updates} WHERE id = $${fields.length + 1} RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}, id]).then(r => r.rows[0]) },` : ''}
     delete: async (id) => { await _pool.query('DELETE FROM ${tableName} WHERE id = $1', [id]); return true },
-    count: async () => _pool.query('SELECT COUNT(*) as count FROM ${tableName}').then(r => +r.rows[0].count),
+    deleteMany: async (opts = {}) => {
+      const _w = opts?.where
+      if (!_w || !Object.keys(_w).length) throw new Error('${tableName}.deleteMany: where is required to prevent full-table deletion')
+      const { sql: _wsql, vals: _wv } = _arcWherePg(_flds, _w, 1)
+      if (_wsql === '0=1') return 0
+      return _pool.query(\`DELETE FROM ${tableName} WHERE \${_wsql}\`, _wv).then(r => r.rowCount ?? 0)
+    },
+    count: async (opts = {}) => {
+      const _w = opts?.where
+      if (!_w || !Object.keys(_w).length) return _pool.query('SELECT COUNT(*) as count FROM ${tableName}').then(r => +r.rows[0].count)
+      const { sql: _wsql, vals: _wv } = _arcWherePg(_flds, _w, 1)
+      if (_wsql === '0=1') return 0
+      return _pool.query(\`SELECT COUNT(*) as count FROM ${tableName} WHERE \${_wsql}\`, _wv).then(r => +r.rows[0].count)
+    },
   }})(),`
     }).join('\n')
 
@@ -768,9 +978,18 @@ ${dbEntries}
     return { tableName, fields, colList, colDefs }
   }
 
+  _isNowDefault(field) {
+    const n = field.init
+    return n?.type === 'CallExpr' && n.callee?.name === 'now' && (n.args?.length ?? 0) === 0
+  }
+
   _fieldDefaultSql(field, dialect) {
     const node = field.init
-    if (!node || node.type !== 'Literal') return ''
+    if (!node) return ''
+    if (node.type === 'CallExpr' && node.callee?.name === 'now' && (node.args?.length ?? 0) === 0) {
+      return dialect === 'postgres' ? ' DEFAULT NOW()' : ' DEFAULT CURRENT_TIMESTAMP'
+    }
+    if (node.type !== 'Literal') return ''
     const v = node.value
     if (v === null || v === undefined) return ' DEFAULT NULL'
     if (typeof v === 'boolean') {
