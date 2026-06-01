@@ -12,6 +12,61 @@ function _pick(obj, keys) {
   return out
 }
 
+// Build a WHERE clause for SQLite db helpers.
+// Supports: plain equality, { contains: 'str' } → LIKE %str%, { startsWith: 'str' } → LIKE str%, { in: [...] } → IN
+// Returns { sql: string, vals: any[] }
+function _arcWhere(fields, w) {
+  const fs = new Set([...fields, 'id'])
+  const cls = [], vals = []
+  for (const k of Object.keys(w)) {
+    if (!fs.has(k)) throw new Error('unknown field: ' + k)
+    const v = w[k]
+    if (v && typeof v === 'object' && Array.isArray(v.in)) {
+      if (!v.in.length) return { sql: '0=1', vals: [] }
+      cls.push('"' + k + '" IN (' + v.in.map(() => '?').join(',') + ')')
+      vals.push(...v.in)
+    } else if (v && typeof v === 'object' && 'startsWith' in v) {
+      cls.push('"' + k + '" LIKE ?')
+      vals.push((v.startsWith ?? '') + '%')
+    } else if (v && typeof v === 'object' && 'contains' in v) {
+      cls.push('"' + k + '" LIKE ?')
+      vals.push('%' + (v.contains ?? '') + '%')
+    } else {
+      cls.push('"' + k + '" = ?')
+      vals.push(v)
+    }
+  }
+  return { sql: cls.join(' AND '), vals }
+}
+
+// Build a WHERE clause for Postgres db helpers ($N numbered placeholders).
+// offset: 1-based starting parameter index (caller passes next available index)
+// Returns { sql: string, vals: any[], nextN: number }
+function _arcWherePg(fields, w, offset) {
+  const fs = new Set([...fields, 'id'])
+  const cls = [], vals = []
+  let n = offset
+  for (const k of Object.keys(w)) {
+    if (!fs.has(k)) throw new Error('unknown field: ' + k)
+    const v = w[k]
+    if (v && typeof v === 'object' && Array.isArray(v.in)) {
+      if (!v.in.length) return { sql: '0=1', vals: [], nextN: n }
+      cls.push('"' + k + '" IN (' + v.in.map(() => '$' + n++).join(',') + ')')
+      vals.push(...v.in)
+    } else if (v && typeof v === 'object' && 'startsWith' in v) {
+      cls.push('"' + k + '" LIKE $' + n++)
+      vals.push((v.startsWith ?? '') + '%')
+    } else if (v && typeof v === 'object' && 'contains' in v) {
+      cls.push('"' + k + '" LIKE $' + n++)
+      vals.push('%' + (v.contains ?? '') + '%')
+    } else {
+      cls.push('"' + k + '" = $' + n++)
+      vals.push(v)
+    }
+  }
+  return { sql: cls.join(' AND '), vals, nextN: n }
+}
+
 // Pre-allocated header objects - reused across requests to avoid per-request allocation
 // _CORS_ORIGIN is emitted by callers (null = no CORS, string = allowed origin)
 const _HEADERS_JSON = _CORS_ORIGIN
