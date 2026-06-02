@@ -10,6 +10,8 @@ function _assertSafeIdent(val, context) {
 }
 
 const _SAFE_ATTR = /^[a-zA-Z0-9_:.-]+$/
+// Convert an element ID to a valid JS variable name fragment (hyphens and dots → underscores)
+function _elVar(id) { return id.replace(/[^a-zA-Z0-9_$]/g, '_') }
 function _assertSafeAttr(val, context) {
   if (typeof val !== 'string' || !_SAFE_ATTR.test(val)) {
     throw new Error(`Arc codegen: unsafe attribute/class in ${context}: ${JSON.stringify(val)}`)
@@ -103,7 +105,7 @@ class JsEmitter {
     for (const b of stateBindings) {
       if (!capturedIds.has(b.id)) {
         _assertSafeAttr(b.id, 'state binding id')
-        parts.push(`const _el_${b.id}=document.getElementById('${b.id}');`)
+        parts.push(`const _el_${_elVar(b.id)}=document.getElementById('${b.id}');`)
         capturedIds.add(b.id)
       }
     }
@@ -171,7 +173,7 @@ class JsEmitter {
         if (!b.bindRoot && !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(b.expr)) {
           throw new Error(`Arc codegen: bind:value only supports simple variable names or dotted paths, got: ${JSON.stringify(b.expr)}`)
         }
-        parts.push(`_arcBind(_el_${b.id},function(_bv){${setterCall}});`)
+        parts.push(`_arcBind(_el_${_elVar(b.id)},function(_bv){${setterCall}});`)
       }
     }
 
@@ -262,14 +264,14 @@ class JsEmitter {
 
   emitBindingUpdate(b) {
     _assertSafeAttr(b.id, 'binding id')
-    const el = `_el_${b.id}`
+    const el = `_el_${_elVar(b.id)}`
     const exprStr = this.emitRuntimeExpr(b.expr)
 
     switch (b.kind) {
       case 'if-show':
-        return `if(${exprStr}){${el}.removeAttribute('hidden');}else{${el}.setAttribute('hidden','');}`
+        return `if(${el}){if(${exprStr}){${el}.removeAttribute('hidden');}else{${el}.setAttribute('hidden','');}}`
       case 'if-hide':
-        return `if(${exprStr}){${el}.setAttribute('hidden','');}else{${el}.removeAttribute('hidden');}`
+        return `if(${el}){if(${exprStr}){${el}.setAttribute('hidden','');}else{${el}.removeAttribute('hidden');}}`
       case 'list':
         return this.emitListUpdate(b)
       case 'attr': {
@@ -277,22 +279,22 @@ class JsEmitter {
         // Boolean HTML attributes need setAttribute/removeAttribute, not a value
         const _BOOL_ATTRS = new Set(['disabled','checked','readonly','required','multiple','selected','hidden','open','autofocus','autoplay','controls','loop','muted','default','defer','async','novalidate','formnovalidate','reversed','scoped','allowfullscreen','capture'])
         if (_BOOL_ATTRS.has(b.attr)) {
-          return `if(${exprStr}){${el}.setAttribute('${b.attr}','');}else{${el}.removeAttribute('${b.attr}');}`
+          return `if(${el}){if(${exprStr}){${el}.setAttribute('${b.attr}','');}else{${el}.removeAttribute('${b.attr}');}}`
         }
-        return `${el}.setAttribute('${b.attr}',${exprStr});`
+        return `if(${el})${el}.setAttribute('${b.attr}',${exprStr});`
       }
       case 'class-toggle':
         _assertSafeAttr(b.cls, 'class-toggle binding')
-        return `${el}.classList.toggle('${b.cls}_${this.componentHash}',!!${exprStr});`
+        return `if(${el})${el}.classList.toggle('${b.cls}_${this.componentHash}',!!${exprStr});`
       case 'bind':
-        return `if(document.activeElement!==${el})${el}.value=${exprStr};`
+        return `if(${el}&&document.activeElement!==${el})${el}.value=${exprStr};`
       default:
-        return `${el}.textContent=${exprStr};`
+        return `if(${el})${el}.textContent=${exprStr};`
     }
   }
 
   emitListUpdate(b) {
-    const el = `_el_${b.id}`
+    const el = `_el_${_elVar(b.id)}`
     const items = this.emitRuntimeExpr(b.expr)
     const item = b.itemName ?? 'item'
     const idx = b.indexName ?? 'i'
@@ -425,8 +427,9 @@ class JsEmitter {
     // Convert @name → _name, and known state/computed identifiers → _name
     let result = exprStr.replace(/@([a-zA-Z_][a-zA-Z0-9_]*)/g, '_$1')
     if (this.stateVarNames) {
-      // Replace bare identifiers (not after a dot or ?.) that are state variables with their _prefixed form
-      result = result.replace(/(?<![.?])\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match) => {
+      // Replace bare identifiers (not after a dot, which covers both . and ?.) that are state variables with their _prefixed form
+      // Note: only exclude dot (.) not question-mark (?), so ternary `x?name:y` correctly prefixes `name` to `_name`
+      result = result.replace(/(?<!\.)\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match) => {
         return this.stateVarNames.has(match) ? `_${match}` : match
       })
     }
@@ -436,6 +439,18 @@ class JsEmitter {
 
   emitExpr(expr) {
     if (!expr) return 'undefined'
+    // Defense: a node reaches here without a .type only when the Rust parser bailed
+    // mid-expression and left a hole in the AST. Fail loud with line/col so the user
+    // can find the actual syntax issue instead of staring at "Cannot read properties
+    // of undefined (reading 'type')" deep inside an emitter case.
+    if (typeof expr.type !== 'string') {
+      const loc = expr.line != null ? ` at line ${expr.line}:${expr.col ?? '?'}` : ''
+      throw new Error(
+        `Arc codegen: malformed expression node${loc} — got ${JSON.stringify(expr).slice(0, 120)}. ` +
+        `This usually means the parser encountered invalid syntax earlier. ` +
+        `Re-run with ARC_DEBUG=1 and check for parser warnings above the crash.`
+      )
+    }
 
     switch (expr.type) {
       case 'Literal':
@@ -467,8 +482,11 @@ class JsEmitter {
         return `(${this.emitExpr(expr.left)}${expr.op}${this.emitExpr(expr.right)})`
 
       case 'AssignExpr': {
-        const lname = expr.left.type === 'AtProperty' ? expr.left.name
-          : (expr.left.type === 'Identifier' && this.stateVarNames?.has(expr.left.name)) ? expr.left.name
+        // Optional chaining so a malformed .left doesn't crash this dereference —
+        // the top-of-function guard catches the recursive emitExpr(expr.left) below
+        // and reports the offending node with line/col.
+        const lname = expr.left?.type === 'AtProperty' ? expr.left.name
+          : (expr.left?.type === 'Identifier' && this.stateVarNames?.has(expr.left.name)) ? expr.left.name
           : null
         if (lname) {
           const setter = `_set_${lname}`
@@ -523,6 +541,9 @@ class JsEmitter {
 
       case 'ObjectLiteral': {
         const props = (expr.properties ?? []).map(p => {
+          if (p.type === 'SpreadElement') {
+            return `...${this.emitExpr(p.argument)}`
+          }
           if (p.shorthand) {
             _assertSafeIdent(p.key, 'object shorthand key')
             return p.key
@@ -543,7 +564,9 @@ class JsEmitter {
         }).join(',')
         const body = expr.body?.type === 'BlockStatement'
           ? `{${this.emitBody(expr.body.body)}}`
-          : this.emitExpr(expr.body)
+          : expr.body?.type === 'ObjectLiteral'
+            ? `(${this.emitExpr(expr.body)})`
+            : this.emitExpr(expr.body)
         const prefix = expr.isAsync ? 'async ' : ''
         return `${prefix}(${params})=>${body}`
       }
@@ -686,6 +709,16 @@ class JsEmitter {
 
   emitStmt(stmt) {
     if (!stmt) return ''
+    // Same defense as emitExpr — parser holes surface here with line/col instead of
+    // crashing somewhere deeper.
+    if (typeof stmt.type !== 'string') {
+      const loc = stmt.line != null ? ` at line ${stmt.line}:${stmt.col ?? '?'}` : ''
+      throw new Error(
+        `Arc codegen: malformed statement node${loc} — got ${JSON.stringify(stmt).slice(0, 120)}. ` +
+        `This usually means the parser encountered invalid syntax earlier. ` +
+        `Re-run with ARC_DEBUG=1 and check for parser warnings above the crash.`
+      )
+    }
 
     switch (stmt.type) {
       case 'VarDecl': {

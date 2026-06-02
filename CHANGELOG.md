@@ -2,7 +2,19 @@
 
 All notable changes to Arc are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.1] — 2026-05-27
+## [0.2.2] — 2026-06-02
+
+### Fixed
+
+- **Import resolver: `@<alias>/...` imports from sub-directories now resolve.** Previously `_resolveImportPath` re-read `arc.config.json` from each importing file's parent directory as the import walker recursed. A widget in `src/layouts/Layout.arc` importing `@arc-cookie-bar/widgets/CookieBar.arc` would silently miss because `src/layouts/arc.config.json` doesn't exist, returning an empty package list. The fix introduces a `BuildContext` resolved once at the build entry point (`buildSite` / `buildServer` / `compile`) and threaded through the import walker. Alias lookups become **O(1) `Map.get`** instead of O(P) `find` per call, and the per-directory `_arcPackagesCache` is no longer needed. The legacy `_resolveArcPackages(projectDir)` is kept as a deprecated shim for plugin authors.
+- **JS emitter no longer crashes with `Cannot read properties of undefined (reading 'type')`.** Defensive guards at the top of `emitExpr` and `emitStmt` detect AST nodes missing `.type` (the shape produced when the Rust parser bails mid-expression and leaves a hole). They throw a clear error pointing at the source line/col with a hint to set `ARC_DEBUG=1`. Zero perf cost on the happy path.
+- **Rust parser: token-mismatch recovery now surfaces structured errors.** The previous behaviour was a silent `eprintln!` + dummy `TokenValue::None` token that propagated as `undefined` AST children and crashed downstream emitters. The parser now collects `ParseError { expected, got, line, col }` records, surfaces them in the AST as a top-level `errors[]` array, and the JS build pipeline reports each one as `file:line:col — expected X, got Y`. Migration: opt-in `ARC_STRICT_PARSER=1` makes errors fatal (default stays lenient for one release so existing projects keep building).
+
+### Added
+
+- **`makeBuildContext(projectDir)`** — public-via-`_internal` factory that returns `{ projectRoot, packages, pkgByAlias, pkgSrcSet }`. Callers that drive their own build pipelines can resolve once and reuse.
+
+
 
 ### Performance
 

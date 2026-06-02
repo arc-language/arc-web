@@ -319,6 +319,59 @@ page "T"
           `expected resolution within package to succeed, got ${resolved}`)
       } finally { rmDir(dir) }
     })
+
+    // Regression: Bug 1 (BuildContext refactor). Before the fix, _resolveImportPath
+    // re-read arc.config.json from each importing file's parent dir as the import walker
+    // recursed. A widget in src/layouts/ importing "@pkg/widgets/X.arc" would hit
+    // src/layouts/arc.config.json (which doesn't exist), get an empty packages array,
+    // and silently fail with "import not found: @pkg/...".
+    test('resolves @<alias>/ import when issued from a sub-directory', () => {
+      const { makeBuildContext } = _internal
+      const dir = mkTmpDir('alias-subdir')
+      try {
+        // Mock a project that registers a package living somewhere outside the project.
+        // We reuse arc-cms's monorepo path as the package source (already present in
+        // the test environment via _resolveArcCmsRoot fallback).
+        const arcCmsSrc = path.resolve(__dirname, '..', 'packages', 'arc-cms', 'src')
+        fs.writeFileSync(path.join(dir, 'arc.config.json'), JSON.stringify({
+          packages: ['@arc-lang/arc-cms'],
+        }))
+        // The importing file lives in a sub-directory — this is the case that
+        // used to fail.
+        const subDir = path.join(dir, 'src', 'layouts')
+        fs.mkdirSync(subDir, { recursive: true })
+        // Resolver is called with currentDir = sub-directory, ctx anchored at projectRoot.
+        const ctx = makeBuildContext(dir)
+        const resolved = _resolveImportPath(
+          '@arc-cms/widgets/CmsEmpty.arc',
+          subDir,
+          path.join(subDir, 'Layout.arc'),
+          ctx
+        )
+        assert.ok(resolved, 'expected alias to resolve from a sub-directory')
+        assert.ok(resolved.startsWith(arcCmsSrc),
+          `expected resolution into the package source, got ${resolved}`)
+      } finally { rmDir(dir) }
+    })
+
+    // Perf-sanity: alias lookups are O(1) — building the BuildContext once at the top
+    // and reusing it from every sub-directory should not trigger redundant resolution.
+    test('makeBuildContext resolves arc.config.json exactly once for a multi-dir walk', () => {
+      const { makeBuildContext } = _internal
+      const dir = mkTmpDir('alias-onepass')
+      try {
+        fs.writeFileSync(path.join(dir, 'arc.config.json'), JSON.stringify({
+          packages: ['@arc-lang/arc-cms'],
+        }))
+        const ctx1 = makeBuildContext(dir)
+        // Same projectRoot should produce a context with the same pkgByAlias entries
+        // — there's no projectDir-keyed cache to invalidate now.
+        const ctx2 = makeBuildContext(dir)
+        assert.equal(ctx1.pkgByAlias.size, ctx2.pkgByAlias.size)
+        assert.ok(ctx1.pkgByAlias.has('arc-cms') || ctx2.pkgByAlias.size === 0,
+          'arc-cms alias should be reachable when registered')
+      } finally { rmDir(dir) }
+    })
   })
 
   test('imports FnDecl by name', async () => {

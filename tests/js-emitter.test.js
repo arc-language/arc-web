@@ -1136,4 +1136,50 @@ describe('JsEmitter.emitMatchStmt — arm body and binding variants', () => {
     assert.ok(out.includes('const val='), `Expected binding, got: ${out}`)
     assert.ok(out.includes('return val'), `Expected return val, got: ${out}`)
   })
+
+  // Regression: Bug 2a. Before the guard, an AssignExpr with `left: undefined`
+  // crashed with "Cannot read properties of undefined (reading 'type')" deep
+  // in the emitter — a stack trace the user couldn't act on. The defensive
+  // guard at the top of emitExpr/emitStmt now throws a clear error pointing
+  // at the AST node and telling the user the parser likely failed earlier.
+  describe('defensive guards against malformed AST', () => {
+    test('emitExpr surfaces a clear error on a node missing .type', () => {
+      const emitter = new JsEmitter({ hash: 'test' })
+      const broken = { left: 'oops', op: '=', line: 42, col: 7 }  // no .type
+      assert.throws(
+        () => emitter.emitExpr(broken),
+        (err) => /malformed expression node/i.test(err.message) && /line 42/.test(err.message),
+        'expected a clear "malformed expression node at line 42" error'
+      )
+    })
+
+    test('emitStmt surfaces a clear error on a node missing .type', () => {
+      const emitter = new JsEmitter({ hash: 'test' })
+      const broken = { line: 99, col: 3 }  // no .type
+      assert.throws(
+        () => emitter.emitStmt(broken),
+        (err) => /malformed statement node/i.test(err.message) && /line 99/.test(err.message),
+        'expected a clear "malformed statement node at line 99" error'
+      )
+    })
+
+    test('emitExpr error mentions ARC_DEBUG=1 to help diagnosis', () => {
+      const emitter = new JsEmitter({ hash: 'test' })
+      assert.throws(
+        () => emitter.emitExpr({ left: 'oops' }),  // no .type
+        /ARC_DEBUG=1/,
+      )
+    })
+
+    test('top-of-function guards preserve the existing falsy short-circuit', () => {
+      // emitExpr(null/undefined) must still return 'undefined' / '' — many emit
+      // paths intentionally pass null where a child is absent (e.g. ReturnStatement
+      // with no value). Guard fires only on objects missing .type, never on falsy.
+      const emitter = new JsEmitter({ hash: 'test' })
+      assert.equal(emitter.emitExpr(null), 'undefined')
+      assert.equal(emitter.emitExpr(undefined), 'undefined')
+      assert.equal(emitter.emitStmt(null), '')
+      assert.equal(emitter.emitStmt(undefined), '')
+    })
+  })
 })

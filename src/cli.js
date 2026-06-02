@@ -21,7 +21,7 @@ const { buildServer: _buildServerImpl } = require('./commands/build-server')
 const { serve: _serveImpl, createFileWatcher } = require('./commands/serve')
 const { dbCommand: _dbCommandImpl } = require('./commands/db')
 const { scaffold: _scaffoldImpl, scaffoldAll: _scaffoldAllImpl, scaffoldBlock: _scaffoldBlockImpl, scaffoldBlockInit: _scaffoldBlockInitImpl } = require('./commands/scaffold')
-const { cmsInit: _cmsInitImpl, cmsCreateSuperuser: _cmsCreateSuperuserImpl, cmsEject: _cmsEjectImpl } = require('./commands/cms')
+const { cmsInit: _cmsInitImpl, cmsUpdate: _cmsUpdateImpl, cmsCreateSuperuser: _cmsCreateSuperuserImpl, cmsEject: _cmsEjectImpl, cmsAddTree: _cmsAddTreeImpl } = require('./commands/cms')
 const { newProject, detectPackageManager, runWizard } = require('./new-command')
 const { emit: emitSiteMeta } = require('./emitters/site-meta')
 const { emit: emitHeadersManifest } = require('./emitters/headers-manifest')
@@ -53,57 +53,164 @@ const _ORST   = _TTY ? '\x1b[0m'  : ''
 // Reads imported .arc files, extracts their widget/fn/style declarations,
 // and merges them into the importing program's declaration list.
 
-// Locate the @arc-lang/arc-cms package source root. Tries node_modules via
-// require.resolve (handles hoisted/symlinked workspace installs), then falls
-// back to the in-repo path for development inside the arc monorepo.
-const _arcCmsRootCache = new Map()
-function _resolveArcCmsRoot(projectDir) {
-  if (_arcCmsRootCache.has(projectDir)) return _arcCmsRootCache.get(projectDir)
-  let root = null
-  try {
-    const pkgJson = require.resolve('@arc-lang/arc-cms/package.json', { paths: [projectDir] })
-    root = path.join(path.dirname(pkgJson), 'src')
-  } catch (_e) {
-    const repoFallback = path.resolve(__dirname, '..', 'packages', 'arc-cms', 'src')
-    if (fs.existsSync(repoFallback)) root = repoFallback
+// Resolve Arc packages declared in arc.config.json `packages` array.
+// Returns an array of { name, alias, src, pagesDir, serverDir, widgetsDir, ... }
+// Alias is derived from the package name: @arc-lang/arc-cms → "arc-cms", arc-foo → "arc-foo".
+//
+// Internal: do not call directly from the import walker — use BuildContext.packages
+// (resolved once per build via makeBuildContext) so the cost is paid once instead of
+// per imported file. Kept as a standalone fn for back-compat callers and for
+// makeBuildContext itself.
+function _resolveArcPackagesInternal(projectRoot) {
+  const absDir = path.resolve(projectRoot)
+  let cfg = {}
+  try { cfg = JSON.parse(fs.readFileSync(path.join(absDir, 'arc.config.json'), 'utf8')) } catch {}
+
+  const resolved = []
+  for (const pkgName of (cfg.packages || [])) {
+    let pkgSrc = null
+    try {
+      const pkgJson = require.resolve(pkgName + '/package.json', { paths: [absDir] })
+      pkgSrc = path.join(path.dirname(pkgJson), 'src')
+    } catch {
+      // Monorepo fallback: packages/<last-segment>/src
+      const lastSeg = pkgName.split('/').pop()
+      const fallback = path.resolve(__dirname, '..', 'packages', lastSeg, 'src')
+      if (fs.existsSync(fallback)) pkgSrc = fallback
+    }
+    if (!pkgSrc) { console.warn(`arc: warning: Arc package not found: ${pkgName}`); continue }
+
+    let meta = {}
+    try { meta = require(path.join(pkgSrc, 'index.js')) } catch {}
+
+    const alias = pkgName.replace(/^@[^/]+\//, '')  // @arc-lang/arc-cms → arc-cms
+    resolved.push({ name: pkgName, alias, src: pkgSrc, ...meta })
   }
-  _arcCmsRootCache.set(projectDir, root)
-  return root
+  return resolved
+}
+
+// BuildContext: resolved once per build at the entry points (buildSite/buildServer/compile),
+// threaded through the import walker. All package/path lookups read from this — O(1)
+// alias resolution, no per-call config re-reads, no cache pollution from sub-directories.
+//
+//   projectRoot: absolute path to the directory containing arc.config.json
+//   packages:    resolved Arc packages (array)
+//   pkgByAlias:  Map<alias, pkg>     — O(1) alias lookup
+//   pkgSrcSet:   Set<absSrc>         — O(1) containment check
+function makeBuildContext(projectDir) {
+  const projectRoot = path.resolve(projectDir)
+  const packages = _resolveArcPackagesInternal(projectRoot)
+  return {
+    projectRoot,
+    packages,
+    pkgByAlias: new Map(packages.map(p => [p.alias, p])),
+    pkgSrcSet:  new Set(packages.map(p => p.src).filter(Boolean)),
+  }
+}
+
+// Back-compat shim. External callers (plugins, tests) may use this by name.
+// Internally we now use makeBuildContext + ctx.packages so the resolution
+// happens once per build instead of per imported file.
+// @deprecated prefer makeBuildContext(projectDir) and read ctx.packages
+function _resolveArcPackages(projectDir) {
+  return _resolveArcPackagesInternal(projectDir)
+}
+
+// Keep for backward compat with internal callers that use the old function name.
+function _resolveArcCmsRoot(projectDir) {
+  const pkgs = _resolveArcPackages(projectDir)
+  const cmsPkg = pkgs.find(p => p.alias === 'arc-cms')
+  if (cmsPkg) return cmsPkg.src
+  // Fallback: monorepo in-repo path even if not in arc.config.json packages
+  const repoFallback = path.resolve(__dirname, '..', 'packages', 'arc-cms', 'src')
+  return fs.existsSync(repoFallback) ? repoFallback : null
+}
+
+function _resolveArcTreeRoot(projectDir) {
+  // 1. Try npm-installed arc-tree in the project
+  try {
+    const pkgJson = require.resolve('arc-tree/package.json', { paths: [path.resolve(projectDir)] })
+    return path.join(path.dirname(pkgJson), 'src')
+  } catch {}
+  // 2. Monorepo fallback: packages/arc-tree/src (co-located with arc-cms)
+  const mono = path.resolve(__dirname, '..', 'packages', 'arc-tree', 'src')
+  if (fs.existsSync(mono)) return mono
+  // 3. Sibling repo fallback: ../../arc-tree/src (dev environment)
+  const sibling = path.resolve(__dirname, '..', '..', 'arc-tree', 'src')
+  if (fs.existsSync(sibling)) return sibling
+  return null
 }
 
 // visited: Map<importPath, importedProgram> - caches parsed+resolved programs.
 // Prevents re-parsing and infinite recursion, but still processes named exports on repeat imports.
-// Resolve an import source string to an absolute path within topLevelRoot.
+// Resolve an import source string to an absolute path within ctx.projectRoot.
 // Returns the resolved path, or null (with a console.warn) if not found or out-of-bounds.
 // Defense: uses fs.realpathSync to prevent symlink traversal outside the project root.
-function _resolveImportPath(src, projectDir, filename, topLevelRoot) {
-  // @arc-cms/<path> — override-first alias for the arc-cms package.
-  // Checks site/cms/<path> in the user project first (per-file override / eject),
-  // then falls back to the package source in node_modules (or the in-repo monorepo path).
-  if (src.startsWith('@arc-cms/')) {
-    const rel = src.slice('@arc-cms/'.length).replace(/\.arc$/, '')
-    const overrideBase = path.resolve(projectDir, 'site', 'cms', rel)
-    for (const c of [overrideBase + '.arc', overrideBase]) {
-      if (fs.existsSync(c)) return c
-    }
-    const pkgRoot = _resolveArcCmsRoot(projectDir)
-    if (pkgRoot) {
-      const pkgBase = path.resolve(pkgRoot, rel)
+//
+// Parameters:
+//   src         — import string (relative path, "./foo" or alias "@pkg/x")
+//   currentDir  — directory of the file performing the import (for relative resolution).
+//                 Mutates during recursion as we descend into imported files.
+//   filename    — file performing the import (relative path for messages)
+//   ctx         — BuildContext: { projectRoot, packages, pkgByAlias, pkgSrcSet }
+//                 Constant for the whole build. Package lookups read ctx.pkgByAlias (O(1)).
+//                 Back-compat: callers may pass a project-root string here (legacy
+//                 4-arg signature). We detect a string and build a one-shot context.
+function _resolveImportPath(src, currentDir, filename, ctx) {
+  // Back-compat: legacy callers (and tests) pass a project-root string as the 4th arg.
+  if (typeof ctx === 'string') ctx = makeBuildContext(ctx)
+  // @<alias>/<path> — override-first alias for any Arc package registered in arc.config.json.
+  // Also handles the built-in @arc-cms/ alias (backward compat) even if not in arc.config.json.
+  // Checks site/<alias>/<path> in the project first (eject/override), then the package source.
+  if (src.startsWith('@') && src.includes('/')) {
+    const slashIdx = src.indexOf('/')
+    const alias = src.slice(1, slashIdx)      // "@arc-cms/widgets/X" → "arc-cms"
+    const rel   = src.slice(slashIdx + 1).replace(/\.arc$/, '')  // → "widgets/X"
+
+    // O(1) alias lookup against the pre-resolved package map. Anchored at ctx.projectRoot,
+    // never at currentDir — so the same widget imported from any sub-directory resolves
+    // identically.
+    let pkgSrc = ctx.pkgByAlias.get(alias)?.src ?? null
+
+    // Built-in fallback: @arc-cms/ always resolves even without arc.config.json packages entry
+    if (!pkgSrc && alias === 'arc-cms') pkgSrc = _resolveArcCmsRoot(ctx.projectRoot)
+    // Built-in fallback: @arc-tree/ resolves when arc-tree is npm-installed or in a known location
+    if (!pkgSrc && alias === 'arc-tree') pkgSrc = _resolveArcTreeRoot(ctx.projectRoot)
+
+    if (pkgSrc) {
+      // Override candidates: site/<alias>/<path> is the new convention; site/cms/<path>
+      // is preserved for back-compat with projects that ejected @arc-cms widgets before
+      // the multi-package alias scheme existed.
+      const overrideRoots = [path.resolve(ctx.projectRoot, 'site', alias, rel)]
+      if (alias === 'arc-cms') overrideRoots.push(path.resolve(ctx.projectRoot, 'site', 'cms', rel))
+      for (const overrideBase of overrideRoots) {
+        for (const c of [overrideBase + '.arc', overrideBase]) {
+          if (fs.existsSync(c)) return c
+        }
+      }
+      const pkgBase = path.resolve(pkgSrc, rel)
       for (const c of [pkgBase + '.arc', pkgBase]) {
         if (fs.existsSync(c)) return c
       }
+      console.warn(`arc: warning: @${alias} import not found: ${src}`)
+      return null
     }
-    console.warn(`arc: warning: @arc-cms import not found: ${src}`)
-    return null
+    // Not an Arc package alias — fall through to regular resolution below
   }
 
-  const fileDir = path.dirname(path.resolve(projectDir, filename))
+  const fileDir = path.dirname(path.resolve(currentDir, filename))
   const candidates = [
-    path.resolve(projectDir, src),
-    path.resolve(projectDir, src + '.arc'),
-    path.resolve(projectDir, src.replace(/\.arc$/, '') + '.arc'),
+    path.resolve(currentDir, src),
+    path.resolve(currentDir, src + '.arc'),
+    path.resolve(currentDir, src.replace(/\.arc$/, '') + '.arc'),
     path.resolve(fileDir, src),
     path.resolve(fileDir, src + '.arc'),
+    // Also try from the project root — allows site/cms/X.arc to resolve correctly
+    // when building from a subdirectory (e.g. admin/cars/) where currentDir != projectRoot.
+    ...(ctx.projectRoot !== path.resolve(currentDir) ? [
+      path.resolve(ctx.projectRoot, src),
+      path.resolve(ctx.projectRoot, src + '.arc'),
+    ] : []),
   ]
   const importPath = candidates.find(p => fs.existsSync(p))
   if (!importPath) {
@@ -112,11 +219,16 @@ function _resolveImportPath(src, projectDir, filename, topLevelRoot) {
   }
   let realImportPath
   try { realImportPath = fs.realpathSync(importPath) } catch (_e) { realImportPath = importPath /* realpathSync failed - symlink or permissions issue */ }
-  const realTopLevelRoot = (() => { try { return fs.realpathSync(topLevelRoot) } catch { return topLevelRoot } })()
-  const pkgRoot = _resolveArcCmsRoot(projectDir)
-  const allowedRoots = [realTopLevelRoot]
-  if (pkgRoot) {
-    try { allowedRoots.push(fs.realpathSync(pkgRoot)) } catch { allowedRoots.push(pkgRoot) }
+  const realProjectRoot = (() => { try { return fs.realpathSync(ctx.projectRoot) } catch { return ctx.projectRoot } })()
+  const allowedRoots = [realProjectRoot]
+  // Allow all registered Arc package source roots (plus arc-cms fallback). O(1) iteration
+  // over ctx.pkgSrcSet — no per-call re-resolution.
+  for (const pkgSrc of ctx.pkgSrcSet) {
+    try { allowedRoots.push(fs.realpathSync(pkgSrc)) } catch { allowedRoots.push(pkgSrc) }
+  }
+  const arcCmsRoot = _resolveArcCmsRoot(ctx.projectRoot)
+  if (arcCmsRoot && !allowedRoots.includes(arcCmsRoot)) {
+    try { allowedRoots.push(fs.realpathSync(arcCmsRoot)) } catch { allowedRoots.push(arcCmsRoot) }
   }
   const inAllowed = allowedRoots.some(r => realImportPath === r || realImportPath.startsWith(r + path.sep))
   if (!inAllowed) {
@@ -126,8 +238,10 @@ function _resolveImportPath(src, projectDir, filename, topLevelRoot) {
   return importPath
 }
 
-async function resolveImports(program, projectDir, filename, visited, rootDir, depsOut) {
-  const topLevelRoot = rootDir ?? path.resolve(projectDir)
+async function resolveImports(program, projectDir, filename, visited, rootDir, depsOut, ctx) {
+  // BuildContext is resolved once per build at the entry points (compile/buildSite/buildServer)
+  // and threaded down. External callers that don't supply it pay a one-time resolution cost.
+  ctx = ctx ?? makeBuildContext(rootDir ?? projectDir)
   const imports = program.declarations.filter(d => d.type === 'ImportDecl')
   if (imports.length === 0) return program
 
@@ -146,7 +260,7 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
     const src = imp.source
     if (!src || src.startsWith('arc/')) continue // stdlib - not a file
 
-    const importPath = _resolveImportPath(src, projectDir, filename, topLevelRoot)
+    const importPath = _resolveImportPath(src, projectDir, filename, ctx)
     if (!importPath) continue
 
     // Use cached program if already parsed; null means currently resolving (circular).
@@ -178,14 +292,17 @@ async function resolveImports(program, projectDir, filename, visited, rootDir, d
         continue
       }
 
-      // Recursively resolve imports in the imported file (pass topLevelRoot to keep containment anchored)
+      // Recursively resolve imports in the imported file. ctx stays the same — it carries
+      // ctx.projectRoot, which is what anchors package alias lookups (Bug 1 fix: previously
+      // we mutated projectDir as we descended and lost the project-root anchor).
       importedProgram = await resolveImports(
         importedProgram,
         path.dirname(importPath),
         importPath,
         visited,
-        topLevelRoot,
-        depsOut
+        ctx.projectRoot,
+        depsOut,
+        ctx
       )
       // Cache the resolved program for subsequent imports of the same file
       visited.set(importPath, importedProgram)
@@ -397,9 +514,11 @@ async function compile(source, filename = '<input>', options = {}) {
   const parser = new Parser(tokens, filename)
   let program = parser.parse()
 
-  // 2b. Resolve imports - read imported .arc files and merge their declarations
+  // 2b. Resolve imports - read imported .arc files and merge their declarations.
+  // Build context once per compile so package lookups are O(1) for the rest of the walk.
   const initialVisited = new Map(filename !== '<input>' ? [[path.resolve(filename), null]] : [])
-  program = await resolveImports(program, projectDir, filename, initialVisited, options.rootDir, depsOut)
+  const ctx = makeBuildContext(options.rootDir ?? projectDir)
+  program = await resolveImports(program, projectDir, filename, initialVisited, options.rootDir, depsOut, ctx)
 
   // 3. Semantic check
   const checker = new Checker(filename)
@@ -469,9 +588,11 @@ async function compile(source, filename = '<input>', options = {}) {
   const js = composeClientJs(jsReactive, clientStubs, realtimeJs)
 
   // 11. @live edge renderer (if @live declarations present)
+  // urlPattern: derive from filename for URL param extraction (e.g. /admin/blocks/code/[id])
+  const urlPattern = filename ? '/' + filename.replace(/\.arc$/, '').replace(/\\/g, '/') : null
   const edgeRenderer = new EdgeRenderer({ hash })
   const liveEdgeFunction = edgeRenderer.emitProgram(
-    program, html, css, js, htmlEmitter.stateBindings
+    program, html, css, js, htmlEmitter.stateBindings, urlPattern
   )
 
   return { html, css, js, edgeFunctions, liveEdgeFunction, handlerNames, program }
@@ -486,11 +607,15 @@ function _adpDecode(buf){let p=0;function rv(){const t=buf[p++];if(t===0)return 
 // Strip base utility CSS rules whose class names never appear in the emitted HTML.
 // Safe: utilities are simple single-class selectors; if the class isn't referenced,
 // the rule cannot match anything.
+const _UTILITY_CLASSES = [
+  'arc-row', 'arc-col', 'arc-center', 'arc-spacer', 'arc-wrap',
+  'arc-sr-only', 'arc-skip-link', 'arc-card',
+]
+const _UTILITY_CLASS_RE = new Map(_UTILITY_CLASSES.map(cls => [
+  cls, new RegExp(`^\\s*\\.${cls}(:[a-z-]+)?\\s*\\{[^}]*\\}\\s*\\n?`, 'gm')
+]))
+
 function treeshakeBaseCss(css, html) {
-  const utilities = [
-    'arc-row', 'arc-col', 'arc-center', 'arc-spacer', 'arc-wrap',
-    'arc-sr-only', 'arc-skip-link', 'arc-card',
-  ]
   // Single HTML scan to determine which utilities are referenced (both quote styles in one pass)
   const usedClasses = new Set()
   const classRe = /class\s*=\s*["']([^"']*)["']/g
@@ -499,9 +624,10 @@ function treeshakeBaseCss(css, html) {
     for (const cls of m[1].split(/\s+/)) if (cls) usedClasses.add(cls)
   }
   // Remove rules for each unused utility (preserves original per-class removal logic)
-  for (const cls of utilities) {
+  for (const cls of _UTILITY_CLASSES) {
     if (usedClasses.has(cls)) continue
-    const re = new RegExp(`^\\s*\\.${cls}(:[a-z-]+)?\\s*\\{[^}]*\\}\\s*\\n?`, 'gm')
+    const re = _UTILITY_CLASS_RE.get(cls)
+    re.lastIndex = 0
     css = css.replace(re, '')
   }
   return css
@@ -683,6 +809,79 @@ function hashString(str) {
     h = (h * 0x01000193) >>> 0
   }
   return h
+}
+
+// Merge multiple edgeFunctions bundles (one per sibling page) into a single valid
+// module. Structure of each bundle:
+//   [preamble: ADP codec + helpers]
+//   async function _handler_*(req) { ... }   (one or more)
+//   export{_handler_*}
+//   export default { async fetch(req) {
+//     let _path; ...
+//     if(_path==='/_arc/fn/X') return _handler_X(req)
+//     return new Response('Not Found',{status:404})
+//   }}
+//   if(typeof module!=='undefined') module.exports={...}
+//
+// We keep one preamble, deduplicate handlers, and rebuild a single default export
+// with all dispatch lines merged inside the fetch handler.
+function _mergeEdgeFunctions(bundles) {
+  let preamble = ''
+  const seenHandlers = new Set()
+  const handlerBlocks = []
+  const exportNames = []
+  const dispatchLines = []
+
+  for (const bundle of bundles) {
+    // Extract preamble: everything before the first `async function _handler_`
+    const firstHandlerIdx = bundle.indexOf('async function _handler_')
+    if (!preamble && firstHandlerIdx > 0) {
+      preamble = bundle.slice(0, firstHandlerIdx).trimEnd()
+    }
+
+    // Extract each handler function block (from `async function _handler_X` to next handler or export default)
+    const handlerRe = /async function (_handler_[a-zA-Z0-9_$]+)\b[\s\S]*?(?=\nexport\{|\nasync function _handler_|$)/g
+    let m
+    while ((m = handlerRe.exec(bundle)) !== null) {
+      const name = m[1]
+      if (seenHandlers.has(name)) continue
+      seenHandlers.add(name)
+      exportNames.push(name)
+      // Get just the function body (stop before export{ or next handler)
+      let block = m[0].trimEnd()
+      handlerBlocks.push(block)
+    }
+
+    // Extract dispatch lines from inside the export default fetch handler
+    const fetchBodyMatch = bundle.match(/export default\{[\s\S]*?async fetch\(req\)\{([\s\S]*?)\nreturn new Response\('Not Found/)
+    if (fetchBodyMatch) {
+      for (const line of fetchBodyMatch[1].split('\n')) {
+        const t = line.trim()
+        if (t.startsWith("if(_path===") && !dispatchLines.includes(t)) {
+          dispatchLines.push(t)
+        }
+      }
+    }
+  }
+
+  if (!preamble && bundles.length > 0) preamble = bundles[0]
+
+  const exportLine = exportNames.length > 0 ? `export{${exportNames.join(',')}}` : ''
+  const cjsLine = exportNames.length > 0
+    ? `if(typeof module!=='undefined')module.exports={${exportNames.join(',')}}`
+    : ''
+  const fetchHandler = [
+    'export default{',
+    'async fetch(req){',
+    "let _path;try{_path=new URL(req.url).pathname}catch{return new Response('Bad Request',{status:400})}",
+    ...dispatchLines,
+    "return new Response('Not Found',{status:404})",
+    '}',
+    '}',
+  ].join('\n')
+
+  return [preamble, ...handlerBlocks, exportLine, fetchHandler, cjsLine]
+    .filter(Boolean).join('\n')
 }
 
 // Walk up from dir to find the nearest ancestor containing package.json (project root)
@@ -934,13 +1133,39 @@ async function buildSite(projectDir) {
   }
 
   // Read and filter to page files only - partials (widget/design/fn declarations) are skipped
-  const pageFiles = (await Promise.all(
+  const projectPageFiles = (await Promise.all(
     allArcFiles.map(async absPath => {
       let src
       try { src = await fs.promises.readFile(absPath, 'utf8') } catch { return null }
       return _isPageFile(src) ? { absPath, src } : null
     })
   )).filter(Boolean)
+
+  // Build context once for this whole site build. Threaded into resolveImports
+  // below so package alias lookups are O(1) for the entire dependency walk.
+  const buildCtx = makeBuildContext(absDir)
+  // Discover pages from Arc packages declared in arc.config.json.
+  // Package pages use their own pagesDir as the slug root; project pages shadow by slug.
+  const packages = buildCtx.packages
+  const pkgPageEntries = []
+  for (const pkg of packages) {
+    const pagesDir = pkg.pagesDir
+    if (!pagesDir || !fs.existsSync(pagesDir)) continue
+    for (const absPath of findArcFiles(pagesDir)) {
+      let src
+      try { src = await fs.promises.readFile(absPath, 'utf8') } catch { continue }
+      if (!_isPageFile(src)) continue
+      const relSlug = path.relative(pagesDir, absPath).replace(/\.arc$/, '').replace(/\\/g, '/')
+      const slug = pkg.pagesMountPath ? `${pkg.pagesMountPath}/${relSlug}` : relSlug
+      pkgPageEntries.push({ absPath, src, slug })
+    }
+  }
+  const projectSlugs = new Set(projectPageFiles.map(({ absPath }) =>
+    path.relative(absDir, absPath).replace(/\.arc$/, '').replace(/\\/g, '/')
+  ))
+  const filteredPkgPages = pkgPageEntries.filter(({ slug }) => !projectSlugs.has(slug))
+
+  const pageFiles = [...filteredPkgPages, ...projectPageFiles]
 
   if (pageFiles.length === 0) {
     console.error(`arc: no page declarations found in ${absDir}`); process.exit(1)
@@ -953,10 +1178,11 @@ async function buildSite(projectDir) {
   const sharedImgPipeline = new ImagePipeline({ srcDir: absDir, outDir: distDir })
   const rootDir = _findProjectRoot(absDir)
 
-  const compiled = await _withConcurrency(require('os').cpus().length, pageFiles, async ({ absPath, src }) => {
+  const compiled = await _withConcurrency(require('os').cpus().length, pageFiles, async ({ absPath, src, slug: slugOverride }) => {
     // slug preserves directory structure: "index", "packages/index", "docs/quickstart"
-    const relPath = path.relative(absDir, absPath)
-    const slug = relPath.replace(/\.arc$/, '').replace(/\\/g, '/')
+    // Package pages supply a pre-computed slugOverride (relative to their pagesDir, not absDir)
+    const relPath = slugOverride ? slugOverride + '.arc' : path.relative(absDir, absPath)
+    const slug = slugOverride ?? relPath.replace(/\.arc$/, '').replace(/\\/g, '/')
     const relFilename = relPath.replace(/\\/g, '/')
     let result
     try {
@@ -980,18 +1206,18 @@ async function buildSite(projectDir) {
   const failed = pageFiles.filter((_, i) => compiled[i] === null)
   if (failed.length > 0) {
     console.error(`arc: ${failed.length} of ${pageFiles.length} file${failed.length > 1 ? 's' : ''} failed to compile:`)
-    for (const { absPath } of failed) console.error(`  ✗  ${path.relative(absDir, absPath)}`)
-    process.exit(1)
+    for (const { absPath, slug: slugOverride } of failed) console.error(`  ✗  ${slugOverride ?? path.relative(absDir, absPath)}`)
   }
 
+  const successfullyCompiled = compiled.filter(Boolean)
   const pp = new PostProcessor()
 
   // Warn on routing collisions: foo.arc and foo/index.arc both serve /foo.
   // _serveStatic tries `<path>.html` before `<path>/index.html`, so the flat
   // form silently wins. Surface this at build time.
   {
-    const slugs = new Set(compiled.map(c => c.slug))
-    for (const c of compiled) {
+    const slugs = new Set(successfullyCompiled.map(c => c.slug))
+    for (const c of successfullyCompiled) {
       if (c.slug.endsWith('/index') && slugs.has(c.slug.slice(0, -'/index'.length))) {
         const flat = c.slug.slice(0, -'/index'.length) + '.arc'
         const nested = c.slug + '.arc'
@@ -1000,8 +1226,19 @@ async function buildSite(projectDir) {
     }
   }
 
-  for (let i = 0; i < compiled.length; i++) {
-    const c = compiled[i]
+  // Group edgeFunctions by output directory so sibling pages (e.g. index.arc +
+  // settings.arc both in dist/admin/) merge their handlers instead of overwriting.
+  // Renderers are page-specific and go to dist/<url-path>/_arc/renderer.js so the
+  // server can find them by URL (admin/index → dist/admin/_arc/, admin/audit → dist/admin/audit/_arc/).
+  const edgeByDir = new Map()
+  for (const c of successfullyCompiled) {
+    const outDir = path.dirname(path.join(distDir, c.slug + '.html'))
+    if (!edgeByDir.has(outDir)) edgeByDir.set(outDir, { fns: [] })
+    if (c.edgeFunctions?.trim()) edgeByDir.get(outDir).fns.push(c.edgeFunctions.trim())
+  }
+
+  for (let i = 0; i < successfullyCompiled.length; i++) {
+    const c = successfullyCompiled[i]
     const outPath = path.join(distDir, c.slug + '.html')
     fs.mkdirSync(path.dirname(outPath), { recursive: true })
 
@@ -1018,11 +1255,29 @@ async function buildSite(projectDir) {
     if (c.js?.trim()) {
       fs.writeFileSync(path.join(path.dirname(outPath), jsBasename), c.js)
     }
+
+    // Write renderer.js at the URL path the page serves, not at its parent directory.
+    // admin/index → dist/admin/_arc/renderer.js  (serves /admin)
+    // admin/audit → dist/admin/audit/_arc/renderer.js  (serves /admin/audit)
+    if (c.liveEdgeFunction?.trim()) {
+      const urlSlug = c.slug.endsWith('/index') ? c.slug.slice(0, -6) : c.slug
+      const rendererDir = path.join(distDir, urlSlug, '_arc')
+      fs.mkdirSync(rendererDir, { recursive: true })
+      fs.writeFileSync(path.join(rendererDir, 'renderer.js'), c.liveEdgeFunction)
+    }
+  }
+
+  // Write merged edge functions once per directory (avoids sibling-page overwrites).
+  for (const [outDir, { fns }] of edgeByDir) {
+    if (fns.length === 0) continue
+    const fnDir = path.join(outDir, '_arc')
+    fs.mkdirSync(fnDir, { recursive: true })
+    fs.writeFileSync(path.join(fnDir, 'functions.js'), _mergeEdgeFunctions(fns))
   }
 
   let sitemap, robots
   try {
-    ;({ sitemap, robots } = emitSiteMeta(compiled.map(c => ({ slug: c.slug, meta: c.meta }))))
+    ;({ sitemap, robots } = emitSiteMeta(successfullyCompiled.map(c => ({ slug: c.slug, meta: c.meta }))))
   } catch (e) {
     console.warn(`arc: warning: sitemap/robots generation failed: ${e.message}`)
   }
@@ -1047,18 +1302,19 @@ async function buildSite(projectDir) {
   }
 
   try {
-    await _injectPrefetchTags(distDir, compiled)
+    await _injectPrefetchTags(distDir, successfullyCompiled)
   } catch (e) {
     console.warn(`arc: warning: prefetch/view-transition injection failed: ${e.message}`)
   }
 
-  const htmlBytes = compiled.reduce((s, c) => {
+  const htmlBytes = successfullyCompiled.reduce((s, c) => {
     const p = path.join(distDir, c.slug + '.html')
     return s + (fs.existsSync(p) ? fs.statSync(p).size : 0)
   }, 0)
-  console.log(`arc: built site (${compiled.length} pages)`)
-  console.log(`  HTML  ${fmt(htmlBytes)} total (${compiled.length} files)`)
-  if (sitemap) console.log(`  SEO   sitemap.xml (${compiled.filter(c => c.meta.canonical).length} urls) + robots.txt`)
+  const totalPages = pageFiles.length
+  console.log(`arc: built site (${successfullyCompiled.length} pages${failed.length > 0 ? `, ${failed.length} failed` : ''})`)
+  console.log(`  HTML  ${fmt(htmlBytes)} total (${successfullyCompiled.length} files)`)
+  if (sitemap) console.log(`  SEO   sitemap.xml (${successfullyCompiled.filter(c => c.meta.canonical).length} urls) + robots.txt`)
   console.log(`  → ${path.relative(process.cwd(), distDir)}/`)
 }
 
@@ -1482,7 +1738,7 @@ async function dev(projectDir) {
       const parser = new Parser(tokens, absPath)
       const program = parser.parse()
       const depsOut = new Set()
-      await resolveImports(program, absDir, relPath, new Map([[absPath, null]]), absDir, depsOut)
+      await resolveImports(program, absDir, relPath, new Map([[absPath, null]]), absDir, depsOut, buildCtx)
       for (const dep of depsOut) {
         if (!_depMap.has(dep)) _depMap.set(dep, new Set())
         _depMap.get(dep).add(slug)
@@ -1725,7 +1981,25 @@ async function deploy(projectDir, target) {
 // buildServer delegates to src/commands/build-server.js - extracted to reduce cli.js size.
 // See that module for the full implementation.
 async function buildServer(projectDir, opts = {}, flags = {}) {
-  return _buildServerImpl(projectDir, opts, flags, { formatError })
+  // Build context once for the whole server build. buildServer delegates to
+  // src/commands/build-server.js — pass packages by reference rather than re-resolving.
+  const buildCtx = makeBuildContext(path.resolve(projectDir))
+  const packages = buildCtx.packages
+  const pkgServerDirs = packages.map(p => p.serverDir).filter(d => d && fs.existsSync(d))
+  const versioningPkg = buildCtx.pkgByAlias.get('arc-versioning') || packages.find(p => p.name === 'arc-versioning')
+  const searchPkg = buildCtx.pkgByAlias.get('arc-search') || packages.find(p => p.name === 'arc-search')
+  let versioningConfig = {}
+  let searchConfig = {}
+  if (versioningPkg) {
+    try { versioningConfig = JSON.parse(fs.readFileSync(path.join(path.resolve(projectDir), 'arc.config.json'), 'utf8')).versioning || {} } catch {}
+  }
+  if (searchPkg) {
+    try { searchConfig = JSON.parse(fs.readFileSync(path.join(path.resolve(projectDir), 'arc.config.json'), 'utf8')).search || {} } catch {}
+    // Expose tokenizer choice as env var so route files can read it at runtime
+    const { resolveTokenizer } = require(path.join(searchPkg.src, 'index.js'))
+    if (resolveTokenizer) process.env.ARC_SEARCH_TOKENIZER = resolveTokenizer(searchConfig)
+  }
+  return _buildServerImpl(projectDir, { ...opts, pkgServerDirs, versioningEnabled: !!versioningPkg, versioningConfig, searchConfig }, flags, { formatError })
 }
 
 // arc serve [dir] - build server.js then run it, with hot reload on .arc changes.
@@ -2163,15 +2437,27 @@ async function main() {
           db:       _flag('db'),
           force,
         })
+      } else if (sub === 'update') {
+        await _cmsUpdateImpl('.', { force })
       } else if (sub === 'eject') {
         const name = positional[0]
         await _cmsEjectImpl('.', name, { force })
+      } else if (sub === 'add') {
+        const plugin = positional[0]
+        if (plugin === 'tree') {
+          await _cmsAddTreeImpl('.', { force })
+        } else {
+          console.error(`arc cms add: unknown plugin "${plugin}". Available: tree`)
+          process.exit(1)
+        }
       } else {
         console.error('arc cms init [dir] [--force]              Scaffold admin panel + CMS into project')
+        console.error('arc cms update                            Re-sync admin pages + server helpers from installed npm package')
         console.error('arc cms create-superuser [dir]            Create an admin user (interactive)')
         console.error('  Flags: --email <e> --password <p> --name <n> --db <path> --force')
         console.error('         --force bypasses the 8-char password minimum (dev use only)')
         console.error('arc cms eject <Name> [--force]           Copy one widget/page from package for local override')
+        console.error('arc cms add tree                          Install arc-tree mixin (hierarchy for pages/groups)')
         process.exit(1)
       }
       break
@@ -2181,6 +2467,54 @@ async function main() {
     case 'g':
       generate(args[0], args[1])
       break
+
+    case 'docs': {
+      const positional = args.filter(a => !a.startsWith('-'))
+      const _docFlag = (name, short) => {
+        for (let i = 0; i < args.length; i++) {
+          const a = args[i]
+          if (a === '--' + name || (short && a === '-' + short)) return args[i + 1] ?? true
+          if (a.startsWith('--' + name + '=')) return a.split('=').slice(1).join('=')
+        }
+        return undefined
+      }
+      const _docFlags = (name) => {
+        const vals = []
+        for (let i = 0; i < args.length; i++) {
+          if (args[i] === '--' + name && args[i + 1]) vals.push(args[i + 1])
+          else if (args[i].startsWith('--' + name + '=')) vals.push(args[i].split('=').slice(1).join('='))
+        }
+        return vals
+      }
+      const input = positional[0] ?? '.'
+      const output = _docFlag('output', 'o') ?? 'openapi.json'
+      const format = _docFlag('format') ?? 'json'
+      const title = _docFlag('title')
+      const version = _docFlag('api-version')
+      const description = _docFlag('description')
+      const serverUrls = _docFlags('server')
+      const servers = serverUrls.map(url => ({ url }))
+
+      if (format !== 'json' && format !== 'yaml') {
+        console.error(`arc docs: invalid --format "${format}" — use json or yaml`)
+        process.exit(1)
+      }
+
+      let generateDocs
+      try {
+        // Try installed package first, then monorepo fallback
+        try { generateDocs = require('arc-api-docs').generateDocs }
+        catch { generateDocs = require(path.resolve(__dirname, '../packages/arc-api-docs/src/index')).generateDocs }
+      } catch (e) {
+        console.error('arc docs: arc-api-docs package not found. Install with: npm install arc-api-docs')
+        process.exit(1)
+      }
+
+      const spec = await generateDocs({ input, output, format, title, version, description, servers })
+      const routeCount = Object.values(spec.paths || {}).reduce((n, p) => n + Object.keys(p).length, 0)
+      console.log(`arc: generated ${routeCount} route(s) → ${path.resolve(output)}`)
+      break
+    }
 
     case 'db':
       await dbCommand(args)
@@ -2206,8 +2540,10 @@ async function main() {
       console.log('  arc scaffold <Model> [dir]  Generate admin routes + pages for a model (--all, --force)')
       console.log('  arc cms init [dir]       Scaffold full admin panel + CMS (arc-ui based)')
       console.log('  arc cms create-superuser Create an admin user (interactive or --email/--password)')
+      console.log('  arc cms add tree         Install arc-tree mixin (hierarchy views for pages/groups)')
       console.log('  arc new <name>           Create a new Arc project (--template default|counter|blog|api|cms)')
       console.log('  arc deploy [dir]         Deploy to hosting (--target cloudflare|deno|bun|node)')
+      console.log('  arc docs [dir]           Generate OpenAPI 3.0 spec from Arc routes (--output, --format json|yaml)')
       console.log('  arc db <cmd>             Database: migrate, seed, studio')
       console.log('  arc --version            Print version')
   }
@@ -2235,6 +2571,7 @@ module.exports = {
     resolveImports,
     _resolveImportPath,
     _resolveArcCmsRoot,
+    makeBuildContext,
     composeClientJs,
     treeshakeBaseCss,
     treeshakeAnimationCss,

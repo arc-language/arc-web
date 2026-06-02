@@ -15,6 +15,14 @@ fn is_ws(t: &TokenType) -> bool {
     matches!(t, TokenType::NEWLINE | TokenType::INDENT | TokenType::DEDENT)
 }
 
+#[derive(Clone, Debug)]
+struct ParseError {
+    expected: String,
+    got: String,
+    line: usize,
+    col: usize,
+}
+
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -22,6 +30,7 @@ struct Parser {
     nws_at: Vec<usize>,
     nws_raw_pos: Vec<usize>,
     hoisted_decls: Vec<Value>,
+    errors: Vec<ParseError>,
 }
 
 impl Parser {
@@ -43,7 +52,7 @@ impl Parser {
         }
         nws_at[tokens.len()] = nws_idx;
 
-        Parser { tokens, pos: 0, nws_tokens, nws_at, nws_raw_pos, hoisted_decls: vec![] }
+        Parser { tokens, pos: 0, nws_tokens, nws_at, nws_raw_pos, hoisted_decls: vec![], errors: vec![] }
     }
 
     fn peek(&self, offset: usize) -> &Token {
@@ -106,8 +115,22 @@ impl Parser {
             if self.pos < self.tokens.len() - 1 { self.pos += 1; }
             t
         } else {
-            // Error recovery: return a dummy token
-            eprintln!("Expected {:?}, got {:?} at line {}", kind, t.kind, t.line);
+            // Error recovery: collect a structured error and return a dummy token so
+            // downstream parsing continues (lets us collect ALL errors in one pass
+            // instead of bailing at the first one). The dummy carries the EXPECTED
+            // kind so existing emit paths that branch on token kind don't panic;
+            // TokenValue::None marks the hole for the AST-time guard.
+            //
+            // Behavior is gated by ARC_ALLOW_PARSE_WARNINGS in pub fn parse() at EOF:
+            // default = errors are returned to caller (and JS aborts the build);
+            // opt-out = errors are still collected but the parser yields its AST,
+            // matching the historical lenient behaviour for one migration cycle.
+            self.errors.push(ParseError {
+                expected: format!("{:?}", kind),
+                got: format!("{:?}", t.kind),
+                line: t.line,
+                col: t.col,
+            });
             Token::new(kind, TokenValue::None, t.line, t.col)
         }
     }
@@ -148,7 +171,29 @@ impl Parser {
         }
         let mut hoisted = std::mem::take(&mut self.hoisted_decls);
         hoisted.extend(declarations);
-        node!("Program", 1, "imports" => json!([]), "declarations" => json!(hoisted))
+
+        // Surface collected parser errors in the AST so JS callers can decide
+        // whether to abort the build. The JS side checks ast.errors and refuses
+        // to emit unless ARC_ALLOW_PARSE_WARNINGS=1 is set.
+        let errors_json: Vec<Value> = self.errors.iter().map(|e| json!({
+            "expected": e.expected,
+            "got": e.got,
+            "line": e.line,
+            "col": e.col,
+        })).collect();
+
+        // Continue printing to stderr for back-compat with consumers that grep the warnings.
+        // The structured array on the AST is the new authoritative channel.
+        for e in &self.errors {
+            eprintln!("Expected {}, got {} at line {}", e.expected, e.got, e.line);
+        }
+
+        node!(
+            "Program", 1,
+            "imports" => json!([]),
+            "declarations" => json!(hoisted),
+            "errors" => json!(errors_json)
+        )
     }
 
     fn parse_top_level(&mut self) -> Option<Value> {

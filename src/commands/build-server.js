@@ -28,14 +28,46 @@ async function parseArcFile(file, src, formatError) {
       })
       if (stdout) {
         const ast = JSON.parse(stdout)
+        // Structured parser errors collected by the Rust parser (formerly silent
+        // eprintln + dummy token that poisoned the AST and crashed the emitter).
+        //
+        // Migration: opt-in strict mode now (`ARC_STRICT_PARSER=1`) so projects can
+        // adopt incrementally. Default stays lenient for one release so we don't
+        // break every existing codebase that has accidental whitespace/keyword bugs.
+        // Next minor flips the default to strict; `ARC_ALLOW_PARSE_WARNINGS=1` becomes
+        // the opt-out at that point.
+        if (Array.isArray(ast.errors) && ast.errors.length > 0) {
+          if (process.env.ARC_STRICT_PARSER === '1') {
+            const lines = ast.errors.map(e =>
+              `  ${file}:${e.line}:${e.col} — expected ${e.expected}, got ${e.got}`
+            ).join('\n')
+            const err = new Error(
+              `arc: parser refused to emit a corrupted AST for ${file}:\n${lines}\n` +
+              `Fix the syntax above, or unset ARC_STRICT_PARSER to keep the old lenient behaviour.`
+            )
+            err._arcStrictParser = true
+            throw err
+          }
+          // Lenient default: surface as warnings so users see them, but keep building.
+          for (const e of ast.errors) {
+            console.warn(`arc: warning: ${file}:${e.line}:${e.col} — expected ${e.expected}, got ${e.got}`)
+          }
+        }
         // Rust compiler bug: @auth(role) annotations cause method:"(" in RouteDecl.
         // Fall through to JS parser if any route has a non-alpha method.
         const hasBrokenRoute = ast.declarations?.some(
           d => d.type === 'RouteDecl' && d.method && !/^[a-zA-Z]+$/.test(d.method)
         )
-        if (!hasBrokenRoute) return ast
+        // Rust compiler bug: @group directive produces flat RouteDecl without the prefix path.
+        // Detect by checking if source has @group but Rust produced no RouteGroupDecl.
+        const hasBrokenGroup = src.includes('@group') && !ast.declarations?.some(d => d.type === 'RouteGroupDecl')
+        if (!hasBrokenRoute && !hasBrokenGroup) return ast
       }
-    } catch (_) {
+    } catch (e) {
+      // Strict-parser errors bypass the JS parser fallback — they're a contract
+      // violation by the source, not a Rust parser limitation. Re-throw so the
+      // user sees the clean error message instead of a JS parser stack trace.
+      if (e && e._arcStrictParser) throw e
       // fall through to JS parser
     }
   }
@@ -121,10 +153,31 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   const middlewareFile = arcFiles.find(f => path.basename(f) === 'middleware.arc')
   const routeFiles = arcFiles.filter(f => path.basename(f) !== 'middleware.arc')
 
-  const allDeclarations = []
   let middlewareDecls = []
 
-  const routeResults = await Promise.all(routeFiles.map(async (file) => {
+  // Parse package routes (from arc.config.json `packages`, resolved by cli.js `buildServer`).
+  // Each package server dir is paired with its own serverDir root for dynamic path resolution.
+  const pkgServerDirs = opts.pkgServerDirs || []
+  const pkgRouteFileInfos = pkgServerDirs.flatMap(dir =>
+    findArcFiles(dir).filter(f => path.basename(f) !== 'middleware.arc').map(file => ({ file, serverDir: dir }))
+  )
+  const pkgDeclResults = await Promise.all(pkgRouteFileInfos.map(async ({ file, serverDir: pkgServerDir }) => {
+    let src
+    try { src = await fs.promises.readFile(file, 'utf8') }
+    catch (e) { console.error(`arc: cannot read ${file}: ${e.message}`); return [] }
+    const program = await parseArcFile(file, src, formatError)
+    const dynamicPath = filePathToRoutePath(file, pkgServerDir)
+    if (dynamicPath) {
+      for (const d of program.declarations) {
+        if (d.type === 'RouteDecl' && !d._fileRoutePath) d._fileRoutePath = dynamicPath
+      }
+    }
+    return program.declarations
+  }))
+  const pkgDeclarations = pkgDeclResults.flat()
+
+  // Parse project routes.
+  const projectDeclResults = await Promise.all(routeFiles.map(async (file) => {
     let src
     try { src = await fs.promises.readFile(file, 'utf8') }
     catch (e) { console.error(`arc: cannot read ${file}: ${e.message}`); process.exit(1) }
@@ -142,7 +195,25 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
 
     return program.declarations
   }))
-  for (const decls of routeResults) allDeclarations.push(...decls)
+  const projectDeclarations = projectDeclResults.flat()
+
+  // Deduplicate: project routes/models shadow package routes/models by method+path or model name.
+  function routeKey(d) {
+    if (d.type !== 'RouteDecl') return null
+    return `${(d.method || 'GET').toUpperCase()} ${d.path || d._fileRoutePath || '/'}`
+  }
+  const projectRouteKeys = new Set(projectDeclarations.map(routeKey).filter(Boolean))
+  const projectModelNames = new Set(
+    projectDeclarations.filter(d => d.type === 'ModelDecl').map(d => d.name).filter(Boolean)
+  )
+  const filteredPkgDecls = pkgDeclarations.filter(d => {
+    const key = routeKey(d)
+    if (key) return !projectRouteKeys.has(key)
+    if (d.type === 'ModelDecl') return !projectModelNames.has(d.name)
+    return true
+  })
+
+  const allDeclarations = [...filteredPkgDecls, ...projectDeclarations]
 
   if (middlewareFile) {
     let src
@@ -205,6 +276,9 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     cors: flags.cors ?? null,
     profile: flags.profile ?? false,
     storage: arcCfg.storage,
+    versioningEnabled: opts.versioningEnabled ?? false,
+    versioningConfig: opts.versioningConfig ?? {},
+    searchConfig: arcCfg.search ?? {},
   })
   emitter.hasMiddleware = !!middlewareFile
   emitter.middlewareDecls = middlewareDecls
@@ -217,6 +291,14 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
 
   const outFile = path.join(distDir, 'server.js')
   await fs.promises.writeFile(outFile, serverJs)
+
+  // Copy .env from project root to dist/ so the bun server (which runs from dist/)
+  // can load SESSION_SECRET and other env vars via bun's automatic .env loading.
+  const envSrc = path.join(absDir, '.env')
+  const envDst = path.join(distDir, '.env')
+  try {
+    if (fs.existsSync(envSrc)) await fs.promises.copyFile(envSrc, envDst)
+  } catch { /* non-fatal — server falls back to .arc-dev-secret */ }
 
   const size = Buffer.byteLength(serverJs)
   const _elapsed = Date.now() - _t0
