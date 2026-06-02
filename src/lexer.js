@@ -216,8 +216,8 @@ class Lexer {
       return true
     }
 
-    // Strings
-    if (ch === '"' || ch === "'") {
+    // Strings (backtick strings allow embedded newlines — useful for @raw HTML/CSS/JS blocks)
+    if (ch === '"' || ch === "'" || ch === '`') {
       this.tokenizeString(ch)
       return true
     }

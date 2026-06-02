@@ -408,7 +408,34 @@ describe('Lexer - error cases', () => {
   })
 
   test('throws on unexpected character', () => {
-    assert.throws(() => lex('`'), /Unexpected character/)
+    // § isn't an Arc operator, identifier start, or string delimiter — pick something
+    // genuinely unexpected. (Used to be backtick, but ` is now a multi-line string
+    // delimiter — see "backtick strings" tests below.)
+    assert.throws(() => lex('§'), /Unexpected character/)
+  })
+
+  test('backtick strings tokenize as a single STRING (single-line)', () => {
+    const toks = lex('`hello world`')
+    assert.equal(toks.length, 1)
+    assert.equal(toks[0].type, T.STRING)
+    assert.equal(toks[0].value, 'hello world')
+  })
+
+  test('backtick strings allow embedded newlines (multi-line)', () => {
+    // Critical for @raw '<style>…multi-line…</style>' blocks in widget bodies.
+    const toks = lex('`line1\nline2\nline3`')
+    assert.equal(toks.length, 1)
+    assert.equal(toks[0].type, T.STRING)
+    assert.equal(toks[0].value, 'line1\nline2\nline3')
+  })
+
+  test('backtick strings do NOT interpolate {expr}', () => {
+    // By design — backticks are for raw passthrough; only double-quoted strings
+    // perform {expr} interpolation. This keeps @raw HTML/CSS/JS blocks faithful.
+    const toks = lex('`a{b}c`')
+    assert.equal(toks.length, 1)
+    assert.equal(toks[0].type, T.STRING)
+    assert.equal(toks[0].value, 'a{b}c')
   })
 
   test('throws on newline inside double-quoted string', () => {

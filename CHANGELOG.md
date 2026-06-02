@@ -2,6 +2,16 @@
 
 All notable changes to Arc are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] — 2026-06-02
+
+### Added
+
+- **Backtick strings (`` `…` ``) for multi-line literals.** Backticks now tokenize as a string delimiter alongside `"` and `'`. Embedded newlines are allowed (the old `'` and `"` continue to error on newlines), and `{expr}` interpolation is intentionally *not* applied inside backticks — they're for raw passthrough, ideal for `@raw '<style>…multi-line…</style>'` blocks in widget bodies. This eliminates the entire class of "Unterminated string literal" errors that previously forced authors to collapse multi-line HTML/CSS/JS into a single line (e.g. the original `arc-cookie-bar` widget body that spanned 188 lines as one `'`-quoted string).
+
+### Fixed
+
+- **`tests/lexer.test.js:410` — "throws on unexpected character" updated.** The test was using the backtick as the canary for unexpected characters, but `` ` `` is now a valid string delimiter. Switched to `§` (truly outside any Arc grammar position) and added three positive tests for backtick strings (single-line, multi-line, no `{expr}` interpolation).
+
 ## [0.2.2] — 2026-06-02
 
 ### Fixed
