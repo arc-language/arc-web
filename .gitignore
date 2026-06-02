@@ -5,6 +5,9 @@ bun.lock
 .testproof-cache/
 .cleanproof-cache/
 node_modules/
+
+# Packages live in their own GitHub repos + npm; not versioned in arc-web.
+packages/
 package-lock.json
 *.log
 .resourceproof-cache/
