@@ -67,7 +67,7 @@
   },
   "sideEffects": false,
   "optionalDependencies": {
-    "better-sqlite3": "^9.6.0",
+    "better-sqlite3": "^12.10.0",
     "pg": "^8.0.0",
     "sharp": "^0.34.5"
   },
