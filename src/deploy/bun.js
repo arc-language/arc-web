@@ -105,7 +105,7 @@ ${edgeRoutingBlock}
         })
       }
 
-      return new Response('Not found', { status: 404, headers: { 'X-Content-Type-Options': 'nosniff' } })
+      return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': "default-src 'none'", 'Referrer-Policy': 'strict-origin-when-cross-origin', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=()' } })
     },
   })
 } catch (e) {

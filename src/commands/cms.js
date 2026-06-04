@@ -501,7 +501,7 @@ async function cmsCreateSuperuser(projectDir, opts = {}) {
     : db.prepare('SELECT id, role FROM users WHERE email = ?').get(email)
   const crypto = require('crypto')
   const salt = crypto.randomBytes(16).toString('hex')
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex')
+  const hash = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 }).toString('hex')
   const passwordHash = `${salt}:${hash}`
   const now = new Date().toISOString()
 

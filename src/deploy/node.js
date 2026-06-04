@@ -99,7 +99,7 @@ async function handleEdgeFunction(urlPath, req, res) {
     if (urlPath.startsWith('/_arc/fn/')) {
       const handled = await handleEdgeFunction(urlPath, req, res)
       if (!handled) {
-        res.writeHead(404)
+        res.writeHead(404, { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" })
         res.end('Edge function not found')
       }
       return
@@ -150,7 +150,14 @@ ${edgeRoutingBlock}
     return
   }
 
-  res.writeHead(404, { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'SAMEORIGIN' })
+  res.writeHead(404, {
+    'Content-Type': 'text/plain',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Content-Security-Policy': "default-src 'none'",
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  })
   res.end('Not found')
 })
 

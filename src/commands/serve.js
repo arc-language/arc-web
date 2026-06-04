@@ -72,12 +72,12 @@ async function serve(projectDir, flags, buildServer, buildSite) {
       child.kill('SIGTERM')
     }
     const thisChild = spawn(runtime, [outFile], { stdio: 'inherit', env: childEnv, cwd: require('path').dirname(outFile) })
-    child = thisChild
     thisChild.on('error', e => console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_spawn_failed', msg: e.message })))
     thisChild.on('exit', (code, signal) => {
       if (child !== thisChild) return
       if (signal !== 'SIGTERM') process.exit(code ?? 0)
     })
+    child = thisChild
   }
 
   let _pendingServerRebuild = false
@@ -152,8 +152,8 @@ async function serve(projectDir, flags, buildServer, buildSite) {
     console.log(`${DIM}arc: watching ${path.relative(process.cwd(), serverDir)}/**/*.arc${RESET}`)
   }
 
-  process.once('SIGINT', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGINT') } else process.exit(0) })
-  process.once('SIGTERM', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGTERM') } else process.exit(0) })
+  process.once('SIGINT', () => { clearTimeout(serverDebounce); clearTimeout(siteDebounce); if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGINT') } else process.exit(0) })
+  process.once('SIGTERM', () => { clearTimeout(serverDebounce); clearTimeout(siteDebounce); if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGTERM') } else process.exit(0) })
   process.once('unhandledRejection', (reason) => {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'unhandled_rejection', msg: reason instanceof Error ? reason.message : String(reason) }))
   })

@@ -1734,6 +1734,7 @@ async function dev(projectDir) {
   })
 
   const absDir = path.resolve(projectDir)
+  const buildCtx = makeBuildContext(absDir)
   const distDir = path.join(absDir, 'dist')
 
   const _arcFiles = findArcFiles(absDir)

@@ -233,6 +233,7 @@ widget Field
       required={ isRequired ? true : none }
       aria-required={ isRequired ? "true" : none }
       aria-labelledby={ @label ? "label-" + @name : none }
+      aria-label={ @label ? none : @name }
       aria-invalid={ isTouched ? (error ? "true" : "false") : none }
       aria-describedby={ isTouched && error ? "error-" + @name : none }
       on:input={ fn e => @form.setValue(@name, e.target.value) }

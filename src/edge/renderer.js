@@ -309,7 +309,7 @@ class EdgeRenderer {
       `export default {`,
       `  async fetch(request, env, ctx) {`,
       `    const _clientId = request.headers.get('x-request-id') ?? ''`,
-      `    const _traceId = /^[a-zA-Z0-9_-]{1,64}$/.test(_clientId) ? _clientId : Math.random().toString(36).slice(2, 10)`,
+      `    const _traceId = /^[a-zA-Z0-9_-]{1,64}$/.test(_clientId) ? _clientId : crypto.randomUUID().slice(0, 8)`,
       `    try {`,
       `      const { head, rest } = _BASE_HEAD_SPLIT`,
       `      const stream = new ReadableStream({`,
