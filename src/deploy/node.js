@@ -117,7 +117,7 @@ ${assetsEntries}
 
 function getContentType(path) {
   if (path.endsWith('.html')) return 'text/html; charset=utf-8'
-  if (path.endsWith('.css')) return 'text/css'
+  if (path.endsWith('.css')) return 'text/css; charset=utf-8'
   if (path.endsWith('.js')) return 'application/javascript'
   if (path.endsWith('.json')) return 'application/json'
   if (path.endsWith('.svg')) return 'image/svg+xml'
@@ -178,10 +178,14 @@ server.headersTimeout = 66000
 server.requestTimeout = 300000
 server.on('error', e => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_error', msg: e.message })); process.exit(1) })
 server.on('clientError', (err, socket) => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'client_error', msg: err.message })); if (!socket.destroyed) socket.destroy() })
+let _shuttingDown = false
 function _shutdown(signal) {
+  if (_shuttingDown) return
+  _shuttingDown = true
   try {
     console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
-    setTimeout(() => process.exit(0), 10000).unref()
+    setTimeout(() => process.exit(0), 10000)
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections()
     server.close(err => {
       try {
         if (err) console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_error', msg: err.message }))

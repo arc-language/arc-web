@@ -159,7 +159,7 @@ function emitCatchBlock(traceLog) {
     if (_e?.status === 422) return _json({ error: _e.message ?? 'Unprocessable entity' }, 422)
     if (_e?.status === 400) return _json({ error: _e.message ?? 'Bad request' }, 400)
     ${traceLog}
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.ARC_DEBUG === '1') {
       return _json({ error: 'Internal server error', message: _e?.message ?? String(_e), name: _e?.name, stack: (_e?.stack ?? '').split('\\n').slice(0, 8) }, 500)
     }
     return _json({ error: 'Internal server error' }, 500)

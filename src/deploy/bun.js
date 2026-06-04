@@ -28,14 +28,14 @@ ${handlerMapEntries}
 
 async function handleEdgeFunction(path, req) {
   const segment = path.slice('/_arc/fn/'.length)
-  if (segment.includes('/')) return new Response('Not Found', { status: 404 })
-  if (!Object.prototype.hasOwnProperty.call(_ARC_HANDLERS, segment)) return new Response('Edge function not found', { status: 404 })
+  if (segment.includes('/')) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+  if (!Object.prototype.hasOwnProperty.call(_ARC_HANDLERS, segment)) return new Response(JSON.stringify({ error: 'Edge function not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
   const fn = _ARC_HANDLERS[segment]
-  if (typeof fn !== 'function') return new Response('Edge function not found', { status: 404 })
-  const _cLen = parseInt(req.headers.get('content-length') ?? '0', 10)
-  if (_cLen > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
+  if (typeof fn !== 'function') return new Response(JSON.stringify({ error: 'Edge function not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
   try {
-    const arcReq = new Request(req.url, { method: req.method, headers: req.headers, body: req.body })
+    const _body = await req.arrayBuffer()
+    if (_body.byteLength > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
+    const arcReq = new Request(req.url, { method: req.method, headers: req.headers, body: _body })
     return await fn(arcReq)
   } catch (e) {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'edge_fn_error', msg: e instanceof Error ? e.message : String(e) }))
@@ -62,7 +62,7 @@ ${assetsEntries}
 
 function getContentType(path) {
   if (path.endsWith('.html')) return 'text/html; charset=utf-8'
-  if (path.endsWith('.css')) return 'text/css'
+  if (path.endsWith('.css')) return 'text/css; charset=utf-8'
   if (path.endsWith('.js')) return 'application/javascript'
   if (path.endsWith('.json')) return 'application/json'
   if (path.endsWith('.svg')) return 'image/svg+xml'
@@ -84,32 +84,37 @@ try {
       return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
     },
     async fetch(req) {
-      const url = new URL(req.url)
-      let path = url.pathname
-      if (path === '' || path === '/') path = '/'
-      if (path === '/_arc/health') {
-        return new Response(JSON.stringify({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString(), version: process.env.npm_package_version ?? 'unknown' }), {
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY' }
-        })
-      }
+      try {
+        const url = new URL(req.url)
+        let path = url.pathname
+        if (path === '' || path === '/') path = '/'
+        if (path === '/_arc/health') {
+          return new Response(JSON.stringify({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }), {
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY' }
+          })
+        }
 ${edgeRoutingBlock}
-      const asset = ASSETS[path]
-      if (asset !== undefined) {
-        return new Response(asset, {
-          headers: {
-            'Content-Type': getContentType(path),
-            'Cache-Control': path === '/' ? 'no-cache' : 'public, max-age=31536000, immutable',
-            'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",
-            'X-Content-Type-Options': 'nosniff',
-            'X-Frame-Options': 'SAMEORIGIN',
-            'Referrer-Policy': 'strict-origin-when-cross-origin',
-            'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-            'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-          },
-        })
-      }
+        const asset = ASSETS[path]
+        if (asset !== undefined) {
+          return new Response(asset, {
+            headers: {
+              'Content-Type': getContentType(path),
+              'Cache-Control': path === '/' ? 'no-cache' : 'public, max-age=31536000, immutable',
+              'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",
+              'X-Content-Type-Options': 'nosniff',
+              'X-Frame-Options': 'SAMEORIGIN',
+              'Referrer-Policy': 'strict-origin-when-cross-origin',
+              'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+              'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+            },
+          })
+        }
 
-      return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': "default-src 'none'", 'Referrer-Policy': 'strict-origin-when-cross-origin', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=()' } })
+        return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': "default-src 'none'", 'Referrer-Policy': 'strict-origin-when-cross-origin', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=()' } })
+      } catch (e) {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'request_error', msg: e instanceof Error ? e.message : String(e) }))
+        return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+      }
     },
   })
 } catch (e) {
@@ -119,8 +124,15 @@ ${edgeRoutingBlock}
 process.stdout.isTTY
   ? console.log(\`arc: server running on http://localhost:\${_server.port}\`)
   : console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${_server.port}\` }))
-process.on('SIGTERM', () => { _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
-process.on('SIGINT', () => { _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
+async function _shutdown(signal) {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
+  const _t = setTimeout(() => process.exit(0), 5000)
+  try { await _server.stop(true) } catch {}
+  clearTimeout(_t)
+  process.exit(0)
+}
+process.on('SIGTERM', () => _shutdown('SIGTERM').catch(() => process.exit(1)))
+process.on('SIGINT', () => _shutdown('SIGINT').catch(() => process.exit(1)))
 `
 
   return [

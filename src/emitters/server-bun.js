@@ -95,7 +95,7 @@ function _storageServeBlock(storage) {
     .sort((a, b) => b.prefix.length - a.prefix.length)
   return entries.map(({ name, prefix }) => {
     const p = JSON.stringify(prefix + '/')
-    return `if (req.method === 'GET' && pathname.startsWith(${p})) { return _storages[${JSON.stringify(name)}].serve(decodeURIComponent(pathname.slice(${prefix.length + 1})), req) }`
+    return `if (req.method === 'GET' && pathname.startsWith(${p})) { const _sk = decodeURIComponent(pathname.slice(${prefix.length + 1})); if (_sk.includes('..') || _sk.startsWith('/')) return new Response('Not found', { status: 404 }); return _storages[${JSON.stringify(name)}].serve(_sk, req) }`
   }).join('\n  ')
 }
 
@@ -489,21 +489,25 @@ function _getArcFnFiles() {
   _walkFn(_DIST_DIR)
   return _arcFnFiles
 }
-// O(1) handler map: built once on first /_arc/fn/ request. Maps fnName → handler fn.
+// O(1) handler map: built once on first /_arc/fn/ request. Returns a Promise so
+// concurrent callers all await the same build rather than each getting an empty Map.
 let _arcHandlerCache = null
-async function _getHandlerCache() {
+function _getHandlerCache() {
   if (_arcHandlerCache) return _arcHandlerCache
-  _arcHandlerCache = new Map()
-  for (const _fnPath of _getArcFnFiles()) {
-    try {
-      const _fmod = await import(_fnPath)
-      for (const [_k, _v] of Object.entries(_fmod)) {
-        if (_k.startsWith('_handler_') && typeof _v === 'function') {
-          _arcHandlerCache.set(_k.slice('_handler_'.length), _v)
+  _arcHandlerCache = (async () => {
+    const _m = new Map()
+    for (const _fnPath of _getArcFnFiles()) {
+      try {
+        const _fmod = await import(_fnPath)
+        for (const [_k, _v] of Object.entries(_fmod)) {
+          if (_k.startsWith('_handler_') && typeof _v === 'function') {
+            _m.set(_k.slice('_handler_'.length), _v)
+          }
         }
-      }
-    } catch {}
-  }
+      } catch (e) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'fn_module_load_failed', file: _fnPath, msg: e?.message ?? String(e) })) }
+    }
+    return _m
+  })()
   return _arcHandlerCache
 }
 // Cached path -> required role table from server/admin-roles.json (arc-cms config).
@@ -626,7 +630,7 @@ async function _serveStatic(req, pathname) {
             req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
             const _ldata = await _resolveData(req)
             if (_ldata && _ldata.__arc_render_error__) {
-              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Error</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Error</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
             }
             let _html = _fillHtml(_ldata)
             _html = _html.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
@@ -656,7 +660,7 @@ async function _serveStatic(req, pathname) {
           req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
           const _ld2 = await _rd2(req)
           if (_ld2 && _ld2.__arc_render_error__) {
-            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Error</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Error</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
           }
           let _html2 = _fh2(_ld2)
           _html2 = _html2.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
@@ -1560,20 +1564,22 @@ const _server = Bun.serve({
     const _q = _u.indexOf('?', _s > -1 ? _s : 8)
     let _pathname = _u.slice(_s > -1 ? _s : _u.length, _q > -1 ? _q : undefined) || '/'
     if (_pathname.includes('%')) { try { _pathname = decodeURIComponent(_pathname) } catch { return new Response('Bad Request', { status: 400 }) } }
-    ${hasMiddleware ? 'const _mwRes = await _middleware(req, _pathname); if (_mwRes) return _mwRes\n    ' : ''}if (_pathname === '/health') {
+    try {
+    if (_pathname === '/health') {
       try {
     ${healthBody}
       } catch (_he) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'health_check_error', msg: _he?.message ?? String(_he) })); return _json({ status: 'error' }, 503, { 'Cache-Control': 'no-store, no-cache' }) }
     }${profilerRouteCheck}
-    ${corsOptionsHandler.trim() ? corsOptionsHandler.trim() + '\n    ' : ''}${pgGuard.trim()}
+    ${hasMiddleware ? 'const _mwRes = await _middleware(req, _pathname); if (_mwRes) return _mwRes\n    ' : ''}${corsOptionsHandler.trim() ? corsOptionsHandler.trim() + '\n    ' : ''}${pgGuard.trim()}
     ${rlCheck.trim()}
     ${dispatchCall}
+    } catch (_ue) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'unhandled_request_error', path: _pathname, msg: _ue?.message ?? String(_ue) })); return _json({ error: 'Internal server error' }, 500) }
   }
 })
 _printBanner(_server.port)
 _getStaticFiles()
-process.on('SIGTERM', () => { _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
-process.on('SIGINT', () => { _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
+process.on('SIGTERM', () => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal: 'SIGTERM' })); _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
+process.on('SIGINT', () => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal: 'SIGINT' })); _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
 ${this.profile ? `console.log('  \\x1b[36marc: profiler\\x1b[0m  \\x1b[2mhttp://localhost:' + _server.port + '/_arc/profiler\\x1b[0m')
 console.warn('  \\x1b[33marc: --profile is for development only — disable in production\\x1b[0m')` : ''}
 `.trim()
