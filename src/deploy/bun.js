@@ -84,8 +84,8 @@ try {
       let path = url.pathname
       if (path === '' || path === '/') path = '/'
       if (path === '/_arc/health') {
-        return new Response(JSON.stringify({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }), {
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' }
+        return new Response(JSON.stringify({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString(), version: process.env.npm_package_version ?? 'unknown' }), {
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY' }
         })
       }
 ${edgeRoutingBlock}
@@ -115,8 +115,8 @@ ${edgeRoutingBlock}
 process.stdout.isTTY
   ? console.log(\`arc: server running on http://localhost:\${_server.port}\`)
   : console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${_server.port}\` }))
-process.on('SIGTERM', () => { _server.stop(true) })
-process.on('SIGINT', () => { _server.stop(true) })
+process.on('SIGTERM', () => { _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
+process.on('SIGINT', () => { _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
 `
 
   return [

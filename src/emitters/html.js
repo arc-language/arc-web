@@ -867,7 +867,7 @@ class HtmlEmitter {
     if (this.isStaticExpr(node.expr)) {
       const val = this.evalStaticExpr(node.expr)
       if (val && typeof val === 'object' && val.__arc_html !== undefined) return val.__arc_html
-      return this.escape(val)
+      return val != null ? this.escape(String(val)) : ''
     }
 
     // Inside a for-loop template: inline the expression as ${_esc(...)} so each item renders correctly

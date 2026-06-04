@@ -130,7 +130,7 @@ const server = http.createServer(async (req, res) => {
   let urlPath = (req.url || '/').split('?')[0]
   if (urlPath === '' || urlPath === '/') urlPath = '/'
   if (urlPath === '/_arc/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache' })
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY' })
     res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }))
     return
   }
@@ -172,7 +172,7 @@ server.keepAliveTimeout = 65000
 server.headersTimeout = 66000
 server.requestTimeout = 300000
 server.on('error', e => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_error', msg: e.message })); process.exit(1) })
-server.on('clientError', (err, socket) => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'client_error', msg: err.message })); socket.end() })
+server.on('clientError', (err, socket) => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'client_error', msg: err.message })); if (!socket.destroyed) socket.destroy() })
 process.on('SIGTERM', () => {
   try {
     console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started' }))

@@ -64,3 +64,11 @@ widget GradientText(name = "", colors = ["#ff0000","#ff7700","#ffff00","#00ff00"
         background: none
         background-clip: unset
         -webkit-background-clip: unset
+
+    // prefers-contrast: more (macOS/iOS "Increase Contrast") — restore solid text
+    media (prefers-contrast: more)
+      .arc-gt
+        color: CanvasText
+        background: none
+        background-clip: unset
+        -webkit-background-clip: unset

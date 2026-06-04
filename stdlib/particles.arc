@@ -20,7 +20,10 @@
 //          ConfettiExplosions ConfettiParade Links Triangles Squares SeaAnemone
 
 @state let _pfx = (fn() {
-  if window.matchMedia("(prefers-reduced-motion: reduce)").matches { return }
+  if window.matchMedia("(prefers-reduced-motion: reduce)").matches {
+    document.querySelectorAll("[data-arc-pfx]").forEach(fn c => c.style.display = "none")
+    return
+  }
 
   fn boot(canvas) {
     const ef = canvas.dataset.arcPfx

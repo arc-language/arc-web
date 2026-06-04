@@ -139,7 +139,7 @@ widget Code(lang = "text", theme = "dark")
     pre.arc-code .tok-s
       color: #a6e3a1
     pre.arc-code .tok-c
-      color: #6c7086
+      color: #9399b2
       font-style: italic
     pre.arc-code .tok-n
       color: #fab387

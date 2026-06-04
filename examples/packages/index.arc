@@ -101,6 +101,21 @@ page "Arc Packages"
       pre class="code-block"
         'import Fireworks from "arc/fireworks"\n\nFireworks autoLaunch=true autoInterval=3000'
 
+    // ── arc-versioning ────────────────────────────────────────────────────
+    section id="versioning"
+      div class="pkg-header"
+        div class="pkg-title"
+          span class="pkg-badge pkg-badge--npm" "npm"
+          h2 "arc-versioning"
+        p "Automatic model versioning for Arc CMS. Every mutation snapshotted, full history with field-level diffs, and one-click revert. Zero config beyond adding the package name."
+        div class="pkg-links"
+          a href="https://github.com/arc-language/arc-versioning" "GitHub"
+          a href="https://www.npmjs.com/package/arc-versioning" "npm"
+          a href="../versioning/" "Full demo →"
+
+      pre class="code-block"
+        '// arc.config.json\n{\n  "packages": ["arc-versioning"]\n}\n\n// History UI auto-mounted at:\n// /admin/history/:model/:id\n\n// REST API:\n// GET  /admin/api/versions/:model/:id\n// POST /admin/api/versions/:model/:id/revert/:versionId'
+
   design
     main
       max-width: 960px
@@ -156,10 +171,14 @@ page "Arc Packages"
       text-transform: uppercase
       letter-spacing: 0.05em
       background: #f0f0ff
-      color: #6366f1
+      color: #4338ca
       border: 1px solid #c7d2fe
       border-radius: 4px
       padding: 2px 6px
+    .pkg-badge--npm
+      background: #fff3e0
+      color: #b45309
+      border-color: #fcd34d
 
     .pkg-header p
       color: #555
@@ -173,7 +192,7 @@ page "Arc Packages"
     .pkg-links a
       font-size: 0.8rem
       font-weight: 500
-      color: #6366f1
+      color: #4f46e5
       text-decoration: none
       padding: 2px 0
       border-bottom: 1px solid #c7d2fe
@@ -201,7 +220,7 @@ page "Arc Packages"
 
     .demo-card span
       font-size: 0.75rem
-      color: #888
+      color: #6b7280
 
     .gradient-card span
       font-size: 1.8rem

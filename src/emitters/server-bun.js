@@ -573,7 +573,7 @@ async function _serveStatic(req, pathname) {
         }
         if (_matchedHandler) return await _matchedHandler(req)
       } catch (_fnErr) {
-        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] fn handler error', fn: pathname, error: _fnErr?.message ?? String(_fnErr) }))
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] fn handler error', fn: pathname, method: req.method, error: _fnErr?.message ?? String(_fnErr) }))
         return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
       }
     }
@@ -615,7 +615,7 @@ async function _serveStatic(req, pathname) {
             return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-cache, must-revalidate, private', 'Pragma': 'no-cache', 'Expires': '0', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'" } })
           }
         } catch (_rendErr) {
-          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] admin renderer error', path: pathname, error: _rendErr?.message ?? String(_rendErr) }))
+          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] admin renderer error', path: pathname, method: req.method, error: _rendErr?.message ?? String(_rendErr) }))
           // fall through to static file serving
         }
       }
@@ -816,7 +816,7 @@ const _db = {
       try {
         const _rows = _db.query('SELECT id FROM _arc_versions WHERE modelName = ?1 AND recordId = ?2 ORDER BY id DESC LIMIT -1 OFFSET ' + _maxV).all(modelName, recordId)
         if (_rows.length) _db.run('DELETE FROM _arc_versions WHERE id IN (' + _rows.map(r => r.id).join(',') + ')')
-      } catch {}
+      } catch (_trimErr) { console.warn('[arc-versioning] trim failed:', _trimErr?.message) }
     })
   }
   const _snap = (modelName, recordId, action, data) => {

@@ -242,7 +242,7 @@ widget Field
     span
       id={"error-" + @name}
       class="field-error-msg"
-      aria-live="polite"
+      aria-live={ isTouched ? "polite" : none }
       aria-hidden={ !(isTouched && error) ? "true" : none }
       "{isTouched && error ? error : ""}"
 

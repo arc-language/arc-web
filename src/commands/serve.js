@@ -119,7 +119,7 @@ async function serve(projectDir, flags, buildServer, buildSite) {
     } finally {
       _siteBusy = false
     }
-    if (_pendingSiteRebuild) { _pendingSiteRebuild = false; rebuildSite().catch(e => console.error(`arc: site rebuild error: ${e?.message ?? String(e)}`)) }
+    if (_pendingSiteRebuild) { _pendingSiteRebuild = false; await rebuildSite() }
   }
 
   console.log(`arc: starting server with ${runtime}...`)
@@ -177,7 +177,7 @@ async function serve(projectDir, flags, buildServer, buildSite) {
       child.kill('SIGTERM')
     } else process.exit(0)
   })
-  process.once('unhandledRejection', (reason) => {
+  process.on('unhandledRejection', (reason) => {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'unhandled_rejection', msg: reason instanceof Error ? reason.message : String(reason) }))
   })
 }

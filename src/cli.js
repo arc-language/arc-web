@@ -847,6 +847,7 @@ function _mergeEdgeFunctions(bundles) {
   const handlerBlocks = []
   const exportNames = []
   const dispatchLines = []
+  const dispatchSet = new Set()
 
   for (const bundle of bundles) {
     // Extract preamble: everything before the first `async function _handler_`
@@ -873,8 +874,8 @@ function _mergeEdgeFunctions(bundles) {
     if (fetchBodyMatch) {
       for (const line of fetchBodyMatch[1].split('\n')) {
         const t = line.trim()
-        if (t.startsWith("if(_path===") && !dispatchLines.includes(t)) {
-          dispatchLines.push(t)
+        if (t.startsWith("if(_path===") && !dispatchSet.has(t)) {
+          dispatchSet.add(t); dispatchLines.push(t)
         }
       }
     }
@@ -1927,7 +1928,7 @@ async function dev(projectDir) {
   }
 
   _startWatcher(absDir, (changedFile) => {
-    if (!changedFile || !changedFile.endsWith('.arc')) return
+    if (!changedFile || (!changedFile.endsWith('.arc') && !changedFile.endsWith('.css'))) return
     if (changedFile.includes('dist' + path.sep) || changedFile.includes('dist/')) return
 
     clearTimeout(rebuildTimer)
