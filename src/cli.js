@@ -1737,9 +1737,9 @@ async function dev(projectDir) {
   const distDir = path.join(absDir, 'dist')
 
   const _arcFiles = findArcFiles(absDir)
-  const _arcFileChecks = await Promise.all(_arcFiles.map(async f => {
+  const _arcFileChecks = await _withConcurrency(32, _arcFiles, async f => {
     try { return _isPageFile(await fs.promises.readFile(f, 'utf8')) } catch { return false }
-  }))
+  })
   const isMultiPage = _arcFileChecks.filter(Boolean).length > 1
   const _rebuild = () => isMultiPage ? buildSite(projectDir) : build(projectDir)
 

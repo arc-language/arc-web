@@ -21,6 +21,7 @@ class EdgeRenderer {
   // stateBindings: [{ elementId, expression }] from HtmlEmitter
   // urlPattern: the page's URL slug e.g. "/admin/blocks/code/[id]" — used to extract @param values
   emitProgram(program, baseHtml, baseCss, clientJs, stateBindings = [], urlPattern = null) {
+    this.serverFns = []
     const liveDecls = program.declarations.filter(d => d.type === 'LiveDecl')
     const serverFns = program.declarations.filter(d => d.type === 'ServerFn')
     this.serverFns = serverFns
@@ -60,7 +61,7 @@ class EdgeRenderer {
     }
 
     // Emit data resolver (with @state defaults + @param URL extraction)
-    parts.push(this.emitLiveResolver(liveDecls, stateDecls, paramDecls, urlPattern))
+    parts.push(this.emitLiveResolver(liveDecls, stateDecls, paramDecls, urlPattern, serverFns))
 
     // Emit HTML template filler (replaces reactive spans with real data)
     parts.push(this.emitHtmlFiller(liveBindings, liveVarNames))
@@ -83,7 +84,7 @@ class EdgeRenderer {
     ].join('\n')
   }
 
-  emitLiveResolver(liveDecls, stateDecls = [], paramDecls = [], urlPattern = null) {
+  emitLiveResolver(liveDecls, stateDecls = [], paramDecls = [], urlPattern = null, serverFns = null) {
     // Resolve all @live decls in parallel - they're independent by construction
     // (each one calls a server/fetch fn; the resolver is the *only* place to
     // parallelize, since user code can't `await Promise.all` declaratively).
@@ -137,8 +138,9 @@ class EdgeRenderer {
       ),
     ] : []
 
-    const serverFnBindings = this.serverFns?.length > 0
-      ? this.serverFns.map(fn => `  const ${fn.name} = _impl_${fn.name}(session)`).join('\n')
+    const _sfns = serverFns ?? this.serverFns ?? []
+    const serverFnBindings = _sfns.length > 0
+      ? _sfns.map(fn => `  const ${fn.name} = _impl_${fn.name}(session)`).join('\n')
       : ''
 
     return [

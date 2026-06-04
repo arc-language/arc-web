@@ -157,7 +157,9 @@ ${edgeRoutingBlock}
 const _rawPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000
 const PORT = (Number.isInteger(_rawPort) && _rawPort > 0 && _rawPort < 65536) ? _rawPort : 3000
 server.listen(PORT, () => {
-  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${PORT}\` }))
+  process.stdout.isTTY
+    ? console.log(\`arc: server running on http://localhost:\${PORT}\`)
+    : console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${PORT}\` }))
 })
 server.keepAliveTimeout = 65000
 server.headersTimeout = 66000

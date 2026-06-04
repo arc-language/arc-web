@@ -75,7 +75,7 @@ async function _hmacVerify(data, sig, secret) {
 // Session: encode/decode signed cookie value
 async function _sessionEncode(payload) {
   const json = JSON.stringify(payload)
-  const b64 = btoa(unescape(encodeURIComponent(json)))
+  const b64 = Buffer.from(json).toString('base64')
   const sig = await _hmacSign(b64, _AUTH_SECRET)
   return \`\${b64}.\${sig}\`
 }
@@ -88,7 +88,7 @@ async function _sessionDecode(cookieValue) {
   const sig = cookieValue.slice(dot + 1)
   if (!await _hmacVerify(b64, sig, _AUTH_SECRET)) return null
   try {
-    return JSON.parse(decodeURIComponent(escape(atob(b64))))
+    return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'))
   } catch { return null }
 }
 

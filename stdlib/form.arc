@@ -220,6 +220,7 @@ widget Field
   const fieldType = @type ?? @form._schema[@name]?.type ?? "text"
   const error = @form.errors[@name]
   const isTouched = @form.touched[@name]
+  const isRequired = @form._schema[@name]?.required ?? false
 
   col gap="4px"
     if @label
@@ -229,6 +230,8 @@ widget Field
       type={ fieldType }
       value={ @form.getValue(@name) }
       placeholder={ @placeholder ?? "" }
+      required={ isRequired ? true : none }
+      aria-required={ isRequired ? "true" : none }
       aria-labelledby={ @label ? "label-" + @name : none }
       aria-invalid={ isTouched ? (error ? "true" : "false") : none }
       aria-describedby={ isTouched && error ? "error-" + @name : none }
@@ -267,7 +270,7 @@ widget SubmitButton
       span aria-hidden="true" "⏳ "
       span class="btn-label" "Submitting…"
     if !@form.isSubmitting
-      slot
+      @slot
 
   design
     .btn-submitting

@@ -38,6 +38,7 @@ function flattenGroups(declarations) {
       routes.push(d)
     } else if (d.type === 'RouteGroupDecl') {
       for (const route of d.routes) {
+        if (!isValidRoute(route)) continue
         const p = d.prefix.replace(/\/$/, '') + route.path
         const params = (p.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) ?? []).map(s => s.slice(1))
         routes.push({

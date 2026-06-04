@@ -114,7 +114,7 @@
 })()
 
 widget Code(lang = "text", theme = "dark")
-  pre class="arc-code" data-lang={@lang} data-theme={@theme} role="region" aria-label={"Code block" + (@lang != "text" ? " (" + @lang + ")" : "")}
+  pre class="arc-code" data-lang={@lang} data-theme={@theme} aria-label={"Code block" + (@lang != "text" ? " (" + @lang + ")" : "")}
     code
       slot
 

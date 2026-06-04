@@ -154,7 +154,7 @@ async function serve(projectDir, flags, buildServer, buildSite) {
 
   process.once('SIGINT', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGINT') } else process.exit(0) })
   process.once('SIGTERM', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGTERM') } else process.exit(0) })
-  process.on('unhandledRejection', (reason) => {
+  process.once('unhandledRejection', (reason) => {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'unhandled_rejection', msg: reason instanceof Error ? reason.message : String(reason) }))
   })
 }

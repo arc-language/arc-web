@@ -27,7 +27,6 @@ widget Icon
       aria-label={ @label }
       // Inline SVG for SSR/no-JS; script upgrades with correct stroke color at runtime
       @raw "<svg width=\"{sz}\" height=\"{sz}\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"{clr}\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">{svgPath}</svg>"
-      rawscript "document.currentScript.previousElementSibling.innerHTML = `<svg width=\"{sz}\" height=\"{sz}\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"{clr}\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">{svgPath}</svg>`"
 
   design
     .arc-icon

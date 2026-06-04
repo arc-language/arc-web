@@ -111,7 +111,9 @@ ${edgeRoutingBlock}
   console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_start_failed', msg: e instanceof Error ? e.message : String(e) }))
   process.exit(1)
 }
-console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${_server.port}\` }))
+process.stdout.isTTY
+  ? console.log(\`arc: server running on http://localhost:\${_server.port}\`)
+  : console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${_server.port}\` }))
 `
 
   return [
