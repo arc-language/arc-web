@@ -20,23 +20,29 @@ const fs = require('fs')
 const path = require('path')
 
 // Detect if arc-jobs is installed in the project's node_modules
+let _arcJobsInstalledCache = null
 function _isArcJobsInstalled() {
+  if (_arcJobsInstalledCache !== null) return _arcJobsInstalledCache
   try {
     const cwd = process.cwd()
-    return fs.existsSync(path.join(cwd, 'node_modules', 'arc-jobs', 'src', 'index.js'))
-  } catch (_) { return false }
+    _arcJobsInstalledCache = fs.existsSync(path.join(cwd, 'node_modules', 'arc-jobs', 'src', 'index.js'))
+  } catch (_) { _arcJobsInstalledCache = false }
+  return _arcJobsInstalledCache
 }
 
 // Detect if arc-storage is installed — checks both scoped (@arc-lang/arc-storage) and legacy name.
+let _arcStorageInstalledCache = null
 function _isArcStorageInstalled() {
+  if (_arcStorageInstalledCache !== null) return _arcStorageInstalledCache
   try {
     const roots = [process.cwd(), path.join(process.cwd(), '..')]
     for (const r of roots) {
-      if (fs.existsSync(path.join(r, 'node_modules', '@arc-lang', 'arc-storage', 'src', 'index.js'))) return true
-      if (fs.existsSync(path.join(r, 'node_modules', 'arc-storage', 'src', 'index.js'))) return true
+      if (fs.existsSync(path.join(r, 'node_modules', '@arc-lang', 'arc-storage', 'src', 'index.js'))) { _arcStorageInstalledCache = true; return true }
+      if (fs.existsSync(path.join(r, 'node_modules', 'arc-storage', 'src', 'index.js'))) { _arcStorageInstalledCache = true; return true }
     }
-    return false
-  } catch (_) { return false }
+    _arcStorageInstalledCache = false
+  } catch (_) { _arcStorageInstalledCache = false }
+  return _arcStorageInstalledCache
 }
 
 // Render a JS object literal where ${ENV_VAR} string values become process.env lookups.
@@ -607,7 +613,11 @@ async function _serveStatic(req, pathname) {
   // Routes that exist as @route handlers are already past us by this point.
   if (pathname === '/admin' || pathname.startsWith('/admin/')) {
     if (pathname !== '/admin/login') {
-      const _sess = await auth.session(req)
+      let _sess
+      try { _sess = await auth.session(req) } catch (_sessErr) {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'admin_session_error', path: pathname, msg: _sessErr?.message ?? String(_sessErr) }))
+        return Response.redirect('/admin/login', 302)
+      }
       if (!_sess) return Response.redirect('/admin/login', 302)
       const _need = _requiredRole(pathname)
       if (!_roleOk(_sess.role, _need) && pathname !== '/admin/403') return Response.redirect('/admin/403', 302)
@@ -633,7 +643,7 @@ async function _serveStatic(req, pathname) {
             req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
             const _ldata = await _resolveData(req)
             if (_ldata && _ldata.__arc_render_error__) {
-              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
+              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:auto;text-align:center"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
             }
             let _html = _fillHtml(_ldata)
             _html = _html.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
@@ -663,7 +673,7 @@ async function _serveStatic(req, pathname) {
           req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
           const _ld2 = await _rd2(req)
           if (_ld2 && _ld2.__arc_render_error__) {
-            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
+            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:auto;text-align:center"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
           }
           let _html2 = _fh2(_ld2)
           _html2 = _html2.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
@@ -841,14 +851,14 @@ const _db = {
       try {
         const _rows = _db.query('SELECT id FROM _arc_versions WHERE modelName = ?1 AND recordId = ?2 ORDER BY id DESC LIMIT -1 OFFSET ' + _maxV).all(modelName, recordId)
         if (_rows.length) _db.run('DELETE FROM _arc_versions WHERE id IN (' + _rows.map(r => r.id).join(',') + ')')
-      } catch (_trimErr) { console.warn('[arc-versioning] trim failed:', _trimErr?.message) }
+      } catch (_trimErr) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'versioning_trim_failed', msg: _trimErr?.message ?? String(_trimErr) })) }
     })
   }
   const _snap = (modelName, recordId, action, data) => {
     try {
       globalThis.db._arc_versions.create({ modelName, recordId: String(recordId ?? ''), action, data: JSON.stringify(data), userId: null })
       _trim(modelName, String(recordId ?? ''))
-    } catch (e) { console.warn('[arc-versioning] snapshot failed:', e.message) }
+    } catch (e) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'versioning_snapshot_failed', msg: e?.message ?? String(e) })) }
   }
   for (const _m of Object.keys(globalThis.db ?? {})) {
     if (_skip.has(_m)) continue
@@ -1443,7 +1453,7 @@ async function ${name}(req, params) {
       path: r.path ?? '/',
       type: routeTypeLabel(r),
     }))
-    rows.push({ method: 'GET', path: '/health', type: 'built-in' })
+    rows.push({ method: 'GET', path: '/_arc/health', type: 'built-in' })
     const maxPath = Math.max(...rows.map(r => r.path.length), 6)
     return rows.map(r => `  ${r.method.padEnd(6)}  ${r.path.padEnd(maxPath)}  ${r.type}`).join('\\n')
   }
@@ -1521,9 +1531,10 @@ _printBanner(_server.port)
 _getStaticFiles()
 async function _shutdown(signal) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
-  const _t = setTimeout(() => process.exit(0), 5000)
+  const _t = setTimeout(() => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000)
   try { await _server.stop(true) } catch {}
   clearTimeout(_t)
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_complete', signal }))
   process.exit(0)
 }
 process.on('SIGTERM', () => _shutdown('SIGTERM').catch(() => process.exit(1)))
@@ -1577,7 +1588,7 @@ const _server = Bun.serve({
     let _pathname = _u.slice(_s > -1 ? _s : _u.length, _q > -1 ? _q : undefined) || '/'
     if (_pathname.includes('%')) { try { _pathname = decodeURIComponent(_pathname) } catch { return new Response('Bad Request', { status: 400 }) } }
     try {
-    if (_pathname === '/health') {
+    if (_pathname === '/_arc/health') {
       try {
     ${healthBody}
       } catch (_he) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'health_check_error', msg: _he?.message ?? String(_he) })); return _json({ status: 'error' }, 503, { 'Cache-Control': 'no-store, no-cache' }) }
@@ -1592,9 +1603,10 @@ _printBanner(_server.port)
 _getStaticFiles()
 async function _shutdown(signal) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
-  const _t = setTimeout(() => process.exit(0), 5000)
+  const _t = setTimeout(() => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000)
   try { await _server.stop(true) } catch {}
   clearTimeout(_t)
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_complete', signal }))
   process.exit(0)
 }
 process.on('SIGTERM', () => _shutdown('SIGTERM').catch(() => process.exit(1)))

@@ -1,5 +1,7 @@
 # Configuration
 
+`arc.config.json` is the optional project-level configuration file for Arc. It controls site metadata, content security policy, session handling, image optimization, CORS policy, and deployment targets — all in one place, with sensible defaults so the file can be omitted entirely for simple projects.
+
 Arc reads `arc.config.json` from the project root (next to `index.arc` or the first discovered `.arc` file). All keys are optional.
 
 ## Full schema
@@ -79,7 +81,7 @@ Tune up if your above-fold styling needs more than 14 KB; tune down if your inli
 | `cookieName` | String | `"session"` | Cookie Arc looks for in `@server` requests |
 | `validate` | String (path) | none | JS module exporting `validate(cookie) → { userId, ... } \| null` |
 
-If `validate` is unset, Arc treats any presence of the cookie as a valid session (use only for development).
+> **Warning:** If `validate` is unset, Arc treats *any* presence of the cookie as a valid session — every request is considered authenticated. This is only safe for local development. Always set `validate` before deploying to production.
 
 ### `realtime`
 
@@ -112,6 +114,8 @@ Set the `Access-Control-Allow-Origin` header emitted by the built server. Applie
 | `"https://..."` | Allow exactly that origin |
 
 Only applies to the Bun server target (`arc build-server`). The `--cors` CLI flag overrides this value.
+
+> **Note:** `cors: "*"` is incompatible with cookie-based authentication (`@auth` routes). Browsers will not send cookies to wildcard-origin responses. Use an explicit origin (`"https://app.example.com"`) when your API uses session cookies.
 
 ### `img`
 
@@ -159,6 +163,8 @@ These are not part of `arc.config.json` but are read by the generated server at 
 | Variable | Description |
 | --- | --- |
 | `PORT` | HTTP port to listen on (default: `3000`) |
+| `DATABASE_URL` | SQLite file path (default: `app.db`) or Postgres connection string (`postgres://user:pass@host/db`). Required in production when using `@model` declarations. |
+| `SESSION_SECRET` | Secret key for session signing. **Required in production** when any `@auth` route is present — the server will refuse to start without it. |
 | `ARC_DEBUG=1` | Include error `message`, `name`, and truncated `stack` in HTTP 500 JSON responses. Only active when `NODE_ENV=development` is also set — never fires with unset or production `NODE_ENV`. Useful for local debugging when console logs are not accessible. Also controls verbose output in `arc serve` and `arc build`. |
 | `TRUSTED_PROXY_IPS` | Comma-separated list of trusted proxy IPs (matched against the direct TCP connection). When set, the rate limiter reads the client IP from the `X-Forwarded-For` header only when the TCP-level peer IP is in this list. |
 

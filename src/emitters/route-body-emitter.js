@@ -5,6 +5,8 @@
 // In route/job bodies: response calls (json/redirect/html/text) need `return`,
 // async helpers (parseBody, auth.*, oauth.*, jwt.*) need `await`.
 
+const _SAFE_VAR_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
+
 // Calls that always return a Response and should be prefixed with `return`
 const _RETURN_FUNS = new Set(['json', 'redirect', 'html', 'text', 'auth.clear'])
 // Calls that return a Response and are async - prefix with `return await`
@@ -74,7 +76,7 @@ function emitRouteStmt(stmt, jsEmitter) {
 
   if (stmt.type === 'VarDecl') {
     const kind = stmt.kind === 'let' ? 'let' : 'const'
-    if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(stmt.name)) throw new Error(`Arc: invalid identifier '${stmt.name}' in route body`)
+    if (!_SAFE_VAR_IDENT.test(stmt.name)) throw new Error(`Arc: invalid identifier ${JSON.stringify(stmt.name)} in route body`)
     if (stmt.init?.type === 'CallExpr') {
       const name = _calleePath(stmt.init.callee)
       if (_AWAIT_FUNS.has(name) || _isDbCall(name))
@@ -106,6 +108,8 @@ function emitRouteArmBody(body, jsEmitter) {
       return `return ${jsEmitter.emitExpr(body)};`
     if (_RETURN_AWAIT_FUNS.has(name))
       return `return await ${jsEmitter.emitExpr(body)};`
+    if (_AWAIT_FUNS.has(name) || _isDbCall(name))
+      return `await ${jsEmitter.emitExpr(body)};`
   }
   return `${jsEmitter.emitExpr(body)};`
 }

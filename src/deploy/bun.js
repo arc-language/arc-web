@@ -28,7 +28,7 @@ ${handlerMapEntries}
 
 async function handleEdgeFunction(path, req) {
   const segment = path.slice('/_arc/fn/'.length)
-  if (segment.includes('/')) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+  if (!segment || !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(segment)) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
   if (!Object.prototype.hasOwnProperty.call(_ARC_HANDLERS, segment)) return new Response(JSON.stringify({ error: 'Edge function not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
   const fn = _ARC_HANDLERS[segment]
   if (typeof fn !== 'function') return new Response(JSON.stringify({ error: 'Edge function not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
@@ -39,7 +39,7 @@ async function handleEdgeFunction(path, req) {
     const _body = _hasBody ? await req.arrayBuffer() : null
     if (_body && _body.byteLength > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
     const arcReq = new Request(req.url, { method: req.method, headers: req.headers, ...(_body ? { body: _body } : {}) })
-    arcReq._arc_session = req._arc_session ?? {}
+    arcReq._arc_session = req._arc_session ? { ...req._arc_session } : {}
     return await fn(arcReq)
   } catch (e) {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'edge_fn_error', msg: e instanceof Error ? e.message : String(e) }))
@@ -130,9 +130,10 @@ process.stdout.isTTY
   : console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${_server.port}\` }))
 async function _shutdown(signal) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
-  const _t = setTimeout(() => process.exit(0), 5000)
+  const _t = setTimeout(() => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000)
   try { await _server.stop(true) } catch {}
   clearTimeout(_t)
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_complete', signal }))
   process.exit(0)
 }
 process.on('SIGTERM', () => _shutdown('SIGTERM').catch(() => process.exit(1)))
