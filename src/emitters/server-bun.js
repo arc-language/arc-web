@@ -561,15 +561,17 @@ async function _serveStatic(req, pathname) {
     if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(_fnName)) {
       try {
         req._arc_session = await auth.session(req) ?? {}
+        let _matchedHandler = null
         for (const _fnPath of _getArcFnFiles()) {
           try {
             const _fmod = await import(_fnPath)
             const _handlerKey = '_handler_' + _fnName
             if (typeof _fmod[_handlerKey] === 'function') {
-              return _fmod[_handlerKey](req)
+              _matchedHandler = _fmod[_handlerKey]; break
             }
           } catch {}
         }
+        if (_matchedHandler) return await _matchedHandler(req)
       } catch (_fnErr) {
         console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] fn handler error', fn: pathname, error: _fnErr?.message ?? String(_fnErr) }))
         return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })

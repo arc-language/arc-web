@@ -9,6 +9,7 @@ const { findArcFiles } = require('../utils/fs')
 function createFileWatcher(absDir, onChange) {
   const watched = new Set()
   const fsWatchers = []
+  let _closed = false
 
   function watchDir(dir) {
     if (!fs.existsSync(dir)) return
@@ -24,6 +25,7 @@ function createFileWatcher(absDir, onChange) {
         if (watched.has(f)) continue
         watched.add(f)
         fs.watchFile(f, { interval: 500 }, () => {
+          if (_closed) return
           onChange(path.relative(absDir, f))
         })
       }
@@ -33,6 +35,7 @@ function createFileWatcher(absDir, onChange) {
   watchDir(absDir)
 
   watched.close = function () {
+    _closed = true
     for (const w of fsWatchers) w.close()
     if (!fsWatchers.length) {
       for (const f of watched) fs.unwatchFile(f)
@@ -66,16 +69,22 @@ async function serve(projectDir, flags, buildServer, buildSite) {
   let child = null
   let _rebuilding = false
 
-  function startChild() {
+  async function startChild() {
     if (child) {
-      child.removeAllListeners()
-      child.kill('SIGTERM')
+      const dying = child
+      child = null
+      dying.removeAllListeners()
+      dying.kill('SIGTERM')
+      await new Promise(resolve => {
+        const t = setTimeout(() => { dying.kill('SIGKILL'); resolve() }, 3000)
+        dying.once('exit', () => { clearTimeout(t); resolve() })
+      })
     }
-    const thisChild = spawn(runtime, [outFile], { stdio: 'inherit', env: childEnv, cwd: require('path').dirname(outFile) })
+    const thisChild = spawn(runtime, [outFile], { stdio: 'inherit', env: childEnv, cwd: path.dirname(outFile) })
     thisChild.on('error', e => console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_spawn_failed', msg: e.message })))
     thisChild.on('exit', (code, signal) => {
       if (child !== thisChild) return
-      if (signal !== 'SIGTERM') process.exit(code ?? 0)
+      if (signal !== 'SIGTERM' && signal !== 'SIGKILL') process.exit(code ?? 0)
     })
     child = thisChild
   }
@@ -87,7 +96,7 @@ async function serve(projectDir, flags, buildServer, buildSite) {
     try {
       await buildServer(projectDir, {}, flags)
       console.log(`${CYAN}arc: server reloaded${RESET}`)
-      startChild()
+      await startChild()
     } catch (e) {
       console.error(`arc: server rebuild failed: ${e?.stack ?? e?.message ?? String(e)}`)
     } finally {
@@ -114,7 +123,7 @@ async function serve(projectDir, flags, buildServer, buildSite) {
   }
 
   console.log(`arc: starting server with ${runtime}...`)
-  startChild()
+  await startChild()
 
   // Single watcher on the project root, dispatching by file location.
   // - server/**/*.arc → server rebuild + bun restart
@@ -123,7 +132,7 @@ async function serve(projectDir, flags, buildServer, buildSite) {
   let serverDebounce = null
   let siteDebounce = null
 
-  createFileWatcher(absDir, (filename) => {
+  const watcher = createFileWatcher(absDir, (filename) => {
     // Ignore dist, node_modules, dotfiles
     if (filename.startsWith('dist/') || filename.startsWith('node_modules/') || filename.startsWith('.')) return
 
@@ -152,8 +161,22 @@ async function serve(projectDir, flags, buildServer, buildSite) {
     console.log(`${DIM}arc: watching ${path.relative(process.cwd(), serverDir)}/**/*.arc${RESET}`)
   }
 
-  process.once('SIGINT', () => { clearTimeout(serverDebounce); clearTimeout(siteDebounce); if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGINT') } else process.exit(0) })
-  process.once('SIGTERM', () => { clearTimeout(serverDebounce); clearTimeout(siteDebounce); if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGTERM') } else process.exit(0) })
+  process.once('SIGINT', () => {
+    clearTimeout(serverDebounce); clearTimeout(siteDebounce); watcher.close()
+    if (child) {
+      const t = setTimeout(() => process.exit(0), 5000)
+      child.once('exit', c => { clearTimeout(t); process.exit(c ?? 0) })
+      child.kill('SIGINT')
+    } else process.exit(0)
+  })
+  process.once('SIGTERM', () => {
+    clearTimeout(serverDebounce); clearTimeout(siteDebounce); watcher.close()
+    if (child) {
+      const t = setTimeout(() => process.exit(0), 5000)
+      child.once('exit', c => { clearTimeout(t); process.exit(c ?? 0) })
+      child.kill('SIGTERM')
+    } else process.exit(0)
+  })
   process.once('unhandledRejection', (reason) => {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'unhandled_rejection', msg: reason instanceof Error ? reason.message : String(reason) }))
   })

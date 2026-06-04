@@ -174,11 +174,17 @@ server.requestTimeout = 300000
 server.on('error', e => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_error', msg: e.message })); process.exit(1) })
 server.on('clientError', (err, socket) => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'client_error', msg: err.message })); socket.end() })
 process.on('SIGTERM', () => {
-  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started' }))
-  server.close(err => {
-    if (err) console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_error', msg: err.message }))
-    process.exit(err ? 1 : 0)
-  })
+  try {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started' }))
+    server.close(err => {
+      try {
+        if (err) console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_error', msg: err.message }))
+      } catch {}
+      process.exit(err ? 1 : 0)
+    })
+  } catch (e) {
+    process.exit(1)
+  }
 })
 `
 
