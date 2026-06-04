@@ -19,30 +19,34 @@ const { emitQueuePreamble, emitEmailPreamble, emitJobEnqueueWrapper } = require(
 const fs = require('fs')
 const path = require('path')
 
-// Detect if arc-jobs is installed in the project's node_modules
-let _arcJobsInstalledCache = null
+// Detect if arc-jobs is installed in the project's node_modules.
+// Keyed by cwd so watch-mode / multi-project usage gets correct results per project.
+const _arcJobsCacheByDir = new Map()
 function _isArcJobsInstalled() {
-  if (_arcJobsInstalledCache !== null) return _arcJobsInstalledCache
-  try {
-    const cwd = process.cwd()
-    _arcJobsInstalledCache = fs.existsSync(path.join(cwd, 'node_modules', 'arc-jobs', 'src', 'index.js'))
-  } catch (_) { _arcJobsInstalledCache = false }
-  return _arcJobsInstalledCache
+  const cwd = process.cwd()
+  if (_arcJobsCacheByDir.has(cwd)) return _arcJobsCacheByDir.get(cwd)
+  let result = false
+  try { result = fs.existsSync(path.join(cwd, 'node_modules', 'arc-jobs', 'src', 'index.js')) } catch (_) {}
+  _arcJobsCacheByDir.set(cwd, result)
+  return result
 }
 
 // Detect if arc-storage is installed — checks both scoped (@arc-lang/arc-storage) and legacy name.
-let _arcStorageInstalledCache = null
+// Keyed by cwd so watch-mode / multi-project usage gets correct results per project.
+const _arcStorageCacheByDir = new Map()
 function _isArcStorageInstalled() {
-  if (_arcStorageInstalledCache !== null) return _arcStorageInstalledCache
+  const cwd = process.cwd()
+  if (_arcStorageCacheByDir.has(cwd)) return _arcStorageCacheByDir.get(cwd)
+  let result = false
   try {
-    const roots = [process.cwd(), path.join(process.cwd(), '..')]
+    const roots = [cwd, path.join(cwd, '..')]
     for (const r of roots) {
-      if (fs.existsSync(path.join(r, 'node_modules', '@arc-lang', 'arc-storage', 'src', 'index.js'))) { _arcStorageInstalledCache = true; return true }
-      if (fs.existsSync(path.join(r, 'node_modules', 'arc-storage', 'src', 'index.js'))) { _arcStorageInstalledCache = true; return true }
+      if (fs.existsSync(path.join(r, 'node_modules', '@arc-lang', 'arc-storage', 'src', 'index.js'))) { result = true; break }
+      if (fs.existsSync(path.join(r, 'node_modules', 'arc-storage', 'src', 'index.js'))) { result = true; break }
     }
-    _arcStorageInstalledCache = false
-  } catch (_) { _arcStorageInstalledCache = false }
-  return _arcStorageInstalledCache
+  } catch (_) {}
+  _arcStorageCacheByDir.set(cwd, result)
+  return result
 }
 
 // Render a JS object literal where ${ENV_VAR} string values become process.env lookups.
@@ -72,7 +76,7 @@ function emitArcStorageImport(storage) {
 
   const inits = Object.entries(cfg).map(([name, raw]) => {
     const backend = raw.backend ?? 'file'
-    const opts = { name, ...raw }; delete opts.backend
+    const { backend: _b, ...restRaw } = raw; const opts = { name, ...restRaw }
     const optsExpr = _emitStorageOpts(opts)
     const adapter = backend === 's3' ? 'S3Adapter' : 'FileAdapter'
     return `  ${JSON.stringify(name)}: createStorage(new ${adapter}(${optsExpr}))`
@@ -527,7 +531,10 @@ function _getAdminRoles() {
   const _p = _path.join(process.cwd(), 'server', 'admin-roles.json')
   try {
     _adminRoles = JSON.parse(_fs.readFileSync(_p, 'utf8'))
-  } catch { _adminRoles = null }
+  } catch (_rErr) {
+    if (_rErr?.code !== 'ENOENT') console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'admin_roles_load_failed', msg: _rErr?.message ?? String(_rErr) }))
+    _adminRoles = null
+  }
   return _adminRoles
 }
 function _requiredRole(pathname) {
@@ -592,14 +599,16 @@ async function _serveStatic(req, pathname) {
           if (_prRes) return _prRes
           // null → module requested fall-through (editor session bypass)
         }
-      } catch (_e) { /* module missing or threw — fall through */ }
+      } catch (_e) {
+        if (_e?.code !== 'MODULE_NOT_FOUND') console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'cms_page_renderer_error', slug: _slug, msg: _e?.message ?? String(_e), name: _e?.name }))
+      }
     }
   }
   // Handle /_arc/fn/* POSTs from @live page @server functions (reactive state updates).
   // Must run BEFORE the admin guard so /_arc/fn/ paths aren't rejected as non-/admin/*.
   if (req.method === 'POST' && pathname.startsWith('/_arc/fn/')) {
     const _fnName = pathname.slice('/_arc/fn/'.length)
-    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(_fnName)) {
+    if (_ARC_FN_NAME_RE.test(_fnName)) {
       try {
         req._arc_session = await auth.session(req) ?? {}
         const _hCache = await _getHandlerCache()
@@ -649,7 +658,7 @@ async function _serveStatic(req, pathname) {
               return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
             }
             let _html = _fillHtml(_ldata)
-            _html = _html.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
+            _html = _html.replace(/<meta\\s+http-equiv=["']Content-Security-Policy["'][^>]*\\/?>/gi, '')
             return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-cache, must-revalidate, private', 'Pragma': 'no-cache', 'Expires': '0', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com data:; img-src 'self' data: blob: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'" } })
           }
         } catch (_rendErr) {
@@ -679,7 +688,7 @@ async function _serveStatic(req, pathname) {
             return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
           }
           let _html2 = _fh2(_ld2)
-          _html2 = _html2.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
+          _html2 = _html2.replace(/<meta\\s+http-equiv=["']Content-Security-Policy["'][^>]*\\/?>/gi, '')
           return new Response(_html2, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com data:; img-src 'self' data: blob: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'" } })
         }
       } catch (_re2) {
@@ -699,7 +708,7 @@ async function _serveStatic(req, pathname) {
       const _isAdminPath = _clean === '/admin' || _clean.startsWith('/admin/')
       const _cc = _isAdminPath ? 'no-store, no-cache, must-revalidate, private' : (_ext === '.html' ? 'no-store' : 'public, max-age=31536000, immutable')
       const _hdrs = { 'Content-Type': _MIME[_ext] ?? 'text/plain', 'Cache-Control': _cc }
-      if (_isAdminPath) { _hdrs['Pragma'] = 'no-cache'; _hdrs['Expires'] = '0' }
+      if (_isAdminPath) { _hdrs['Pragma'] = 'no-cache'; _hdrs['Expires'] = '0'; _hdrs['X-Robots-Tag'] = 'noindex, nofollow' }
       return new Response(Bun.file(_fp), { headers: _hdrs })
     }
   }
@@ -710,7 +719,7 @@ async function _serveStatic(req, pathname) {
     const _isAdminDyn = _clean === '/admin' || _clean.startsWith('/admin/')
     const _cc2 = _isAdminDyn ? 'no-store, no-cache, must-revalidate, private' : (_ext === '.html' ? 'no-store' : 'public, max-age=31536000, immutable')
     const _hdrs2 = { 'Content-Type': _MIME[_ext] ?? 'text/plain', 'Cache-Control': _cc2 }
-    if (_isAdminDyn) { _hdrs2['Pragma'] = 'no-cache'; _hdrs2['Expires'] = '0' }
+    if (_isAdminDyn) { _hdrs2['Pragma'] = 'no-cache'; _hdrs2['Expires'] = '0'; _hdrs2['X-Robots-Tag'] = 'noindex, nofollow' }
     return new Response(Bun.file(_dynFp), { headers: _hdrs2 })
   }
   return _r
@@ -1328,8 +1337,8 @@ async function _job_${job.name}(${params}) {
 
     const traceDecl = this.noTracing ? '' : 'const _traceId = req._traceId\n    '
     const traceLog = this.noTracing
-      ? `console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', method: '${route.method}', path: '${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))`
-      : `console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, method: '${route.method}', path: '${route.path}', msg: _e?.message ?? String(_e), stack: _e?.stack }))`
+      ? `console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', method: '${route.method}', path: '${route.path}', msg: _e?.message ?? String(_e), name: _e?.name, stack: (_e?.stack ?? '').split('\\\\n').slice(0, 8) }))`
+      : `console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', traceId: _traceId, method: '${route.method}', path: '${route.path}', msg: _e?.message ?? String(_e), name: _e?.name, stack: (_e?.stack ?? '').split('\\\\n').slice(0, 8) }))`
 
     // Item 6: pre-serialize static json/html/text GET routes
     const staticInfo = this._staticResponseConst(route)
@@ -1360,9 +1369,14 @@ function ${name}(req, params) { return ${constName} }`.trim()
       return `
 // Route: ${route.method} ${route.path} [echo]
 async function ${name}(req, params) {
-  const _len = +(req.headers.get('content-length') ?? 0)
-  if (_len > _MAX_BODY_SIZE) return _json({ error: 'Request body too large' }, 413)
-  return new Response(await req.arrayBuffer(), { headers: _HEADERS_JSON })
+  try {
+    const _len = +(req.headers.get('content-length') ?? 0)
+    if (_len > _MAX_BODY_SIZE) return _json({ error: 'Request body too large' }, 413)
+    return new Response(await req.arrayBuffer(), { headers: _HEADERS_JSON })
+  } catch (_e) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', method: '${route.method}', path: '${route.path}', msg: _e?.message ?? String(_e) }))
+    return _json({ error: 'Internal server error' }, 500)
+  }
 }`.trim()
     }
 
@@ -1372,7 +1386,7 @@ async function ${name}(req, params) {
         ? emitRouteBody(route.body.body, this.jsEmitter)
         : ''
     } catch (_e) {
-      console.error(`arc: emitter crash on route ${route.method} ${route.path}: ${_e?.message}`)
+      console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'emitter_crash', method: route.method, path: route.path, msg: _e?.message ?? String(_e) }))
       throw _e
     }
 
@@ -1493,7 +1507,8 @@ function _printBanner(port) {
 
     const traceHoist = this.noTracing ? '' : `
 // Hoisted: avoids per-request RegExp allocation at high request rates
-const _TRACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/`
+const _TRACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/
+const _ARC_FN_NAME_RE = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/`
 
     const rlCheck = this.noRateLimit ? '' : `
     const _rl = _checkRateLimit(req, _bunServer)
@@ -1599,7 +1614,7 @@ const _server = Bun.serve({
     ${hasMiddleware ? 'const _mwRes = await _middleware(req, _pathname); if (_mwRes) return _mwRes\n    ' : ''}${corsOptionsHandler.trim() ? corsOptionsHandler.trim() + '\n    ' : ''}${pgGuard.trim()}
     ${rlCheck.trim()}
     ${dispatchCall}
-    } catch (_ue) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'unhandled_request_error', path: _pathname, msg: _ue?.message ?? String(_ue) })); return _json({ error: 'Internal server error' }, 500) }
+    } catch (_ue) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'unhandled_request_error', method: req.method, path: _pathname, msg: _ue?.message ?? String(_ue) })); return _json({ error: 'Internal server error' }, 500) }
   }
 })
 _printBanner(_server.port)
@@ -1614,8 +1629,12 @@ async function _shutdown(signal) {
 }
 process.on('SIGTERM', () => _shutdown('SIGTERM').catch(() => process.exit(1)))
 process.on('SIGINT', () => _shutdown('SIGINT').catch(() => process.exit(1)))
-${this.profile ? `console.log('  \\x1b[36marc: profiler\\x1b[0m  \\x1b[2mhttp://localhost:' + _server.port + '/_arc/profiler\\x1b[0m')
-console.warn('  \\x1b[33marc: --profile is for development only — disable in production\\x1b[0m')` : ''}
+${this.profile ? `if (process.stdout.isTTY) {
+  console.log('  \\x1b[36marc: profiler\\x1b[0m  \\x1b[2mhttp://localhost:' + _server.port + '/_arc/profiler\\x1b[0m')
+  console.warn('  \\x1b[33marc: --profile is for development only — disable in production\\x1b[0m')
+} else {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'profiler_active', msg: 'arc: --profile is for development only — disable in production' }))
+}` : ''}
 `.trim()
   }
 }
