@@ -267,8 +267,8 @@ class HtmlEmitter {
         node.meta?.skipLinkText ? this.evalStaticExpr(node.meta.skipLinkText)
           : _localize(_LOCALE_SKIP_LINK, lang)
       )}</a>`,
-      hasUserMain ? '' : `<main id="main-content" aria-label="${this.escape(title)}">`,
-      hasUserMain ? '' : `<h1 class="arc-sr-only">${this.escape(title)}</h1>`,
+      hasUserMain ? '' : `<main id="main-content" aria-labelledby="_arc_h1_title">`,
+      hasUserMain ? '' : `<h1 id="_arc_h1_title" class="arc-sr-only">${this.escape(title)}</h1>`,
       bodyContent,
       hasUserMain ? '' : '</main>',
       '</body>',
@@ -284,7 +284,7 @@ class HtmlEmitter {
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
       (seo?.robots && seo.robots !== 'index,follow') ? `<meta name="robots" content="${this.escape(seo.robots)}">` : '',
       // CSP meta tag is a fallback hint only — does not replace server-sent Content-Security-Policy headers in production
-      '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com https://api.fontshare.com; font-src \'self\' https://fonts.gstatic.com https://api.fontshare.com data:; object-src \'none\'; base-uri \'self\'; form-action \'self\';">',
+      '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com https://api.fontshare.com; font-src \'self\' https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com data:; object-src \'none\'; base-uri \'self\'; form-action \'self\';">',
       `<title>${this.escape(title)}</title>`,
       description ? `<meta name="description" content="${this.escape(description)}">` : '',
       seo.keywords ? `<meta name="keywords" content="${this.escape(seo.keywords)}">` : '',
@@ -339,7 +339,11 @@ class HtmlEmitter {
     for (const [k, v] of Object.entries(attrs ?? {})) {
       if (v === true) resolvedAttrs[k] = true
       else if (v && typeof v === 'object' && v.type) {
-        resolvedAttrs[k] = this.isStaticExpr(v) ? this.evalStaticExpr(v) : this.emitExpr(v)
+        if (this.isStaticExpr(v)) {
+          resolvedAttrs[k] = this.evalStaticExpr(v)
+        } else {
+          resolvedAttrs[k] = { __arc_html: this._emitReactivePropHtml(v), __arc_js: this.exprToString(v) }
+        }
       } else {
         resolvedAttrs[k] = v
       }
@@ -353,15 +357,20 @@ class HtmlEmitter {
         } else if (this.isStaticExpr(dv)) {
           resolvedAttrs[param.name] = this.evalStaticExpr(dv)
         } else {
-          resolvedAttrs[param.name] = this.emitExpr(dv)
+          resolvedAttrs[param.name] = { __arc_html: this._emitReactivePropHtml(dv), __arc_js: this.exprToString(dv) }
         }
       }
     }
     this.currentAttrs = resolvedAttrs
     this.slotChildren = slotChildren ?? []
+    // isStaticExpr cache is keyed by node identity; must reset when currentAttrs changes
+    // so an Identifier that was non-static in outer scope becomes static inside the widget.
+    const outerStaticCache = this._staticExprCache
+    this._staticExprCache = null
     const result = this.emitChildren(widgetDecl.body)
     this.currentAttrs = outerAttrs
     this.slotChildren = outerSlot
+    this._staticExprCache = outerStaticCache
     return result
   }
 
@@ -372,6 +381,14 @@ class HtmlEmitter {
       return expr.parts.map(p => p.type === 'Literal' ? this.escape(String(p.value ?? '')) : '').join('')
     }
     return ''
+  }
+
+  // Render a non-static expression as HTML (with reactive span placeholders).
+  // Used when a reactive expression is passed as a widget prop value.
+  _emitReactivePropHtml(v) {
+    if (v.type === 'TemplateLiteral') return this.emitTemplateLiteral(v)
+    if (v.type === 'InterpolationNode') return this.emitInterpolation(v)
+    return this.emitNode(v)
   }
 
   // ── Template node emission ─────────────────────────────────────────────────
@@ -454,11 +471,16 @@ class HtmlEmitter {
     const rawClassAttr = staticAttrs.class
     if (rawClassAttr !== undefined) {
       delete staticAttrs.class
-      const classStr = (rawClassAttr && typeof rawClassAttr === 'object' && rawClassAttr.type)
-        ? (this.isStaticExpr(rawClassAttr) ? String(this.evalStaticExpr(rawClassAttr) ?? '') : '')
-        : String(rawClassAttr ?? '')
-      const extraClasses = classStr.split(/\s+/).filter(Boolean)
-      if (extraClasses.length > 0) classes = [...classes, ...extraClasses]
+      if (rawClassAttr && typeof rawClassAttr === 'object' && rawClassAttr.__arc_tpl !== undefined) {
+        // Dynamic class template (for-loop context): apply hash and pass through buildAttrs
+        staticAttrs['__arc_dyn_class'] = rawClassAttr.__arc_tpl + `_${this.componentHash}`
+      } else {
+        const classStr = (rawClassAttr && typeof rawClassAttr === 'object' && rawClassAttr.type)
+          ? (this.isStaticExpr(rawClassAttr) ? String(this.evalStaticExpr(rawClassAttr) ?? '') : '')
+          : String(rawClassAttr ?? '')
+        const extraClasses = classStr.split(/\s+/).filter(Boolean)
+        if (extraClasses.length > 0) classes = [...classes, ...extraClasses]
+      }
     }
 
     let htmlTag = ELEMENT_MAP[tag] ?? tag
@@ -510,8 +532,23 @@ class HtmlEmitter {
   _collectBindings(node) {
     const { tag, attrs = {} } = node
     let id = node.id ?? null
+    // Pre-check: if element has an explicit static id="..." attribute, use it as the reactive ID.
+    // This prevents duplicate id attributes when bind:value and id are both on the same element
+    // (e.g. CmsField widget: input id="{name}" bind:value="{name}").
+    if (!id && attrs.id !== undefined) {
+      const idVal = attrs.id
+      if (typeof idVal === 'string') {
+        id = idVal
+      } else if (idVal?.type && this.isStaticExpr(idVal)) {
+        id = String(this.evalStaticExpr(idVal) ?? '') || null
+      }
+    }
     const staticAttrs = {}
     for (const [key, value] of Object.entries(attrs)) {
+      if (key === 'id' && id) {
+        // Already captured as reactive ID — skip to avoid duplicate id attribute in HTML output
+        continue
+      }
       if (key.startsWith('bind:')) {
         if (!id) id = this.getReactiveId(`bind_${tag}_${node.line}`)
         if (value?.type === 'MemberExpr') {
@@ -523,9 +560,14 @@ class HtmlEmitter {
           }
           this.stateBindings.push({ id, expr: exprStr, bindRoot, kind: 'bind', line: node.line })
         } else {
-          const boundName = value?.type === 'Identifier' ? value.name
+          let boundName = value?.type === 'Identifier' ? value.name
             : value?.type === 'AtProperty' ? value.name
+            : value?.type === 'Literal' ? String(value.value ?? '')
             : (typeof value === 'string' ? value : null)
+          // Handle TemplateLiteral bind:value="{name}" in widget context: resolve statically
+          if (!boundName && value?.type === 'TemplateLiteral' && this.isStaticExpr(value)) {
+            boundName = String(this.evalStaticExpr(value) ?? '') || null
+          }
           if (boundName) {
             this.stateBindings.push({ id, expr: boundName, kind: 'bind', line: node.line })
           }
@@ -537,11 +579,28 @@ class HtmlEmitter {
         this.eventBindings.push({ elementId: id, event, handler: value, line: node.line })
         // on: attrs are JS-only: don't include in HTML output
       } else if (value && typeof value === 'object' && value.type && !this.isStaticExpr(value)) {
-        // Dynamic attribute: expression depends on reactive state — track as attr binding for JS
-        if (!id) id = this.getReactiveId(`attr_${tag}_${key}_${node.line}`)
-        const exprStr = this.exprToString(value)
-        this.stateBindings.push({ id, kind: 'attr', attr: key, expr: exprStr, line: node.line })
-        // Don't add to staticAttrs — the JS initial render will set the correct value
+        if (this._inForTemplate) {
+          // Inside a for-loop template: inline attribute expression so _renderItem works for every item,
+          // not just the first one (getElementById only matches the first duplicate id in the DOM).
+          let tplExpr
+          if (value.type === 'TemplateLiteral') {
+            // Mixed string like "object-position: {car.x}" — render each part inline
+            tplExpr = value.parts.map(part => {
+              if (part.type === 'Literal') return this.escape(String(part.value))
+              return `\${_esc(String(${this.exprToString(part)}??''))}`
+            }).join('')
+          } else {
+            // Pure expression like {car.img}
+            tplExpr = `\${_esc(String(${this.exprToString(value)}??''))}`
+          }
+          staticAttrs[key] = { __arc_tpl: tplExpr }
+        } else {
+          // Dynamic attribute: expression depends on reactive state — track as attr binding for JS
+          if (!id) id = this.getReactiveId(`attr_${tag}_${key}_${node.line}`)
+          const exprStr = this.exprToString(value)
+          this.stateBindings.push({ id, kind: 'attr', attr: key, expr: exprStr, line: node.line })
+          // Don't add to staticAttrs — the JS initial render will set the correct value
+        }
       } else {
         staticAttrs[key] = value
       }
@@ -556,8 +615,17 @@ class HtmlEmitter {
 
     if (id) parts.push(`id="${this.escape(id)}"`)
 
-    if (classes.length > 0) {
-      parts.push(`class="${classes.map(c => this.escape(c)).join(' ')}"`)
+    // Dynamic class template from for-loop context (class="lang-{expr}" etc.)
+    const dynClass = attrs['__arc_dyn_class']
+    if (dynClass !== undefined) delete attrs['__arc_dyn_class']
+
+    if (classes.length > 0 || dynClass) {
+      const staticPart = classes.map(c => this.escape(c)).join(' ')
+      if (dynClass) {
+        parts.push(`class="${staticPart ? staticPart + ' ' : ''}${dynClass}"`)
+      } else {
+        parts.push(`class="${staticPart}"`)
+      }
     }
 
     // Arc layout/style attributes → inline CSS style properties.
@@ -605,15 +673,26 @@ class HtmlEmitter {
       }
 
       if (styleParts.length > 0) {
-        const existing = attrs.style ? this._resolveAttrVal(attrs.style) : ''
-        const merged = existing ? existing + ';' + styleParts.join(';') : styleParts.join(';')
-        parts.push(`style="${this.escape(merged)}"`)
+        if (attrs.style && typeof attrs.style === 'object' && attrs.style.__arc_tpl !== undefined) {
+          // Dynamic style template + static layout/shorthand styles: append statics to the template
+          parts.push(`style="${attrs.style.__arc_tpl};${styleParts.join(';')}"`)
+        } else {
+          const existing = attrs.style ? this._resolveAttrVal(attrs.style) : ''
+          const merged = existing ? existing + ';' + styleParts.join(';') : styleParts.join(';')
+          parts.push(`style="${this.escape(merged)}"`)
+        }
         delete attrs.style
       }
     }
 
     for (const [key, rawValue] of Object.entries(attrs)) {
       if (key === 'tooltip') continue
+
+      // For-loop template expressions: inlined at compile time, output raw into attribute value
+      if (rawValue && typeof rawValue === 'object' && rawValue.__arc_tpl !== undefined) {
+        parts.push(`${this.escape(key)}="${rawValue.__arc_tpl}"`)
+        continue
+      }
 
       // Resolve AST node to its static value when possible; skip non-static (handled by JS)
       const value = (rawValue && typeof rawValue === 'object' && rawValue.type)
@@ -768,6 +847,7 @@ class HtmlEmitter {
       const exprStr = this.exprToString(part)
       if (this.isStaticExpr(part)) {
         const val = this.evalStaticExpr(part)
+        if (val && typeof val === 'object' && val.__arc_html !== undefined) return val.__arc_html
         return val !== undefined ? this.escape(String(val)) : ''
       }
       // Inside a for-loop template: inline the expression
@@ -785,7 +865,9 @@ class HtmlEmitter {
     const exprStr = this.exprToString(node.expr)
 
     if (this.isStaticExpr(node.expr)) {
-      return this.escape(this.evalStaticExpr(node.expr))
+      const val = this.evalStaticExpr(node.expr)
+      if (val && typeof val === 'object' && val.__arc_html !== undefined) return val.__arc_html
+      return this.escape(val)
     }
 
     // Inside a for-loop template: inline the expression as ${_esc(...)} so each item renders correctly
@@ -806,6 +888,18 @@ class HtmlEmitter {
       const val = this.evalStaticExpr(node.condition)
       return val ? this.emitChildren(node.consequent)
                  : (node.alternate ? this.emitChildren(node.alternate) : '')
+    }
+
+    // Inside a for-loop template: embed condition inline so each iteration evaluates correctly.
+    // Can't use stateBindings (fixed IDs clash across iterations) — use hidden attribute toggle.
+    if (this._inForTemplate) {
+      const ifContent = this.emitChildren(node.consequent)
+      const elseContent = node.alternate ? this.emitChildren(node.alternate) : ''
+      if (elseContent) {
+        // if/else: show the correct branch per iteration via hidden attribute
+        return `<div\${(${condStr})?'':' hidden'}>${ifContent}</div><div\${(${condStr})?' hidden':''}>${elseContent}</div>`
+      }
+      return `<div\${(${condStr})?'':' hidden'}>${ifContent}</div>`
     }
 
     // Reactive if: wrap in data-arc-if container
@@ -849,6 +943,18 @@ class HtmlEmitter {
         }).join('\n')
       }
       return ''
+    }
+
+    // Inside a for-template: generate an inline nested map instead of a global stateBinding.
+    // Global bindings run at the top level and can't reference outer loop variables (e.g. `block`).
+    if (this._inForTemplate) {
+      const innerItemName = node.itemName ?? 'item'
+      const innerIndexName = node.indexName ?? 'i'
+      const innerBodyHtml = this._withForContext(innerItemName, innerIndexName, () => {
+        return this.emitChildren(node.body)
+      })
+      const innerBodyConcat = this._templateSourceToConcat(innerBodyHtml)
+      return `\${(${collStr}??[]).map(function(${innerItemName},${innerIndexName}){ return ${innerBodyConcat}; }).join('')}`
     }
 
     // Reactive for: emit a container, JS will manage children
@@ -931,6 +1037,27 @@ class HtmlEmitter {
     }
 
     return html
+  }
+
+  // Convert a template-literal source string (containing ${expr} interpolations) into a JS
+  // string-concatenation expression. Used when nesting a for-loop inside an outer for-template,
+  // where embedding a nested template literal (backtick-in-backtick) would break escaping.
+  _templateSourceToConcat(tplSource) {
+    const parts = []
+    let lastIdx = 0
+    // Match ${...} with up to one level of nested braces (covers object literals in expressions)
+    const re = /\$\{((?:[^{}]|\{[^{}]*\})*)\}/g
+    let match
+    while ((match = re.exec(tplSource)) !== null) {
+      const staticPart = tplSource.slice(lastIdx, match.index)
+      if (staticPart) parts.push(JSON.stringify(staticPart))
+      const expr = match[1].trim()
+      if (expr) parts.push(`(${expr})`)
+      lastIdx = match.index + match[0].length
+    }
+    const tail = tplSource.slice(lastIdx)
+    if (tail) parts.push(JSON.stringify(tail))
+    return parts.length > 0 ? parts.join(' + ') : "''"
   }
 
   emitMatchTemplate(node) {
@@ -1138,8 +1265,10 @@ class HtmlEmitter {
       : ''
     const autoplayJs = autoplay
       ? `var idx=0,sl2=t.children;` +
-        `t.addEventListener('mouseenter',function(){clearInterval(_ap);});` +
-        `t.addEventListener('mouseleave',function(){_ap=setInterval(_fn,${timeout});});` +
+        `function _pause(){clearInterval(_ap);}function _resume(){_ap=setInterval(_fn,${timeout});}` +
+        `t.addEventListener('mouseenter',_pause);t.addEventListener('mouseleave',_resume);` +
+        `t.addEventListener('touchstart',_pause,{passive:true});t.addEventListener('touchend',_resume,{passive:true});` +
+        `t.addEventListener('focusin',_pause);t.addEventListener('focusout',_resume);` +
         `function _fn(){idx=(idx+1)%sl2.length;sl2[idx].scrollIntoView({behavior:'smooth',block:'nearest',inline:'start'});}` +
         `var _ap=setInterval(_fn,${timeout});`
       : ''
@@ -1193,12 +1322,25 @@ class HtmlEmitter {
 
   isStaticExpr(expr) {
     if (!expr) return true
+    this._staticExprCache ??= new WeakMap()
+    if (this._staticExprCache.has(expr)) return this._staticExprCache.get(expr)
+    const result = this._isStaticExprInner(expr)
+    this._staticExprCache.set(expr, result)
+    return result
+  }
+
+  _isStaticExprInner(expr) {
     if (expr.type === 'Literal') return true
     if (expr.type === 'AtProperty') return Object.prototype.hasOwnProperty.call(this.currentAttrs, expr.name)
     if (expr.type === 'Identifier') {
-      // Known @build variable or widget prop → static
-      return Object.prototype.hasOwnProperty.call(this.buildContext, expr.name) ||
-             Object.prototype.hasOwnProperty.call(this.currentAttrs, expr.name)
+      if (Object.prototype.hasOwnProperty.call(this.buildContext, expr.name)) return true
+      if (Object.prototype.hasOwnProperty.call(this.currentAttrs, expr.name)) {
+        const _v = this.currentAttrs[expr.name]
+        // Reactive widget prop (captured as { __arc_js }) is runtime, not build-time
+        if (_v && typeof _v === 'object' && _v.__arc_js != null) return false
+        return true
+      }
+      return false
     }
     if (expr.type === 'MemberExpr' && !expr.computed) {
       return this.isStaticExpr(expr.object)
@@ -1279,9 +1421,14 @@ class HtmlEmitter {
   }
 
   _resolveAttrVal(v) {
-    return (v && typeof v === 'object' && v.type)
-      ? (this.isStaticExpr(v) ? String(this.evalStaticExpr(v) ?? '') : '')
-      : String(v ?? '')
+    if (v && typeof v === 'object' && v.__arc_html !== undefined) return ''
+    if (v && typeof v === 'object' && v.type) {
+      if (!this.isStaticExpr(v)) return ''
+      const val = this.evalStaticExpr(v)
+      if (val && typeof val === 'object' && val.__arc_html !== undefined) return ''
+      return String(val ?? '')
+    }
+    return String(v ?? '')
   }
 
   applyOp(op, l, r) {
@@ -1323,7 +1470,17 @@ class HtmlEmitter {
     if (!expr) return 'undefined'
     switch (expr.type) {
       case 'Literal':       return JSON.stringify(expr.value)
-      case 'Identifier':    return expr.name
+      case 'Identifier': {
+        // If this identifier resolves to a static prop value at the call site, inline it
+        // so template-literal body strings don't reference undefined free variables
+        if (this.currentAttrs && Object.prototype.hasOwnProperty.call(this.currentAttrs, expr.name)) {
+          const _v = this.currentAttrs[expr.name]
+          if (typeof _v === 'string' || typeof _v === 'number' || typeof _v === 'boolean') return JSON.stringify(_v)
+          // Reactive prop: return the JS expression captured at call site (e.g. "data.parentOptions")
+          if (_v && typeof _v === 'object' && _v.__arc_js != null) return _v.__arc_js
+        }
+        return expr.name
+      }
       case 'AtProperty':    return `@${expr.name}`
       case 'MemberExpr':
         if (expr.computed) {

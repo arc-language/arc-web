@@ -497,13 +497,17 @@ class Parser {
     this.consumeNewlines()
     if (this.tokens[this.pos]?.type === T.INDENT) {
       // Indentation-based body
+      const bodyIndent = this.tokens[this.pos].value
       this.pos++ // consume INDENT
       const stmts = []
       while (true) {
         this.consumeNewlines()
-        if (this.tokens[this.pos]?.type === T.DEDENT || this.tokens[this.pos]?.type === T.EOF) {
-          if (this.tokens[this.pos]?.type === T.DEDENT) this.pos++
-          break
+        const cur = this.tokens[this.pos]
+        if (!cur || cur.type === T.EOF) break
+        if (cur.type === T.DEDENT) {
+          this.pos++
+          if (cur.value < bodyIndent) break  // dedenting below body level — body is done
+          continue  // dedenting to/within body level (from sub-expression indent) — keep parsing
         }
         const stmt = this.parseStatement()
         if (stmt) stmts.push(stmt)
@@ -688,6 +692,7 @@ class Parser {
     }
 
     // Skip unknown tokens gracefully
+    if (process.env.ARC_DEBUG) console.warn(`[arc] parser: skipping unexpected token ${t.type}(${JSON.stringify(t.value)}) at line ${t.line}`)
     this.pos++
     return null
   }
@@ -1328,7 +1333,17 @@ class Parser {
           else if (at.type === T.COLON) selector += ':'
           this.pos++
         }
-        if (this.tokens[this.pos]?.type === T.RBRACKET) { selector += ']'; this.pos++ }
+        if (this.tokens[this.pos]?.type === T.RBRACKET) {
+          selector += ']'
+          this.pos++
+          // After closing ], insert descendant combinator space when followed by a class
+          // or nested attribute selector (e.g. [data-x="y"] .child or [a] [b]).
+          // Without this, `[attr] .class` would be parsed as `[attr].class` (same element)
+          // because horizontal whitespace is not tokenised in Arc's indentation lexer.
+          if (this.tokens[this.pos]?.type === T.DOT || this.tokens[this.pos]?.type === T.LBRACKET) {
+            selector += ' '
+          }
+        }
       }
       else if (cur.type === T.LPAREN) {
         // Functional pseudo-class: :nth-child(2n+1), :is(.foo), :has(>p)
@@ -1734,7 +1749,8 @@ class Parser {
     if (t.type === T.CLASS) return this.parseClassDecl()
     if (t.type === T.RETURN) {
       const tok = this.next()
-      const value = this.peekType() !== T.RBRACE && this.peekType() !== T.NEWLINE
+      const rawNext = this.tokens[this.pos]?.type
+      const value = rawNext !== T.RBRACE && rawNext !== T.NEWLINE && rawNext !== T.DEDENT && rawNext !== T.EOF
         ? this.parseExpr() : null
       this.consumeNewlines()
       return N.ReturnStatement(value, tok.line)
@@ -1793,7 +1809,13 @@ class Parser {
     const condition = this.parseExpr()
     const consequent = this._parseBlockOrIndented()
     let alternate = null
-    if (this.eatIf(T.ELSE)) {
+    // Use consumeNewlines (not eatIf/skipWhitespace) to avoid consuming DEDENT tokens
+    // that belong to outer indented blocks. The else keyword, if present, sits at the
+    // same indentation as the if — after the body's DEDENT has already been consumed by
+    // parseIndentedBlock, only newlines (blank lines) can appear before `else`.
+    this.consumeNewlines()
+    if (this.tokens[this.pos]?.type === T.ELSE) {
+      this.pos++
       alternate = this.tokens[this.pos]?.type === T.IF ? this.parseIfStatement() : this._parseBlockOrIndented()
     }
     this.consumeNewlines()
@@ -2173,6 +2195,14 @@ class Parser {
         this.pos++
         expr = N.RangeExpr(expr, this.parseRangeBound(), true, t.line)
         break
+      } else if (t.type === T.NEWLINE &&
+                 this.tokens[this.pos + 1]?.type === T.INDENT &&
+                 this.tokens[this.pos + 2]?.type === T.DOT) {
+        // Multi-line chain: value\n  .method() — skip NEWLINE + INDENT, DOT handled next iteration
+        this.pos += 2
+      } else if (t.type === T.NEWLINE && this.tokens[this.pos + 1]?.type === T.DOT) {
+        // Multi-line chain: continuation at same indent level — skip NEWLINE only
+        this.pos++
       } else break
     }
     return expr
@@ -2247,7 +2277,7 @@ class Parser {
       if (this.tokens[this.pos + 1]?.type === T.ARROW) {
         this.pos++
         this.eat(T.ARROW)
-        const body = this.parseExpr()
+        const body = this._parseArrowBody()
         return N.ArrowFn([N.Param(t.value, null, null, false, t.line)], body, false, t.line)
       }
       this.pos++
@@ -2285,7 +2315,7 @@ class Parser {
         params = this.parseParams()
       }
       if (this.eatIf(T.ARROW)) {
-        return N.ArrowFn(params, this.parseExpr(), false, t.line)
+        return N.ArrowFn(params, this._parseArrowBody(), false, t.line)
       }
       return N.ArrowFn(params, this.parseBlock(), false, t.line)
     }
@@ -2340,19 +2370,23 @@ class Parser {
     return N.TemplateLiteral(parts, startTok.line)
   }
 
+  _parseArrowBody() {
+    return this.tokens[this.pos]?.type === T.LBRACE ? this.parseBlock() : this.parseExpr()
+  }
+
   _parseArrowFnFromParens(t) {
     this.pos++
     if (this.peekType() === T.RPAREN) {
       this.eat(T.RPAREN)
       this.eat(T.ARROW)
-      const body = this.parseExpr()
+      const body = this._parseArrowBody()
       return N.ArrowFn([], body, false, t.line)
     }
     const expr = this.parseExpr()
     if (this.eatIf(T.RPAREN)) {
       if (this.tokens[this.pos]?.type === T.ARROW) {
         this.pos++
-        const body = this.parseExpr()
+        const body = this._parseArrowBody()
         const params = expr.type === 'Identifier'
           ? [N.Param(expr.name, null, null, false, expr.line)]
           : [expr]
@@ -2369,7 +2403,7 @@ class Parser {
     }
     this.eat(T.RPAREN)
     this.eat(T.ARROW)
-    const body = this.parseExpr()
+    const body = this._parseArrowBody()
     return N.ArrowFn(params, body, false, t.line)
   }
 
@@ -2523,7 +2557,7 @@ class Parser {
     const stmts = []
     while (true) {
       this.consumeNewlines()
-      if (this.tokens[this.pos]?.type === T.DEDENT || this.tokens[this.pos]?.type === T.EOF) {
+      if (this.tokens[this.pos]?.type === T.DEDENT || this.tokens[this.pos]?.type === T.EOF || this.tokens[this.pos]?.type === T.RBRACE) {
         if (this.tokens[this.pos]?.type === T.DEDENT) this.pos++
         break
       }

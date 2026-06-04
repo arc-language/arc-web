@@ -31,4 +31,25 @@ function routeTypeLabel(route) {
   return 'handler'
 }
 
-module.exports = { routeHandlerName, isValidRoute, routeTypeLabel }
+function flattenGroups(declarations) {
+  const routes = []
+  for (const d of declarations) {
+    if (d.type === 'RouteDecl' && isValidRoute(d)) {
+      routes.push(d)
+    } else if (d.type === 'RouteGroupDecl') {
+      for (const route of d.routes) {
+        const p = d.prefix.replace(/\/$/, '') + route.path
+        const params = (p.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) ?? []).map(s => s.slice(1))
+        routes.push({
+          ...route,
+          path: p,
+          params,
+          annotations: [...(d.annotations ?? []), ...(route.annotations ?? [])],
+        })
+      }
+    }
+  }
+  return routes
+}
+
+module.exports = { routeHandlerName, isValidRoute, routeTypeLabel, flattenGroups }

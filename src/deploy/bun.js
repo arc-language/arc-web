@@ -38,7 +38,7 @@ async function handleEdgeFunction(path, req) {
     const arcReq = new Request(req.url, { method: req.method, headers: req.headers, body: req.body })
     return await fn(arcReq)
   } catch (e) {
-    console.error('[arc] edge function error:', e instanceof Error ? e.message : String(e))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'edge_fn_error', msg: e instanceof Error ? e.message : String(e) }))
     return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 }
@@ -108,10 +108,10 @@ ${edgeRoutingBlock}
     },
   })
 } catch (e) {
-  console.error('arc: server error:', e instanceof Error ? e.message : String(e))
+  console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_start_failed', msg: e instanceof Error ? e.message : String(e) }))
   process.exit(1)
 }
-console.log(\`arc: server running on http://localhost:\${_server.port}\`)
+console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${_server.port}\` }))
 `
 
   return [

@@ -643,55 +643,55 @@
 // ── Widget declarations ───────────────────────────────────────────────────────
 
 widget Snow(colors = ["#ddeeff","#eef4ff","#ffffff","#cce8ff"], speed = 1, sizeMin = 2, sizeMax = 6, pool = 200, fullscreen = true)
-  canvas data-arc-pfx="snow" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="snow" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Stars(colors = ["#ffffff","#ffe4b5","#add8e6","#ffd700"], speed = 1, sizeMin = 1, sizeMax = 2, pool = 120, fullscreen = true)
-  canvas data-arc-pfx="stars" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="stars" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Bubbles(colors = ["#88ccff","#aaddff","#cceeff","#ffffff"], speed = 1, sizeMin = 4, sizeMax = 14, pool = 80, life = 220, fullscreen = true)
-  canvas data-arc-pfx="bubbles" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="bubbles" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget BigCircles(colors = ["#ff4444","#ff8800","#ffee00","#00cc66","#0099ff","#cc44ff"], speed = 1, sizeMin = 80, sizeMax = 200, pool = 30, life = 300, fullscreen = true)
-  canvas data-arc-pfx="bigcircles" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="bigcircles" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Ambient(colors = ["#00e5ff","#80eeff","#b3f5ff"], speed = 1, sizeMin = 3, sizeMax = 15, pool = 150, fullscreen = true)
-  canvas data-arc-pfx="ambient" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="ambient" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Fire(colors = ["#ff9900","#ff6600","#ff3300","#ffcc00","#cc3300"], speed = 1, sizeMin = 3, sizeMax = 8, pool = 200, life = 80, fullscreen = true)
-  canvas data-arc-pfx="fire" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="fire" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Firefly(colors = ["#ffffaa","#aaffaa","#aaaaff","#ffaaff"], speed = 1, sizeMin = 3, sizeMax = 6, pool = 60, life = 90, fullscreen = true)
-  canvas data-arc-pfx="firefly" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="firefly" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Fountain(colors = ["#0099ff","#00ccff","#33aaff","#66bbff","#99ccff"], speed = 1, sizeMin = 3, sizeMax = 7, pool = 150, life = 160, fullscreen = true)
-  canvas data-arc-pfx="fountain" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="fountain" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Hyperspace(colors = ["#ffffff","#aaddff","#ffaaaa","#aaffaa"], speed = 1, sizeMin = 1, sizeMax = 2, pool = 200, life = 120, trail = 0.15, fullscreen = true)
-  canvas data-arc-pfx="hyperspace" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-trail=@trail data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="hyperspace" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-trail=@trail data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget ConfettiFalling(colors = ["#ff4545","#ffa500","#ffff00","#00ff88","#00b4ff","#ff69b4","#cc44ff"], speed = 1, sizeMin = 4, sizeMax = 10, pool = 150, life = 300, fullscreen = true)
-  canvas data-arc-pfx="confettifall" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="confettifall" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Confetti(colors = ["#ff4545","#ffa500","#ffff00","#00ff88","#00b4ff","#ff69b4","#cc44ff"], speed = 1, sizeMin = 5, sizeMax = 10, pool = 200, life = 180, emit = 60, fullscreen = true)
-  canvas data-arc-pfx="confetti" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-emit=@emit data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="confetti" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-emit=@emit data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget ConfettiCannon(colors = ["#ff4545","#ffa500","#ffff00","#00ff88","#00b4ff","#ff69b4","#cc44ff"], speed = 1, sizeMin = 4, sizeMax = 9, pool = 200, life = 200, fullscreen = true)
-  canvas data-arc-pfx="confetticannon" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="confetticannon" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget ConfettiExplosions(colors = ["#ff4545","#ffa500","#ffff00","#00ff88","#00b4ff","#ff69b4","#cc44ff"], speed = 1, sizeMin = 5, sizeMax = 10, pool = 300, life = 150, emit = 80, fullscreen = true)
-  canvas data-arc-pfx="confettiex" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-emit=@emit data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="confettiex" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-emit=@emit data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget ConfettiParade(colors = ["#ff4545","#ffa500","#ffff00","#00ff88","#00b4ff","#ff69b4","#cc44ff"], speed = 1, sizeMin = 4, sizeMax = 9, pool = 200, life = 200, fullscreen = true)
-  canvas data-arc-pfx="confettiparade" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="confettiparade" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Links(colors = ["#ffffff"], speed = 1, sizeMin = 2, sizeMax = 3, pool = 80, linkDist = 130, fullscreen = true)
-  canvas data-arc-pfx="links" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-link-dist=@linkDist data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="links" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-link-dist=@linkDist data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Triangles(colors = ["#ffffff"], speed = 1, sizeMin = 2, sizeMax = 3, pool = 60, linkDist = 120, fullscreen = true)
-  canvas data-arc-pfx="triangles" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-link-dist=@linkDist data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="triangles" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-link-dist=@linkDist data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget Squares(colors = ["#ff4545","#ffa500","#ffff00","#00ff88","#00b4ff","#ff69b4","#cc44ff"], speed = 1, sizeMax = 400, pool = 20, fullscreen = true)
-  canvas data-arc-pfx="squares" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="squares" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-fullscreen=@fullscreen aria-hidden="true"
 
 widget SeaAnemone(colors = ["#ff3333","#ff6666","#ff9999","#cc0000","#ff0000"], speed = 1, sizeMin = 3, sizeMax = 7, pool = 120, life = 180, trail = 0.08, fullscreen = true)
-  canvas data-arc-pfx="seaanemone" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-trail=@trail data-pfx-fullscreen=@fullscreen
+  canvas data-arc-pfx="seaanemone" data-pfx-colors=@colors data-pfx-speed=@speed data-pfx-size-min=@sizeMin data-pfx-size-max=@sizeMax data-pfx-pool=@pool data-pfx-life=@life data-pfx-trail=@trail data-pfx-fullscreen=@fullscreen aria-hidden="true"

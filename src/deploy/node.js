@@ -87,7 +87,7 @@ async function handleEdgeFunction(urlPath, req, res) {
     res.writeHead(status, headers)
     res.end(rawBody)
   } catch (e) {
-    console.error('[arc] edge function error:', e instanceof Error ? e.message : String(e))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'edge_fn_error', msg: e instanceof Error ? e.message : String(e) }))
     res.writeHead(500, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'Internal server error' }))
   }
@@ -157,11 +157,11 @@ ${edgeRoutingBlock}
 const _rawPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000
 const PORT = (Number.isInteger(_rawPort) && _rawPort > 0 && _rawPort < 65536) ? _rawPort : 3000
 server.listen(PORT, () => {
-  console.log(\`arc: server running on http://localhost:\${PORT}\`)
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${PORT}\` }))
 })
 server.keepAliveTimeout = 65000
 server.headersTimeout = 66000
-server.on('error', e => { console.error('arc server error:', e.message); process.exit(1) })
+server.on('error', e => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_error', msg: e.message })); process.exit(1) })
 process.on('SIGTERM', () => {
   server.close(err => {
     if (err) console.error('arc: server close error:', err.message)

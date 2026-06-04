@@ -71,7 +71,7 @@ async function serve(projectDir, flags, buildServer, buildSite) {
       child.removeAllListeners()
       child.kill('SIGTERM')
     }
-    const thisChild = spawn(runtime, [outFile], { stdio: 'inherit', env: childEnv })
+    const thisChild = spawn(runtime, [outFile], { stdio: 'inherit', env: childEnv, cwd: require('path').dirname(outFile) })
     child = thisChild
     thisChild.on('error', e => console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_spawn_failed', msg: e.message })))
     thisChild.on('exit', (code, signal) => {
@@ -154,6 +154,9 @@ async function serve(projectDir, flags, buildServer, buildSite) {
 
   process.once('SIGINT', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGINT') } else process.exit(0) })
   process.once('SIGTERM', () => { if (child) { child.once('exit', c => process.exit(c ?? 0)); child.kill('SIGTERM') } else process.exit(0) })
+  process.on('unhandledRejection', (reason) => {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'unhandled_rejection', msg: reason instanceof Error ? reason.message : String(reason) }))
+  })
 }
 
 module.exports = { serve, createFileWatcher }

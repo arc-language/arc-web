@@ -168,7 +168,7 @@ class Checker {
 
   checkJobDecl(decl, declared) {
     if (declared && !declared.hasLocal(decl.name)) {
-      declared.set(decl.name, 'job')
+      declared.set(decl.name, 'JobDecl')
     }
 
     // ── Annotation validation ────────────────────────────────────────────────
@@ -184,7 +184,7 @@ class Checker {
       this.error(`@schedule has invalid cron expression: "${decl.schedule}" — expected 5-field cron (min hour dom mon dow)`, decl)
     }
 
-    if (decl.schedule && (decl.params ?? []).some(p => !p.defaultValue)) {
+    if (decl.schedule && (decl.params ?? []).some(p => !p.defaultValue && !p.optional)) {
       this.warn(`@schedule job '${decl.name}' has required params — it will be called with no arguments by the scheduler`, decl)
     }
 
@@ -193,7 +193,7 @@ class Checker {
       // Note: declared is hoisted at check() start, so forward refs are fine
       if (!declared.has(decl.thenJob)) {
         this.error(`@then references unknown job '${decl.thenJob}' — make sure it is declared in your server files`, decl)
-      } else if (declared.get(decl.thenJob) !== 'job' && declared.get(decl.thenJob) !== 'JobDecl') {
+      } else if (declared.get(decl.thenJob) !== 'JobDecl') {
         this.error(`@then '${decl.thenJob}' is not a job declaration`, decl)
       }
     }

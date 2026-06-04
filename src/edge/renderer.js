@@ -19,9 +19,13 @@ class EdgeRenderer {
 
   // Emit a complete WinterCG Worker module for this program.
   // stateBindings: [{ elementId, expression }] from HtmlEmitter
-  emitProgram(program, baseHtml, baseCss, clientJs, stateBindings = []) {
+  // urlPattern: the page's URL slug e.g. "/admin/blocks/code/[id]" — used to extract @param values
+  emitProgram(program, baseHtml, baseCss, clientJs, stateBindings = [], urlPattern = null) {
     const liveDecls = program.declarations.filter(d => d.type === 'LiveDecl')
     const serverFns = program.declarations.filter(d => d.type === 'ServerFn')
+    const stateDecls = program.declarations.filter(d => d.type === 'StateDecl')
+    // @param declarations: VarDecl nodes with null init — their values come from URL segments
+    const paramDecls = program.declarations.filter(d => d.type === 'VarDecl' && d.init === null)
 
     if (liveDecls.length === 0) return null
 
@@ -46,14 +50,15 @@ class EdgeRenderer {
 
     // Emit @server fn implementations (called at request time on edge)
     if (serverFns.length > 0) {
+      parts.push(`let session = {}`)
       parts.push(`// @server functions: run at request time on the edge`)
       for (const fn of serverFns) {
         parts.push(this.emitServerFnImpl(fn))
       }
     }
 
-    // Emit data resolver
-    parts.push(this.emitLiveResolver(liveDecls))
+    // Emit data resolver (with @state defaults + @param URL extraction)
+    parts.push(this.emitLiveResolver(liveDecls, stateDecls, paramDecls, urlPattern))
 
     // Emit HTML template filler (replaces reactive spans with real data)
     parts.push(this.emitHtmlFiller(liveBindings, liveVarNames))
@@ -75,18 +80,66 @@ class EdgeRenderer {
     ].join('\n')
   }
 
-  emitLiveResolver(liveDecls) {
+  emitLiveResolver(liveDecls, stateDecls = [], paramDecls = [], urlPattern = null) {
     // Resolve all @live decls in parallel - they're independent by construction
     // (each one calls a server/fetch fn; the resolver is the *only* place to
     // parallelize, since user code can't `await Promise.all` declaratively).
     const calls = liveDecls.map(d => `(${this.jsEmitter.emitExpr(d.init)})`).join(', ')
-    const names = liveDecls.map(d => d.name).join(', ')
+
+    // Build regex to detect which @state inits reference @live variable names
+    const liveVarNames = new Set(liveDecls.map(d => d.name))
+    const _liveVarList = [...liveVarNames].map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const liveVarRe = _liveVarList.length > 0 ? new RegExp(`\\b(${_liveVarList.join('|')})\\b`) : null
+
+    // @param extraction: map URL segments (e.g. /admin/blocks/[id]) to const declarations
+    const urlParamLines = []
+    if (urlPattern && paramDecls.length > 0) {
+      const segments = urlPattern.split('/')
+      for (const p of paramDecls) {
+        const idx = segments.indexOf(`[${p.name}]`)
+        if (idx >= 0) urlParamLines.push(`  const ${p.name} = _urlParts[${idx}] ?? ''`)
+      }
+    }
+
+    // Split state declarations into:
+    // - preStateDecls: don't reference @live vars → emit BEFORE resolution (used as query params)
+    // - postStateDecls: reference @live vars → emit AFTER resolution to avoid ReferenceError
+    const preStateDecls = []
+    const postStateDecls = []
+    for (const d of stateDecls) {
+      if (!d.name || d.init === undefined) continue
+      const exprStr = this.jsEmitter.emitExpr(d.init)
+      if (liveVarRe && liveVarRe.test(exprStr)) {
+        postStateDecls.push({ d, exprStr })
+      } else {
+        preStateDecls.push(d)
+      }
+    }
+
+    const preStateDefaults = preStateDecls
+      .map(d => `  const ${d.name} = ${this.jsEmitter.emitExpr(d.init)}`)
 
     const nameList = liveDecls.map(d => d.name)
     const nameArray = JSON.stringify(nameList)
+    const urlParseLines = urlParamLines.length > 0
+      ? [`  const _urlParts = new URL(request.url).pathname.split('/')`, ...urlParamLines]
+      : []
+
+    // After live data resolves, destructure @live vars so post-live state inits can reference them.
+    // Wrap each in try/catch: accessing e.g. data.page.title throws when data.page is null.
+    const postStateLines = postStateDecls.length > 0 ? [
+      `  const { ${[...liveVarNames].map(v => `${v} = undefined`).join(', ')} } = _data`,
+      ...postStateDecls.map(({ d, exprStr }) =>
+        `  const ${d.name} = (() => { try { return (${exprStr}) } catch { return undefined } })()`
+      ),
+    ] : []
+
     return [
       `async function _resolveData(request) {`,
       `  const _session = request._arc_session ?? {}`,
+      `  session = _session`,
+      ...urlParseLines,
+      ...preStateDefaults,
       `  const _results = await Promise.allSettled([${calls}])`,
       `  const _names = ${nameArray}`,
       `  const _data = {}`,
@@ -96,6 +149,7 @@ class EdgeRenderer {
       `    else { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] @live failed', name: _names[_i], error: _results[_i].reason instanceof Error ? _results[_i].reason.message : String(_results[_i].reason) })); _data[_names[_i]] = undefined; _anyError = true }`,
       `  }`,
       `  if (_anyError && Object.values(_data).every(v => v === undefined)) return { __arc_render_error__: true }`,
+      ...postStateLines,
       `  return _data`,
       `}`,
       ``,
@@ -107,17 +161,37 @@ class EdgeRenderer {
     // rather than trying to extract variable names by regex from expression strings,
     // which fails for compound expressions like (user===null||user===undefined)
     const liveVarsUsed = liveVarNames ?? new Set()
-    const bindingExprs = liveBindings.map(b => ({ id: b.id, exprStr: b.expr }))
+
+    // Split bindings by kind: text spans vs if-show/if-hide conditionals vs list for-loops
+    const textBindings = liveBindings.filter(b => !b.kind || b.kind === 'text')
+    const ifShowBindings = liveBindings.filter(b => b.kind === 'if-show')
+    const ifHideBindings = liveBindings.filter(b => b.kind === 'if-hide')
+    const listBindings = liveBindings.filter(b => b.kind === 'list')
+    const bindingExprs = textBindings.map(b => ({ id: b.id, exprStr: b.expr }))
 
     // Build a map of span id → replacement value, then do a single-pass regex replace
     // instead of O(N) replaceAll calls over the full HTML string
-    // exprStr comes from stateBindings: escape backticks/backslashes so it can't
-    // break the surrounding template literal in the generated edge function.
     const mapEntries = bindingExprs.map(({ id, exprStr }) => {
-      const safeExpr = exprStr.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
       // Wrap in try/catch: if a dotted path like user.name throws when user is null,
       // render empty string rather than crashing the edge function
-      return `  try { _m['${id}'] = _esc(String(${safeExpr} ?? '')) } catch { _m['${id}'] = '' }`
+      return `  try { _m['${id}'] = _esc(String(${exprStr} ?? '')) } catch { _m['${id}'] = '' }`
+    }).join('\n')
+
+    // For if-show: condition true → remove hidden; false → keep hidden
+    // For if-hide: condition true → add hidden; false → remove hidden
+    const ifShowEntries = ifShowBindings.map(({ id, expr }) => {
+      return `  try { if (${expr}) html = html.replaceAll('<div id="${id}" hidden>', '<div id="${id}">'); } catch {}`
+    }).join('\n')
+    const ifHideEntries = ifHideBindings.map(({ id, expr }) => {
+      return `  try { if (${expr}) html = html.replaceAll('<div id="${id}">', '<div id="${id}" hidden>'); } catch {}`
+    }).join('\n')
+
+    // For list bindings: replace <div id="_X"></div> with rendered items
+    const listEntries = listBindings.map(({ id, expr, bodyTemplate, itemName, indexName }) => {
+      if (!bodyTemplate) return ''
+      const iname = itemName ?? 'item'
+      const idxname = indexName ?? 'i'
+      return `  try { const _list_${id} = ${expr}; if (Array.isArray(_list_${id})) { html = html.replace('<div id="${id}"></div>', '<div id="${id}">' + _list_${id}.map(function(${iname}, ${idxname}) { return \`${bodyTemplate}\`; }).join('') + '</div>'); } } catch {}`
     }).join('\n')
 
     const spanIds = bindingExprs.map(({ id }) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
@@ -126,41 +200,64 @@ class EdgeRenderer {
     // BASE_HTML is captured before injectAssets adds the <script> tag, so we
     // inject CLIENT_JS by prepending to </body> rather than replacing a tag
     // that doesn't exist in the snapshotted HTML.
-    const jsInline = `  if (CLIENT_JS) html = html.replace('</body>', \`<script>\${CLIENT_JS.replace(/<\\/script>/gi, '<\\/script>')}</script></body>\`)`
+    // Inject all @live variables as globals before CLIENT_JS so hydration code
+    // can reference them without a separate fetch round-trip.
+    const liveVarInits = [...liveVarsUsed]
+      .filter(v => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(v) && v !== '__proto__' && v !== 'constructor' && v !== 'prototype')
+      .map(v => `var ${v}=_arc_live[${JSON.stringify(v)}]`)
+      .join(';')
+    const jsInline = [
+      `  if (CLIENT_JS) {`,
+      `    const _dj = JSON.stringify(_liveData ?? {}).replace(/<\\/script>/gi, '<\\\\/script>')`,
+      `    html = html.replace('</body>', \`<script>var _arc_live=\${_dj};${liveVarInits};</script><script>\${CLIENT_JS.replace(/<\\/script>/gi, '<\\/script>')}</script></body>\`)`,
+      `  }`,
+    ].join('\n')
 
     const escFn = [
       `function _esc(s) {`,
-      `  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')`,
+      `  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c])`,
       `}`,
       ``,
     ].join('\n')
 
     // Short-circuit: no @live bindings → skip regex entirely
-    if (bindingExprs.length === 0) {
+    if (liveBindings.length === 0) {
       return [
         escFn,
         `function _fillHtml(_data) {`,
         `  let html = BASE_HTML`,
         cssInline,
-        jsInline,
+        jsInline.replace('_liveData', '_data'),
         `  return html`,
         `}`,
         ``,
       ].join('\n')
     }
 
+    const liveVarsDecl = [...liveVarsUsed]
+      .filter(v => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(v) && v !== '__proto__' && v !== 'constructor' && v !== 'prototype')
+      .map(v => `${v} = undefined`).join(', ')
+
+    const spanRePart = spanIds
+      ? [`const _SPAN_RE = new RegExp('<span id="(' + ${JSON.stringify(spanIds)} + ')" data-arc-live><\\/span>', 'g')`, ``]
+      : []
+
+    const spanReplacePart = spanIds
+      ? [`  let html = BASE_HTML.replace(_SPAN_RE, (_m0, id) => { return id in _m ? _m[id] : _m0 })`]
+      : [`  let html = BASE_HTML`]
+
     return [
       escFn,
-      `const _SPAN_RE = new RegExp('<span id="(' + ${JSON.stringify(spanIds)} + ')" data-arc-live><\\/span>', 'g')`,
-      ``,
-      `function _fillHtml(data) {`,
-      `  if (!data || typeof data !== 'object' || Array.isArray(data)) data = {}`,
-      `  const { ${[...liveVarsUsed].filter(v => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(v) && v !== '__proto__' && v !== 'constructor' && v !== 'prototype').map(v => `${v} = undefined`).join(', ')} } = data`,
+      ...spanRePart,
+      `function _fillHtml(_liveData) {`,
+      `  if (!_liveData || typeof _liveData !== 'object' || Array.isArray(_liveData)) _liveData = {}`,
+      `  const { ${liveVarsDecl} } = _liveData`,
       `  const _m = Object.create(null)`,
       mapEntries,
-      `  let html = BASE_HTML.replace(_SPAN_RE, (_m0, id) => {`,
-      `    return id in _m ? _m[id] : _m0`,
-      `  })`,
+      ...spanReplacePart,
+      ifShowEntries,
+      ifHideEntries,
+      listEntries,
       cssInline,
       jsInline,
       `  return html`,
@@ -219,7 +316,7 @@ class EdgeRenderer {
       `            // _fillHtml and _splitHeadBody are inside the try/catch so any error`,
       `            // (e.g. RangeError in string ops) is caught and an error page is streamed.`,
       `            const filled = _fillHtml(data)`,
-      `            const { rest: filledRest } = _splitHeadBody(filled)`,
+      `            const filledRest = filled.slice(_BASE_HEAD_SPLIT.head.length)`,
       `            controller.enqueue(_enc.encode(filledRest))`,
       `            controller.close()`,
       `          } catch (e) {`,
@@ -239,6 +336,7 @@ class EdgeRenderer {
       ``,
       `// Node.js / Bun / Deno adapter (non-streaming fallback for direct require())`,
       `if (typeof module !== 'undefined') module.exports = { _resolveData, _fillHtml, _splitHeadBody }`,
+      `export { _resolveData, _fillHtml, _splitHeadBody }`,
     ].join('\n')
   }
 }

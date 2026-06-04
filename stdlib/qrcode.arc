@@ -504,8 +504,16 @@
 })()
 
 // ── Widget ────────────────────────────────────────────────────────────────────
-widget QRCode(value = "", size = 200, dark = "#000000", light = "#ffffff", level = "M")
-  span data-arc-qr="1" data-v=@value data-s=@size data-d=@dark data-l=@light data-e=@level
+widget QRCode(value = "", size = 200, dark = "#000000", light = "#ffffff", level = "M", label = "")
+  span
+    data-arc-qr="1"
+    data-v=@value
+    data-s=@size
+    data-d=@dark
+    data-l=@light
+    data-e=@level
+    role="img"
+    aria-label={ @label != "" ? @label : "QR code for: " + @value }
   design
     span
       display: inline-block

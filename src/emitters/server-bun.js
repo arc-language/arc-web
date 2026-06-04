@@ -249,6 +249,7 @@ class BunServerEmitter {
     this.cors = options.cors ?? null
     this.profile = options.profile ?? false
     this.storage = options.storage ?? null
+    this.searchConfig = options.searchConfig ?? {}
     this.jsEmitter = new JsEmitter(options)
   }
 
@@ -311,6 +312,9 @@ class BunServerEmitter {
         parts.push('const db = globalThis.db')
         // Expose db.transaction for atomic multi-row operations (SQLite only)
         parts.push(`if (typeof _db?.transaction === 'function') globalThis.db.transaction = (fn) => { _db.transaction(fn)(); };`)
+        // Expose raw SQL helpers for FTS5 and advanced queries (SQLite only)
+        // db.run returns { changes, lastId } so callers avoid a SELECT after INSERT
+        parts.push(`if (typeof _db?.query === 'function') { globalThis.db.exec = (sql, p = []) => _db.query(sql).all(...p); globalThis.db.run = (sql, p = []) => { const _r = _db.run(sql, ...p); return { changes: _r.changes, lastId: _r.lastInsertRowid } }; }`)
       }
     }
 
@@ -522,7 +526,7 @@ async function _serveStatic(req, pathname) {
   // Dispatch @route handlers FIRST so routes with their own @auth(...) annotations
   // run with their own auth logic. Only unmatched paths (returns 404) fall through
   // to the static-page admin guard below.
-  const _r = _dispatch(req, pathname)
+  const _r = await _dispatch(req, pathname)
   // Fall through to static files on 404 (unknown route) or on 405 for GET requests
   // (route exists but only handles non-GET methods — static HTML page should be served instead).
   if (!(_r instanceof Response) || (_r.status !== 404 && !(_r.status === 405 && req.method === 'GET'))) return _r
@@ -572,7 +576,7 @@ async function _serveStatic(req, pathname) {
       const _sess = await auth.session(req)
       if (!_sess) return Response.redirect('/admin/login', 302)
       const _need = _requiredRole(pathname)
-      if (!_roleOk(_sess.role, _need)) return Response.redirect('/admin/403', 302)
+      if (!_roleOk(_sess.role, _need) && pathname !== '/admin/403') return Response.redirect('/admin/403', 302)
     }
     // For GET requests, check if there's a @live renderer.js for this path.
     // renderer.js does SSR: runs @server fn with real db → full pre-rendered HTML.
@@ -584,7 +588,7 @@ async function _serveStatic(req, pathname) {
       let _rendererPath = _path.join(_DIST_DIR, _clean, '_arc', 'renderer.js')
       if (!_fs.existsSync(_rendererPath)) {
         const _dynFile = _matchDynamicRoute(_clean)
-        if (_dynFile) _rendererPath = _path.join(_path.dirname(_dynFile), '_arc', 'renderer.js')
+        if (_dynFile) _rendererPath = _path.join(_dynFile.replace(/\.html$/, ''), '_arc', 'renderer.js')
       }
       if (_fs.existsSync(_rendererPath)) {
         try {
@@ -595,15 +599,45 @@ async function _serveStatic(req, pathname) {
             req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
             const _ldata = await _resolveData(req)
             if (_ldata && _ldata.__arc_render_error__) {
-              return new Response('<!DOCTYPE html><html><body><h1>Render error</h1></body></html>', { status: 500, headers: { 'Content-Type': 'text/html' } })
+              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Error</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
             }
-            const _html = _fillHtml(_ldata)
-            return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-cache' } })
+            let _html = _fillHtml(_ldata)
+            _html = _html.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
+            return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-cache, must-revalidate, private', 'Pragma': 'no-cache', 'Expires': '0' } })
           }
         } catch (_rendErr) {
           console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] admin renderer error', path: pathname, error: _rendErr?.message ?? String(_rendErr) }))
           // fall through to static file serving
         }
+      }
+    }
+  }
+  // For GET requests on non-admin pages, check if there's a @live renderer.js
+  if (req.method === 'GET') {
+    const _clean2 = pathname.replace(/\\/$/, '') || '/index'
+    let _rPath2 = _path.join(_DIST_DIR, _clean2, '_arc', 'renderer.js')
+    if (!_fs.existsSync(_rPath2)) {
+      const _df2 = _matchDynamicRoute(_clean2)
+      if (_df2) _rPath2 = _path.join(_df2.replace(/\.html$/, ''), '_arc', 'renderer.js')
+    }
+    if (_fs.existsSync(_rPath2)) {
+      try {
+        const _rm2 = await import(_rPath2)
+        const _rd2 = _rm2._resolveData ?? _rm2.default?._resolveData
+        const _fh2 = _rm2._fillHtml ?? _rm2.default?._fillHtml
+        if (_rd2 && _fh2) {
+          req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
+          const _ld2 = await _rd2(req)
+          if (_ld2 && _ld2.__arc_render_error__) {
+            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Error</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+          }
+          let _html2 = _fh2(_ld2)
+          _html2 = _html2.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
+          return new Response(_html2, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate' } })
+        }
+      } catch (_re2) {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] page renderer error', path: pathname, error: _re2?.message ?? String(_re2) }))
+        // fall through to static file serving
       }
     }
   }
@@ -614,14 +648,22 @@ async function _serveStatic(req, pathname) {
     const _fp = _path.join(_DIST_DIR, _try)
     if (_sf.has(_fp) || (_fs.existsSync(_fp) && _fs.statSync(_fp).isFile() && (_sf.add(_fp), true))) {
       const _ext = _path.extname(_fp)
-      return new Response(Bun.file(_fp), { headers: { 'Content-Type': _MIME[_ext] ?? 'text/plain' } })
+      const _isAdminPath = _clean === '/admin' || _clean.startsWith('/admin/')
+      const _cc = _isAdminPath ? 'no-store, no-cache, must-revalidate, private' : (_ext === '.html' ? 'no-store' : 'public, max-age=31536000, immutable')
+      const _hdrs = { 'Content-Type': _MIME[_ext] ?? 'text/plain', 'Cache-Control': _cc }
+      if (_isAdminPath) { _hdrs['Pragma'] = 'no-cache'; _hdrs['Expires'] = '0' }
+      return new Response(Bun.file(_fp), { headers: _hdrs })
     }
   }
   // Dynamic-route fallback: try files like dist/admin/pages/[id].html for /admin/pages/3
   const _dynFp = _matchDynamicRoute(_clean)
   if (_dynFp) {
     const _ext = _path.extname(_dynFp)
-    return new Response(Bun.file(_dynFp), { headers: { 'Content-Type': _MIME[_ext] ?? 'text/plain' } })
+    const _isAdminDyn = _clean === '/admin' || _clean.startsWith('/admin/')
+    const _cc2 = _isAdminDyn ? 'no-store, no-cache, must-revalidate, private' : (_ext === '.html' ? 'no-store' : 'public, max-age=31536000, immutable')
+    const _hdrs2 = { 'Content-Type': _MIME[_ext] ?? 'text/plain', 'Cache-Control': _cc2 }
+    if (_isAdminDyn) { _hdrs2['Pragma'] = 'no-cache'; _hdrs2['Expires'] = '0' }
+    return new Response(Bun.file(_dynFp), { headers: _hdrs2 })
   }
   return _r
 }`
@@ -802,6 +844,46 @@ const _db = {
 const db = globalThis.db`.trim()
   }
 
+  // --- arc-search: @searchable decorator helpers ---
+
+  // Expand a URL template like '/posts/{slug}' into a JS expression using resultVar
+  _expandSearchUrlTemplate(template, resultVar) {
+    const parts = template.split(/\{(\w+)\}/)
+    if (parts.length === 1) return JSON.stringify(template)
+    return parts.map((p, i) => i % 2 === 0 ? JSON.stringify(p) : `String(${resultVar}?.[${JSON.stringify(p)}] ?? '')`).join(' + ')
+  }
+
+  // Generate the FTS5 upsert block injected after create/update
+  _emitSearchUpsert(tableName, titleField, bodyFields, urlExpr) {
+    const bodyExpr = bodyFields.length > 0
+      ? bodyFields.map(f => `String(_sResult?.[${JSON.stringify(f)}] ?? '')`).join(" + ' ' + ")
+      : "''"
+    return `
+      if (_sResult) {
+        const _sTitle = String(_sResult?.[${JSON.stringify(titleField)}] ?? ''), _sBody = ${bodyExpr}, _sUrl = ${urlExpr}
+        const _sPrev = _db.query('SELECT id, title, body FROM arc_search_docs WHERE type=? AND ref=?').get(${JSON.stringify(tableName)}, String(_sResult.id ?? ''))
+        if (_sPrev) {
+          _db.run("INSERT INTO arc_search_fts(arc_search_fts,rowid,title,body) VALUES('delete',?,?,?)", _sPrev.id, _sPrev.title, _sPrev.body)
+          _db.run('UPDATE arc_search_docs SET title=?,body=?,url=? WHERE id=?', _sTitle, _sBody, _sUrl, _sPrev.id)
+          _db.run('INSERT INTO arc_search_fts(rowid,title,body) VALUES(?,?,?)', _sPrev.id, _sTitle, _sBody)
+        } else {
+          _db.run('INSERT INTO arc_search_docs(type,ref,title,body,url,meta) VALUES(?,?,?,?,?,?)', ${JSON.stringify(tableName)}, String(_sResult.id ?? ''), _sTitle, _sBody, _sUrl, '{}')
+          const _sNewId = _db.query('SELECT last_insert_rowid() as id').get().id
+          _db.run('INSERT INTO arc_search_fts(rowid,title,body) VALUES(?,?,?)', _sNewId, _sTitle, _sBody)
+        }
+      }`
+  }
+
+  // Generate the FTS5 delete block injected before record deletion
+  _emitSearchDelete(tableName) {
+    return `
+      const _sDel = _db.query('SELECT id, title, body FROM arc_search_docs WHERE type=? AND ref=?').get(${JSON.stringify(tableName)}, String(id ?? ''))
+      if (_sDel) {
+        _db.run("INSERT INTO arc_search_fts(arc_search_fts,rowid,title,body) VALUES('delete',?,?,?)", _sDel.id, _sDel.title, _sDel.body)
+        _db.run('DELETE FROM arc_search_docs WHERE id=?', _sDel.id)
+      }`
+  }
+
   _emitModelHelpersSqlite(schema) {
     const { tableName, fields, colList, colDefs } = this._schemaVars(schema, 'sqlite')
     const placeholders = fields.map((_, i) => `?${i + 1}`).join(', ')
@@ -810,10 +892,58 @@ const db = globalThis.db`.trim()
 
     const fieldNames = JSON.stringify(fields.map(f => f.name))
     const requiredFieldNames = JSON.stringify(fields.filter(f => this._isRequiredField(f)).map(f => f.name))
+
+    // --- @searchable decorator support ---
+    const allFields = schema.fields ?? []
+    const searchableFields = allFields.filter(f => f.name && f.decorators?.includes('@searchable'))
+    const hasSearch = searchableFields.length > 0
+    const searchTitleField = searchableFields[0]?.name ?? 'id'
+    const searchBodyFields = searchableFields.slice(1).map(f => f.name)
+    const searchUrlTemplate = this.searchConfig?.models?.[schema.name]?.url
+      ?? this.searchConfig?.models?.[tableName]?.url
+      ?? '#'
+    const tokenizer = this.searchConfig?.tokenizer === 'trigram' ? 'trigram' : 'unicode61 remove_diacritics 1'
+    const searchUrlExpr = this._expandSearchUrlTemplate(searchUrlTemplate, '_sResult')
+    const searchUpsertBlock = hasSearch ? this._emitSearchUpsert(tableName, searchTitleField, searchBodyFields, searchUrlExpr) : ''
+    const searchDeleteBlock = hasSearch ? this._emitSearchDelete(tableName) : ''
+
+    const searchInit = hasSearch ? `
+// arc-search: FTS5 index tables for ${schema.name}
+_db.run("CREATE TABLE IF NOT EXISTS arc_search_docs (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, ref TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', meta TEXT NOT NULL DEFAULT '{}', UNIQUE(type, ref))")
+_db.run("CREATE VIRTUAL TABLE IF NOT EXISTS arc_search_fts USING fts5(title, body, content=arc_search_docs, content_rowid=id, tokenize='${tokenizer}')")
+if (typeof globalThis !== 'undefined') globalThis._arcSearchReady = true
+` : ''
+
+    const createMethod = colList ? `create: (data) => {
+      const _d = _pick(data, _${tableName}_fields)
+      const _miss = _${tableName}_required.filter(k => _d[k] == null)
+      if (_miss.length) throw Object.assign(new Error('${tableName}.create: missing required fields: ' + _miss.join(', ')), { status: 422 })
+      const _sResult = _q_${tableName}_create.get(${fields.map(f => this._isNowDefault(f) ? `(_d.${f.name} ?? new Date().toISOString())` : `_d.${f.name}`).join(', ')})
+      ${searchUpsertBlock}
+      return _sResult
+    },` : ''
+
+    const updateMethod = colList ? `update: (idOrOpts, data) => {
+      let _id = idOrOpts, _dd = data
+      if (idOrOpts !== null && typeof idOrOpts === 'object' && idOrOpts.where) { _id = idOrOpts.where.id; _dd = idOrOpts.data ?? {} }
+      const _d = _pick(_dd ?? {}, _${tableName}_fields)
+      const _ks = Object.keys(_d)
+      if (!_ks.length) return null
+      const _sets = _ks.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(', ')
+      const _sResult = _db.query('UPDATE ${tableName} SET ' + _sets + ' WHERE id = ?' + (_ks.length + 1) + ' RETURNING *').get(..._ks.map(k => _d[k]), _id) ?? null
+      ${searchUpsertBlock}
+      return _sResult
+    },` : ''
+
+    const deleteMethod = hasSearch
+      ? `delete: (id) => { ${searchDeleteBlock}
+      return (_q_${tableName}_delete.run(id), true) },`
+      : `delete: (id) => (_q_${tableName}_delete.run(id), true),`
+
     return `
 // Schema: ${schema.name}
 _db.run(\`CREATE TABLE IF NOT EXISTS ${tableName} (${colDefs})\`)
-
+${searchInit}
 const _q_${tableName}_findMany = _db.query('SELECT ${selectCols} FROM ${tableName} LIMIT ?1 OFFSET ?2')
 const _q_${tableName}_find = _db.query('SELECT ${selectCols} FROM ${tableName} WHERE id = ?1')
 ${colList ? `const _q_${tableName}_create = _db.query('INSERT INTO ${tableName} (${colList}) VALUES (${placeholders}) RETURNING *')` : ''}
@@ -853,9 +983,9 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
       return _rs[0] ?? null
     },
     find: (id) => _q_${tableName}_find.get(id) ?? null,
-    ${colList ? `create: (data) => { const _d = _pick(data, _${tableName}_fields); const _miss = _${tableName}_required.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${tableName}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _q_${tableName}_create.get(${fields.map(f => this._isNowDefault(f) ? `(_d.${f.name} ?? new Date().toISOString())` : `_d.${f.name}`).join(', ')}) },` : ''}
-    ${colList ? `update: (idOrOpts, data) => { let _id = idOrOpts, _dd = data; if (idOrOpts !== null && typeof idOrOpts === 'object' && idOrOpts.where) { _id = idOrOpts.where.id; _dd = idOrOpts.data ?? {}; } const _d = _pick(_dd ?? {}, _${tableName}_fields); const _ks = Object.keys(_d); if (!_ks.length) return null; const _sets = _ks.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(', '); return _db.query('UPDATE ${tableName} SET ' + _sets + ' WHERE id = ?' + (_ks.length + 1) + ' RETURNING *').get(..._ks.map(k => _d[k]), _id) ?? null },` : ''}
-    delete: (id) => (_q_${tableName}_delete.run(id), true),
+    ${createMethod}
+    ${updateMethod}
+    ${deleteMethod}
     deleteMany: (opts = {}) => {
       const _w = opts?.where
       if (!_w || !Object.keys(_w).length) throw new Error('${tableName}.deleteMany: where is required to prevent full-table deletion')
@@ -1326,7 +1456,7 @@ const _TRACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/`
     // Item 12: startup env-var validation
     const envChecks = []
     if (hasAuth) {
-      envChecks.push(`if (!process.env.SESSION_SECRET) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: 'arc: SESSION_SECRET env var is required when @auth routes are present' })); process.exit(1) }`)
+      envChecks.push(`if (!process.env.SESSION_SECRET && process.env.NODE_ENV === 'production') { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: 'arc: SESSION_SECRET env var is required in production when @auth routes are present' })); process.exit(1) }`)
     }
     const envBlock = envChecks.length > 0 ? envChecks.join('\n') + '\n\n' : ''
 
@@ -1351,6 +1481,7 @@ const _server = Bun.serve({
   ..._arcRoutes,
 })
 _printBanner(_server.port)
+_getStaticFiles()
 `.trim()
     }
 
@@ -1409,6 +1540,7 @@ const _server = Bun.serve({
   }
 })
 _printBanner(_server.port)
+_getStaticFiles()
 ${this.profile ? `console.log('  \\x1b[36marc: profiler\\x1b[0m  \\x1b[2mhttp://localhost:' + _server.port + '/_arc/profiler\\x1b[0m')
 console.warn('  \\x1b[33marc: --profile is for development only — disable in production\\x1b[0m')` : ''}
 `.trim()

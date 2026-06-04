@@ -100,8 +100,11 @@ function _resolveArcPackagesInternal(projectRoot) {
 function makeBuildContext(projectDir) {
   const projectRoot = path.resolve(projectDir)
   const packages = _resolveArcPackagesInternal(projectRoot)
+  let realProjectRoot = projectRoot
+  try { realProjectRoot = fs.realpathSync(projectRoot) } catch {}
   return {
     projectRoot,
+    realProjectRoot,
     packages,
     pkgByAlias: new Map(packages.map(p => [p.alias, p])),
     pkgSrcSet:  new Set(packages.map(p => p.src).filter(Boolean)),
@@ -219,7 +222,7 @@ function _resolveImportPath(src, currentDir, filename, ctx) {
   }
   let realImportPath
   try { realImportPath = fs.realpathSync(importPath) } catch (_e) { realImportPath = importPath /* realpathSync failed - symlink or permissions issue */ }
-  const realProjectRoot = (() => { try { return fs.realpathSync(ctx.projectRoot) } catch { return ctx.projectRoot } })()
+  const realProjectRoot = ctx.realProjectRoot ?? (() => { try { return fs.realpathSync(ctx.projectRoot) } catch { return ctx.projectRoot } })()
   const allowedRoots = [realProjectRoot]
   // Allow all registered Arc package source roots (plus arc-cms fallback). O(1) iteration
   // over ctx.pkgSrcSet — no per-call re-resolution.
@@ -589,7 +592,20 @@ async function compile(source, filename = '<input>', options = {}) {
 
   // 11. @live edge renderer (if @live declarations present)
   // urlPattern: derive from filename for URL param extraction (e.g. /admin/blocks/code/[id])
-  const urlPattern = filename ? '/' + filename.replace(/\.arc$/, '').replace(/\\/g, '/') : null
+  // Strip conventional pages-directory prefix (e.g. src/pages/) so that @param index
+  // matches the actual URL segments, not the file path segments.
+  // If an explicit urlPatternOverride is provided (e.g. from buildSite slug), use it directly.
+  const _fp = filename ? filename.replace(/\.arc$/, '').replace(/\\/g, '/') : null
+  let _fpUrl
+  if (options.urlPatternOverride) {
+    _fpUrl = options.urlPatternOverride.replace(/^\//, '')
+  } else {
+    _fpUrl = _fp
+  }
+  // Strip a leading 'pages/' (optionally with a single parent like 'src/') so the
+  // @param URL-segment index matches the served URL, not the source file path.
+  if (_fpUrl) _fpUrl = _fpUrl.replace(/^(?:[^/]*\/)?pages\//, '')
+  const urlPattern = _fpUrl ? '/' + _fpUrl : null
   const edgeRenderer = new EdgeRenderer({ hash })
   const liveEdgeFunction = edgeRenderer.emitProgram(
     program, html, css, js, htmlEmitter.stateBindings, urlPattern
@@ -601,7 +617,7 @@ async function compile(source, filename = '<input>', options = {}) {
 // Inline ADP mini-runtime for browser (encode + decode, ~600 bytes minified)
 const ADP_MINI_RUNTIME = `
 const _te=new TextEncoder();function _adpEncode(v){const b=[];function w(x){if(x===null||x===undefined){b.push(0);}else if(x===true){b.push(1);}else if(x===false){b.push(2);}else if(typeof x==='number'){if(Number.isInteger(x)&&x>=0&&x<=255){b.push(3,x);}else if(Number.isInteger(x)){b.push(4,(x>>>24)&255,(x>>>16)&255,(x>>>8)&255,x&255);}else{b.push(5);const d=new DataView(new ArrayBuffer(8));d.setFloat64(0,x,false);for(let i=0;i<8;i++)b.push(d.getUint8(i));}}else if(typeof x==='string'){b.push(6);const e=_te.encode(x);let l=e.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);e.forEach(c=>b.push(c));}else if(Array.isArray(x)){b.push(7);let l=x.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);x.forEach(w);}else if(typeof x==='object'){const ks=Object.keys(x);b.push(8);let l=ks.length;while(l>127){b.push((l&127)|128);l>>>=7;}b.push(l);ks.forEach(k=>{const e=_te.encode(k);let kl=e.length;while(kl>127){b.push((kl&127)|128);kl>>>=7;}b.push(kl);e.forEach(c=>b.push(c));w(x[k]);});}}w(v);return new Uint8Array(b);}
-function _adpDecode(buf){let p=0;function rv(){const t=buf[p++];if(t===0)return null;if(t===1)return true;if(t===2)return false;if(t===3)return buf[p++];if(t===4){const v=(buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3];p+=4;return v;}if(t===5){const d=new DataView(buf.buffer,buf.byteOffset+p,8);p+=8;return d.getFloat64(0,false);}if(t===6){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return new TextDecoder().decode(buf.subarray(p,p+=l));}if(t===7){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return Array.from({length:l},rv);}if(t===8){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}const o={};for(let i=0;i<l;i++){let kl=0,ks=0;while(true){const b=buf[p++];kl|=(b&127)<<ks;if(!(b&128))break;ks+=7;}const k=new TextDecoder().decode(buf.subarray(p,p+=kl));const v=rv();if(k!=='__proto__'&&k!=='constructor'&&k!=='prototype')o[k]=v;}return o;}throw new Error('ADP: unknown tag '+t);}return rv();}
+const _td=new TextDecoder();function _adpDecode(buf){let p=0;function rv(){const t=buf[p++];if(t===0)return null;if(t===1)return true;if(t===2)return false;if(t===3)return buf[p++];if(t===4){const v=(buf[p]<<24)|(buf[p+1]<<16)|(buf[p+2]<<8)|buf[p+3];p+=4;return v;}if(t===5){const d=new DataView(buf.buffer,buf.byteOffset+p,8);p+=8;return d.getFloat64(0,false);}if(t===6){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return _td.decode(buf.subarray(p,p+=l));}if(t===7){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}return Array.from({length:l},rv);}if(t===8){let l=0,s=0;while(true){const b=buf[p++];l|=(b&127)<<s;if(!(b&128))break;s+=7;}const o={};for(let i=0;i<l;i++){let kl=0,ks=0;while(true){const b=buf[p++];kl|=(b&127)<<ks;if(!(b&128))break;ks+=7;}const k=_td.decode(buf.subarray(p,p+=kl));const v=rv();if(k!=='__proto__'&&k!=='constructor'&&k!=='prototype')o[k]=v;}return o;}throw new Error('ADP: unknown tag '+t);}return rv();}
 `.trim()
 
 // Strip base utility CSS rules whose class names never appear in the emitted HTML.
@@ -1182,11 +1198,14 @@ async function buildSite(projectDir) {
     // slug preserves directory structure: "index", "packages/index", "docs/quickstart"
     // Package pages supply a pre-computed slugOverride (relative to their pagesDir, not absDir)
     const relPath = slugOverride ? slugOverride + '.arc' : path.relative(absDir, absPath)
-    const slug = slugOverride ?? relPath.replace(/\.arc$/, '').replace(/\\/g, '/')
+    const _rawSlug = slugOverride ?? relPath.replace(/\.arc$/, '').replace(/\\/g, '/')
+    // Strip a leading 'pages/' (optionally under a single parent like 'src/') so the
+    // output path matches the URL the page is served from, not the source layout.
+    const slug = slugOverride ? _rawSlug : _rawSlug.replace(/^(?:[^/]*\/)?pages\//, '')
     const relFilename = relPath.replace(/\\/g, '/')
     let result
     try {
-      result = await compile(src, relFilename, { projectDir: absDir, rootDir, distDir, sharedImgPipeline })
+      result = await compile(src, relFilename, { projectDir: absDir, rootDir, distDir, sharedImgPipeline, urlPatternOverride: '/' + slug })
     } catch (e) { formatError(e, src, relFilename); return null }
     const pageDecl = result.program?.declarations?.find(d => d.type === 'PageDecl')
     const metaResolved = {}
@@ -1601,6 +1620,11 @@ function _createDevRequestHandler(distDir, reloadClients) {
 // `ctx` bundles the closure-captured helpers from dev() so they can be passed explicitly.
 async function _handleFileChange(changedFile, absDir, isMultiPage, state, ctx) {
   if (state.building) { state.rebuildRequested = true; return }
+  // Invalidate CSS file cache when a .css file changes so the next build re-reads it
+  if (changedFile.endsWith('.css')) {
+    const changedCssAbs = path.resolve(absDir, changedFile)
+    _cssFileCache.delete(changedCssAbs)
+  }
   try {
     state.building = true
     do {
@@ -1712,9 +1736,11 @@ async function dev(projectDir) {
   const absDir = path.resolve(projectDir)
   const distDir = path.join(absDir, 'dist')
 
-  const isMultiPage = findArcFiles(absDir).filter(f => {
-    try { return _isPageFile(fs.readFileSync(f, 'utf8')) } catch { return false }
-  }).length > 1
+  const _arcFiles = findArcFiles(absDir)
+  const _arcFileChecks = await Promise.all(_arcFiles.map(async f => {
+    try { return _isPageFile(await fs.promises.readFile(f, 'utf8')) } catch { return false }
+  }))
+  const isMultiPage = _arcFileChecks.filter(Boolean).length > 1
   const _rebuild = () => isMultiPage ? buildSite(projectDir) : build(projectDir)
 
   // ── HMR state ─────────────────────────────────────────────────────────────
@@ -1990,11 +2016,13 @@ async function buildServer(projectDir, opts = {}, flags = {}) {
   const searchPkg = buildCtx.pkgByAlias.get('arc-search') || packages.find(p => p.name === 'arc-search')
   let versioningConfig = {}
   let searchConfig = {}
+  let _arcCfg = {}
+  try { _arcCfg = JSON.parse(fs.readFileSync(path.join(path.resolve(projectDir), 'arc.config.json'), 'utf8')) } catch {}
   if (versioningPkg) {
-    try { versioningConfig = JSON.parse(fs.readFileSync(path.join(path.resolve(projectDir), 'arc.config.json'), 'utf8')).versioning || {} } catch {}
+    versioningConfig = _arcCfg.versioning || {}
   }
   if (searchPkg) {
-    try { searchConfig = JSON.parse(fs.readFileSync(path.join(path.resolve(projectDir), 'arc.config.json'), 'utf8')).search || {} } catch {}
+    searchConfig = _arcCfg.search || {}
     // Expose tokenizer choice as env var so route files can read it at runtime
     const { resolveTokenizer } = require(path.join(searchPkg.src, 'index.js'))
     if (resolveTokenizer) process.env.ARC_SEARCH_TOKENIZER = resolveTokenizer(searchConfig)

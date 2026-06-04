@@ -21,8 +21,10 @@ const TAG = {
 
 // Pre-allocated single-byte Buffers for all 256 values - avoids per-tag allocation
 const _B = Array.from({length: 256}, (_, i) => Buffer.from([i]))
-// Module-level scratch for varint encoding (max 5 bytes for 32-bit, 10 for 64-bit)
-const _VARINT_SCRATCH = Buffer.allocUnsafe(10)
+// Module-level scratch buffers - avoids per-call allocation in hot paths
+const _VARINT_SCRATCH  = Buffer.allocUnsafe(10)
+const _INT32_SCRATCH   = Buffer.allocUnsafe(4)
+const _FLOAT64_SCRATCH = Buffer.allocUnsafe(8)
 
 class Encoder {
   constructor() {
@@ -113,18 +115,16 @@ class Encoder {
   }
 
   writeInt32(n) {
-    const b = Buffer.allocUnsafe(4)
-    b[0] = (n >>> 24) & 0xff
-    b[1] = (n >>> 16) & 0xff
-    b[2] = (n >>> 8) & 0xff
-    b[3] = n & 0xff
-    this.buf.push(b)
+    _INT32_SCRATCH[0] = (n >>> 24) & 0xff
+    _INT32_SCRATCH[1] = (n >>> 16) & 0xff
+    _INT32_SCRATCH[2] = (n >>> 8) & 0xff
+    _INT32_SCRATCH[3] = n & 0xff
+    this.buf.push(Buffer.from(_INT32_SCRATCH))
   }
 
   writeFloat64(n) {
-    const b = Buffer.allocUnsafe(8)
-    b.writeDoubleBE(n, 0)
-    this.buf.push(b)
+    _FLOAT64_SCRATCH.writeDoubleBE(n, 0)
+    this.buf.push(Buffer.from(_FLOAT64_SCRATCH))
   }
 
   writeInt64(n) {
@@ -173,16 +173,19 @@ class SchemaEncoder extends Encoder {
   }
 }
 
+// Module-level singleton — Encoder resets this.buf at top of encode(), safe to reuse
+const _sharedEncoder = new Encoder()
+
 function encode(value) {
-  return new Encoder().encode(value)
+  return _sharedEncoder.encode(value)
 }
 
 function encodeArray(items) {
-  const enc = new Encoder()
-  enc.buf.push(_B[TAG.ARRAY])
-  enc.writeVarInt(items.length)
-  for (const item of items) enc.writeValue(item)
-  return Buffer.concat(enc.buf)
+  _sharedEncoder.buf = []
+  _sharedEncoder.buf.push(_B[TAG.ARRAY])
+  _sharedEncoder.writeVarInt(items.length)
+  for (const item of items) _sharedEncoder.writeValue(item)
+  return Buffer.concat(_sharedEncoder.buf)
 }
 
 // Express/Bun/Deno middleware helper: send ADP response

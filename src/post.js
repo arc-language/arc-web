@@ -177,7 +177,7 @@ class PostProcessor {
       const content = html.slice(m.index + m[0].length, closeIdx)
       const idx = preserved.length
       preserved.push(content)
-      result += html.slice(last, m.index) + m[0] + `__PRESERVED_${idx}__` + closeTag
+      result += html.slice(last, m.index) + m[0] + `\x00ARC_P${idx}\x00` + closeTag
       last = closeIdx + closeTag.length
       SENSITIVE_RE.lastIndex = last
     }
@@ -190,7 +190,7 @@ class PostProcessor {
       .trim()
 
     // Restore preserved content (single pass via regex callback)
-    result = result.replace(/__PRESERVED_(\d+)__/g, (_, i) => preserved[parseInt(i, 10)])
+    result = result.replace(/\x00ARC_P(\d+)\x00/g, (_, i) => preserved[parseInt(i, 10)])
 
     return result
   }

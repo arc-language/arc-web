@@ -117,8 +117,8 @@ class BuildExecutor {
 
       case 'Identifier': {
         const name = expr.name
-        if (Object.prototype.hasOwnProperty.call(locals, name)) return locals[name]
-        if (Object.prototype.hasOwnProperty.call(this.context, name)) return this.context[name]
+        if (Object.hasOwn(locals, name)) return locals[name]
+        if (Object.hasOwn(this.context, name)) return this.context[name]
         throw new Error(`Undefined identifier: ${name}`)
       }
 
@@ -162,11 +162,11 @@ class BuildExecutor {
         // Short-circuit && and || before evaluating both sides
         if (expr.op === '&&') {
           const left = await this.evalExpr(expr.left, locals)
-          return left ? this.evalExpr(expr.right, locals) : left
+          return left ? await this.evalExpr(expr.right, locals) : left
         }
         if (expr.op === '||') {
           const left = await this.evalExpr(expr.left, locals)
-          return left ? left : this.evalExpr(expr.right, locals)
+          return left ? left : await this.evalExpr(expr.right, locals)
         }
         const left = await this.evalExpr(expr.left, locals)
         const right = await this.evalExpr(expr.right, locals)
@@ -215,7 +215,7 @@ class BuildExecutor {
     const callee = expr.callee
 
     // Dispatch table for top-level function calls by name
-    if (callee.type === 'Identifier' && Object.prototype.hasOwnProperty.call(_TOP_LEVEL_CALLERS, callee.name)) {
+    if (callee.type === 'Identifier' && Object.hasOwn(_TOP_LEVEL_CALLERS, callee.name)) {
       return _TOP_LEVEL_CALLERS[callee.name](expr, locals, this)
     }
 

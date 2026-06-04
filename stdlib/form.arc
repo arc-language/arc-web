@@ -74,11 +74,30 @@ fn _max(maximum) {
   }
 }
 
+fn _phone(value) {
+  unless value { return none }
+  const stripped = value.replace(/[\s\-().]/g, "")
+  const digits = stripped.replace(/\D/g, "")
+  if digits.length < 7 || digits.length > 15 { return "Enter a valid phone number" }
+  unless /^\+?[1-9]\d{6,14}$/.test(stripped) { return "Enter a valid phone number" }
+  return none
+}
+
+fn _money(value) {
+  unless value { return none }
+  const n = Number(String(value).replace(/,/g, ""))
+  if isNaN(n) { return "Enter a valid amount" }
+  if n < 0 { return "Amount must be positive" }
+  return none
+}
+
 // Build a validator list from a field config object
 fn _buildValidators(config) {
   const validators = []
   if config.required { validators.push(_required) }
   if config.type == "email" { validators.push(_email) }
+  if config.type == "phone" { validators.push(_phone) }
+  if config.type == "money" { validators.push(_money) }
   if config.type == "number" || config.numeric { validators.push(_numeric) }
   if config.minLength { validators.push(_minLength(config.minLength)) }
   if config.maxLength { validators.push(_maxLength(config.maxLength)) }
@@ -204,7 +223,7 @@ widget Field
 
   col gap="4px"
     if @label
-      label id={"label-" + @name} class="field-label" "{@label}"
+      label id={"label-" + @name} for={"field-" + @name} class="field-label" "{@label}"
     input
       id={"field-" + @name}
       type={ fieldType }
@@ -219,7 +238,7 @@ widget Field
     span
       id={"error-" + @name}
       class="field-error-msg"
-      role="alert"
+      aria-live="polite"
       aria-hidden={ !(isTouched && error) ? "true" : none }
       "{isTouched && error ? error : ""}"
 
@@ -243,9 +262,12 @@ widget SubmitButton
     type="submit"
     disabled={ @form.isSubmitting }
     aria-busy={ @form.isSubmitting ? "true" : "false" }
-    aria-label={ @form.isSubmitting ? "Submitting, please wait" : none }
     class={ @form.isSubmitting ? "btn-submitting" : "" }
-    slot
+    if @form.isSubmitting
+      span aria-hidden="true" "⏳ "
+      span class="btn-label" "Submitting…"
+    if !@form.isSubmitting
+      slot
 
   design
     .btn-submitting

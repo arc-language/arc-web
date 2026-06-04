@@ -15,7 +15,7 @@
 const { JsEmitter } = require('./js')
 const { compileRoutes } = require('../compilers/route-compiler')
 const { emitAuthPreamble } = require('./auth-helpers')
-const { isValidRoute } = require('./route-utils')
+const { isValidRoute, flattenGroups } = require('./route-utils')
 const { emitEmailPreamble } = require('./queue-helpers')
 const { arcTypeToSql: _arcTypeToSql } = require('../compilers/sql-types')
 const { routeHandlerName } = require('./route-utils')
@@ -32,7 +32,7 @@ class CloudflareEmitter {
 
   // Returns { worker: string, schema: string }
   emitProgram(program) {
-    const routes = this._flattenGroups(program.declarations)
+    const routes = flattenGroups(program.declarations)
     const schemas = program.declarations.filter(d => d.type === 'ModelDecl')
     const jobs = program.declarations.filter(d => d.type === 'JobDecl')
     const hasAuth = routes.some(r => r.annotations?.some(a => a === '@auth' || a.startsWith('@auth(')))
@@ -81,26 +81,6 @@ class CloudflareEmitter {
   }
 
   // Flatten RouteGroupDecl into RouteDecl[] — same logic as Bun emitter
-  _flattenGroups(declarations) {
-    const routes = []
-    for (const d of declarations) {
-      if (d.type === 'RouteDecl' && isValidRoute(d)) {
-        routes.push(d)
-      } else if (d.type === 'RouteGroupDecl') {
-        for (const route of d.routes) {
-          const path = d.prefix.replace(/\/$/, '') + route.path
-          const params = (path.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) ?? []).map(p => p.slice(1))
-          routes.push({
-            ...route,
-            path,
-            params,
-            annotations: [...(d.annotations ?? []), ...(route.annotations ?? [])],
-          })
-        }
-      }
-    }
-    return routes
-  }
 
   // ── Preamble ──────────────────────────────────────────────────────────────────
 

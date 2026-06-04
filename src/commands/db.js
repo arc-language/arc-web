@@ -147,6 +147,10 @@ main().catch(e => { console.error('[arc:seed] failed:', e.message); process.exit
   cleanupTmp()
   process.off('exit', cleanupTmp)
 
+  if (result.error) {
+    console.error(`arc db seed: failed to spawn ${runtime}: ${result.error.message}`)
+    process.exit(1)
+  }
   if (result.status !== 0) {
     console.error('arc db seed: seed script exited with error')
     process.exit(result.status ?? 1)
