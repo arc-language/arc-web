@@ -145,8 +145,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     return true
   })
   if (arcFiles.length === 0) {
-    console.error(`arc: no .arc files found in ${path.relative(process.cwd(), serverDir)}`)
-    process.exit(1)
+    throw new Error(`arc: no .arc files found in ${path.relative(process.cwd(), serverDir)}`)
   }
 
   // Detect middleware.arc - compiled separately, emitted as _middleware(req, pathname)
@@ -180,7 +179,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   const projectDeclResults = await Promise.all(routeFiles.map(async (file) => {
     let src
     try { src = await fs.promises.readFile(file, 'utf8') }
-    catch (e) { console.error(`arc: cannot read ${file}: ${e.message}`); process.exit(1) }
+    catch (e) { throw new Error(`arc: cannot read ${file}: ${e.message}`) }
 
     const program = await parseArcFile(file, src, formatError)
 
@@ -218,7 +217,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   if (middlewareFile) {
     let src
     try { src = await fs.promises.readFile(middlewareFile, 'utf8') }
-    catch (e) { console.error(`arc: cannot read ${middlewareFile}: ${e.message}`); process.exit(1) }
+    catch (e) { throw new Error(`arc: cannot read ${middlewareFile}: ${e.message}`) }
     const program = await parseArcFile(middlewareFile, src, formatError)
     middlewareDecls = program.declarations
   }
@@ -226,15 +225,14 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   const mergedProgram = N.Program([], allDeclarations, 0)
   const target = flags.target ?? 'bun'
   try { fs.mkdirSync(distDir, { recursive: true }) }
-  catch (e) { console.error(`arc: cannot create dist directory: ${e.message}`); process.exit(1) }
+  catch (e) { throw new Error(`arc: cannot create dist directory: ${e.message}`) }
 
   if (target === 'cloudflare') {
     const emitter = new CloudflareEmitter({ hash: 'arc' })
     const { worker, schema } = emitter.emitProgram(mergedProgram)
 
     if (!worker.trim()) {
-      console.error('arc: no route or schema declarations found in server/*.arc')
-      process.exit(1)
+      throw new Error('arc: no route or schema declarations found in server/*.arc')
     }
 
     const workerFile = path.join(distDir, 'worker.js')
@@ -285,8 +283,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   const serverJs = emitter.emitProgram(mergedProgram)
 
   if (!serverJs.trim()) {
-    console.error('arc: no route or schema declarations found in server/*.arc')
-    process.exit(1)
+    throw new Error('arc: no route or schema declarations found in server/*.arc')
   }
 
   const outFile = path.join(distDir, 'server.js')

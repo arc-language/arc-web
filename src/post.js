@@ -50,13 +50,17 @@ class PostProcessor {
     // Walk forward from marker to find the matching closing brace
     let depth = 0
     let end = idx
+    let entered = false
     for (let i = idx; i < css.length; i++) {
-      if (css[i] === '{') depth++
-      else if (css[i] === '}') {
+      if (css[i] === '{') { depth++; entered = true }
+      else if (css[i] === '}' && entered) {
         depth--
         if (depth === 0) { end = i + 1; break }
       }
     }
+
+    // If we never found an opening brace, treat the whole CSS as critical (safe fallback)
+    if (!entered) return { critical: css, rest: '' }
 
     const critical = css.slice(idx, end).trim()
     const rest = (css.slice(0, idx) + css.slice(end)).trim()

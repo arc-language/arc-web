@@ -514,13 +514,20 @@ async function _serveStatic(req, pathname) {
   // Serve user-uploaded media from public/uploads/ with safe headers (no auth — public assets).
   // Legacy path — only reached when arc-storage isn't installed.
   if (req.method === 'GET' && pathname.startsWith('/uploads/')) {
+    const _uploadsRoot = _path.join(process.cwd(), 'public', 'uploads')
     const _uf = _path.join(process.cwd(), 'public', pathname)
-    if (_getStaticFiles().has(_uf)) {
-      const _uext = _path.extname(_uf).toLowerCase()
-      const _headers = { 'Content-Type': _UPLOAD_MIME[_uext] ?? 'application/octet-stream' }
-      if (_ATTACHMENT_EXTS.has(_uext)) _headers['Content-Disposition'] = 'attachment'
-      return new Response(Bun.file(_uf), { headers: _headers })
+    if (!_uf.startsWith(_uploadsRoot + _path.sep) && _uf !== _uploadsRoot) {
+      return new Response('Not found', { status: 404 })
     }
+    try {
+      const _uStat = _fs.statSync(_uf)
+      if (_uStat.isFile()) {
+        const _uext = _path.extname(_uf).toLowerCase()
+        const _headers = { 'Content-Type': _UPLOAD_MIME[_uext] ?? 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' }
+        if (_ATTACHMENT_EXTS.has(_uext)) _headers['Content-Disposition'] = 'attachment'
+        return new Response(Bun.file(_uf), { headers: _headers })
+      }
+    } catch {}
     return new Response('Not found', { status: 404 })
   }
   // Dispatch @route handlers FIRST so routes with their own @auth(...) annotations
@@ -603,7 +610,7 @@ async function _serveStatic(req, pathname) {
             }
             let _html = _fillHtml(_ldata)
             _html = _html.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
-            return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-cache, must-revalidate, private', 'Pragma': 'no-cache', 'Expires': '0' } })
+            return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-cache, must-revalidate, private', 'Pragma': 'no-cache', 'Expires': '0', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'" } })
           }
         } catch (_rendErr) {
           console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] admin renderer error', path: pathname, error: _rendErr?.message ?? String(_rendErr) }))
@@ -633,7 +640,7 @@ async function _serveStatic(req, pathname) {
           }
           let _html2 = _fh2(_ld2)
           _html2 = _html2.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
-          return new Response(_html2, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate' } })
+          return new Response(_html2, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'" } })
         }
       } catch (_re2) {
         console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] page renderer error', path: pathname, error: _re2?.message ?? String(_re2) }))
