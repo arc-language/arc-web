@@ -391,7 +391,15 @@ class BunServerEmitter {
           staticHandlers.set(routeHandlerName(route), staticConst.constName)
         }
       }
-      parts.push(emitBunRoutesObject(routeSpecs, { noRateLimit: this.noRateLimit, noTracing: this.noTracing, staticHandlers }))
+      const hasDb = schemas && schemas.length > 0
+      parts.push(emitBunRoutesObject(routeSpecs, {
+        noRateLimit: this.noRateLimit,
+        noTracing: this.noTracing,
+        staticHandlers,
+        hasMiddleware: !!this.hasMiddleware,
+        pgGuard: this.isPg && hasDb,
+        healthBody: this._emitHealthBody(hasDb, this.isPg),
+      }))
     } else {
       parts.push(compileRoutes(routeSpecs))
     }
@@ -593,7 +601,7 @@ async function _serveStatic(req, pathname) {
   }
   // Fall through to static files on 404 (unknown route) or on 405 for GET requests
   // (route exists but only handles non-GET methods — static HTML page should be served instead).
-  if (!(_r instanceof Response) || (_r.status !== 404 && !(_r.status === 405 && req.method === 'GET'))) return _r
+  if (_r instanceof Response && _r.status !== 404 && !(_r.status === 405 && req.method === 'GET')) return _r
   // arc-cms public page renderer: /p/:slug → server/cms/page-renderer.js if present.
   // Opt-in: only fires if the project ships the module (cms init copies it).
   // If renderCmsPage returns null the module signalled "skip me" (e.g. editor session
@@ -619,7 +627,8 @@ async function _serveStatic(req, pathname) {
     const _fnName = pathname.slice('/_arc/fn/'.length)
     if (_ARC_FN_NAME_RE.test(_fnName)) {
       try {
-        req._arc_session = await auth.session(req) ?? {}
+        // Store null when unauthenticated — handlers must check req._arc_session before accessing protected data
+        req._arc_session = await auth.session(req) ?? null
         const _hCache = await _getHandlerCache()
         const _matchedHandler = _hCache.get(_fnName)
         if (_matchedHandler) { const _fnRes = await _matchedHandler(req); return _fnRes instanceof Response ? _fnRes : new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } }) }
@@ -633,7 +642,7 @@ async function _serveStatic(req, pathname) {
   // Guard unmatched /admin/* paths (these resolve to static admin HTML pages).
   // Routes that exist as @route handlers are already past us by this point.
   if (pathname === '/admin' || pathname.startsWith('/admin/')) {
-    if (pathname !== '/admin/login') {
+    if (pathname !== '/admin/login' && pathname !== '/admin/login/') {
       let _sess
       try { _sess = await auth.session(req) } catch (_sessErr) {
         console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'admin_session_error', path: pathname, msg: _sessErr?.message ?? String(_sessErr), name: _sessErr?.name, stack: (_sessErr?.stack ?? '').split('\\n').slice(0, 6) }))
@@ -769,7 +778,10 @@ function _checkRateLimit(req, _bunServer) {
   const now = Date.now()
   const _windowMs = 60000
   let entry = _rlMap.get(ip)
-  if (!entry || now > entry.resetAt) entry = { count: 0, resetAt: now + _windowMs }
+  if (!entry || now > entry.resetAt) {
+    if (_rlMap.size >= 100000) _rlMap.clear()
+    entry = { count: 0, resetAt: now + _windowMs }
+  }
   entry.count++
   _rlMap.set(ip, entry)
   if (entry.count > 60) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'rate_limit_exceeded', ip })); return _json({ error: 'Too many requests' }, 429, { 'Retry-After': String(Math.ceil((entry.resetAt - now) / 1000)) }) }
@@ -796,6 +808,7 @@ try {
     return `
 const { Pool } = require('pg')
 const _pool = new Pool({ connectionString: process.env.DATABASE_URL ?? 'postgres://localhost/app', max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 })
+_pool.on('error', (err) => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'pg_pool_error', msg: err?.message ?? String(err) })) })
 const _db = {
   run: async (sql, params = []) => { await _pool.query(sql, params) },
   query: (sql) => ({ all: async (params = []) => (await _pool.query(sql, params)).rows,
@@ -845,9 +858,10 @@ const _db = {
         const _arcVersionsCols = new Set(['id', 'modelName', 'recordId', 'action', 'data', 'userId', 'createdAt'])
         const _order = _ob ? ' ORDER BY ' + Object.entries(_ob).filter(([k]) => _arcVersionsCols.has(k)).map(([k, d]) => '"' + k + '" ' + (d === 'desc' ? 'DESC' : 'ASC')).join(', ') : ' ORDER BY id DESC'
         if (!_w || !Object.keys(_w).length) return _db.query('SELECT * FROM _arc_versions' + _order + ' LIMIT ? OFFSET ?').all(_lim, _off)
-        const _keys = Object.keys(_w), _vals = Object.values(_w)
+        const _keys = Object.keys(_w).filter(k => _arcVersionsCols.has(k)), _vals = _keys.map(k => _w[k])
+        if (!_keys.length) return _db.query('SELECT * FROM _arc_versions' + _order + ' LIMIT ?' + (_keys.length + 1) + ' OFFSET ?' + (_keys.length + 2)).all(_lim, _off)
         const _wsql = _keys.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(' AND ')
-        return _db.query('SELECT * FROM _arc_versions WHERE ' + _wsql + _order + ' LIMIT ? OFFSET ?').all(..._vals, _lim, _off)
+        return _db.query('SELECT * FROM _arc_versions WHERE ' + _wsql + _order + ' LIMIT ?' + (_keys.length + 1) + ' OFFSET ?' + (_keys.length + 2)).all(..._vals, _lim, _off)
       },
       find: (id) => _db.query('SELECT * FROM _arc_versions WHERE id = ?1').get(id) ?? null,
       create: (data) => {
@@ -857,7 +871,8 @@ const _db = {
       count: (opts = {}) => {
         const _w = opts.where
         if (!_w || !Object.keys(_w).length) return _db.query('SELECT COUNT(*) as count FROM _arc_versions').get()?.count ?? 0
-        const _keys = Object.keys(_w), _vals = Object.values(_w)
+        const _keys = Object.keys(_w).filter(k => _arcVersionsCols.has(k)), _vals = _keys.map(k => _w[k])
+        if (!_keys.length) return _db.query('SELECT COUNT(*) as count FROM _arc_versions').get()?.count ?? 0
         const _wsql = _keys.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(' AND ')
         return _db.query('SELECT COUNT(*) as count FROM _arc_versions WHERE ' + _wsql).get(..._vals)?.count ?? 0
       },
@@ -873,7 +888,7 @@ const _db = {
         const _rows = _db.query('SELECT id FROM _arc_versions WHERE modelName = ?1 AND recordId = ?2 ORDER BY id DESC LIMIT -1 OFFSET ' + _maxV).all(modelName, recordId)
         if (_rows.length) _db.run('DELETE FROM _arc_versions WHERE id IN (' + _rows.map(r => parseInt(r.id, 10)).filter(n => Number.isFinite(n)).join(',') + ')')
       } catch (_trimErr) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'versioning_trim_failed', msg: _trimErr?.message ?? String(_trimErr) })) }
-    })
+    }).catch(_trimErr => { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'versioning_trim_failed', msg: _trimErr?.message ?? String(_trimErr) })) })
   }
   const _snap = (modelName, recordId, action, data) => {
     try {
@@ -1083,7 +1098,6 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
     const dbEntries = schemas.map(schema => {
       const { tableName, fields, colList } = this._schemaVars(schema, 'postgres')
       const placeholders = fields.map((_, i) => `$${i + 1}`).join(', ')
-      const updates = fields.map((f, i) => `${f.name} = $${i + 1}`).join(', ')
       const selectCols = colList ? `id, ${colList}` : 'id'
       const fieldNames = JSON.stringify(fields.map(f => f.name))
       const requiredFieldNames = JSON.stringify(fields.filter(f => this._isRequiredField(f)).map(f => f.name))
@@ -1497,13 +1511,14 @@ function _printBanner(port) {
     for (const row of rows) process.stdout.write(D + row + R + '\\n')
     process.stdout.write('\\n')
   } else {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: 'arc: server started', port, db: '${dbLabel}' }))
+    console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: 'arc: server started', port, db: '${dbLabel}', version: process.env.npm_package_version ?? 'unknown' }))
   }
 }`
   }
 
   emitBunServe(routes, schemas, hasMiddleware = false) {
-    const port = '+(process.env.PORT ?? 3000)'
+    const port = '_port'
+    const portValidation = `const _rawPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000\nconst _port = (Number.isInteger(_rawPort) && _rawPort > 0 && _rawPort < 65536) ? _rawPort : 3000`
     const hasAuth = routes.some(r => r.annotations?.find(a => a === '@auth' || a.startsWith('@auth(')))
     const hasDb = schemas && schemas.length > 0
     const healthBody = this._emitHealthBody(hasDb, this.isPg)
@@ -1530,7 +1545,7 @@ const _ARC_FN_NAME_RE = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/`
     // Item 12: startup env-var validation
     const envChecks = []
     if (hasAuth) {
-      envChecks.push(`if (!process.env.SESSION_SECRET && process.env.NODE_ENV === 'production') { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: 'arc: SESSION_SECRET env var is required in production when @auth routes are present' })); process.exit(1) }`)
+      envChecks.push(`if (!process.env.SESSION_SECRET && process.env.NODE_ENV !== 'development') { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: 'arc: SESSION_SECRET env var is required when @auth routes are present (set NODE_ENV=development to suppress in local dev)' })); process.exit(1) }`)
     }
     const envBlock = envChecks.length > 0 ? envChecks.join('\n') + '\n\n' : ''
 
@@ -1545,7 +1560,9 @@ ${traceHoist}
 
 ${bannerFn}
 
-${envBlock}// Start Bun server (native routes object — C++ routing, fastest path)
+${envBlock}${portValidation}
+
+// Start Bun server (native routes object — C++ routing, fastest path)
 const _server = Bun.serve({
   port: ${port},
   error(err) {
@@ -1553,7 +1570,7 @@ const _server = Bun.serve({
     return _json({ error: 'Internal server error' }, 500)
   },
   // fetch() handles paths not matched by the native routes object:
-  // static files, admin renderer, /_arc/fn/ edge functions.
+  // static files, admin renderer, /_arc/fn/ edge functions, CORS preflight.
   async fetch(req, _bunServer) {
     const _u = req.url
     const _s = _u.indexOf('/', 8)
@@ -1561,6 +1578,7 @@ const _server = Bun.serve({
     let _pathname = _u.slice(_s > -1 ? _s : _u.length, _q > -1 ? _q : undefined) || '/'
     if (_pathname.includes('%')) { try { _pathname = decodeURIComponent(_pathname) } catch { return new Response('Bad Request', { status: 400 }) } }
     if (_pathname !== '/' && (_pathname.includes('..') || _pathname.includes('./'))) { try { _pathname = new URL('http://x' + _pathname).pathname } catch { return new Response('Bad Request', { status: 400 }) } }
+    ${this.cors ? `if (req.method === 'OPTIONS') { return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': ${JSON.stringify(this.cors)}, 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-ID', 'Access-Control-Max-Age': '86400' } }) }` : ''}
     try { return await _serveStatic(req, _pathname) } catch (_fe) {
       console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'bun_routes_fallback_error', path: _pathname, msg: _fe?.message ?? String(_fe) }))
       return _json({ error: 'Internal server error' }, 500)
@@ -1618,7 +1636,9 @@ ${traceHoist}
 
 ${bannerFn}
 
-${envBlock}// Start Bun server
+${envBlock}${portValidation}
+
+// Start Bun server
 const _server = Bun.serve({
   port: ${port},
   ${fetchKeyword}(req, _bunServer) {

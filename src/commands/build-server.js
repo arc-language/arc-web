@@ -48,11 +48,13 @@ async function parseArcFile(file, src, formatError) {
             err._arcStrictParser = true
             throw err
           }
-          // Lenient default: surface as warnings so users see them, but keep building.
+          // Lenient default: fall back to JS parser so errors in the Rust AST don't
+          // silently corrupt the emitted server. Surface warnings so users can track them.
           for (const e of ast.errors) {
             console.warn(`arc: warning: ${file}:${e.line}:${e.col} — expected ${e.expected}, got ${e.got}`)
           }
-        }
+          // fall through to JS parser (Rust AST may be corrupt when errors present)
+        } else {
         // Rust compiler bug: @auth(role) annotations cause method:"(" in RouteDecl.
         // Fall through to JS parser if any route has a non-alpha method.
         const hasBrokenRoute = ast.declarations?.some(
@@ -62,6 +64,7 @@ async function parseArcFile(file, src, formatError) {
         // Detect by checking if source has @group but Rust produced no RouteGroupDecl.
         const hasBrokenGroup = src.includes('@group') && !ast.declarations?.some(d => d.type === 'RouteGroupDecl')
         if (!hasBrokenRoute && !hasBrokenGroup) return ast
+        }
       }
     } catch (e) {
       // Strict-parser errors bypass the JS parser fallback — they're a contract
@@ -270,7 +273,11 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   const dbAdapter = flags.db ?? 'sqlite'
   // Load arc.config.json once for build-time configuration (storage backends, etc.)
   let arcCfg = {}
-  try { arcCfg = JSON.parse(fs.readFileSync(path.join(absDir, 'arc.config.json'), 'utf8')) } catch { /* missing or invalid — use defaults */ }
+  try {
+    arcCfg = JSON.parse(fs.readFileSync(path.join(absDir, 'arc.config.json'), 'utf8'))
+  } catch (e) {
+    if (e.code !== 'ENOENT') console.warn(`arc: warning — arc.config.json could not be parsed (${e.message}), using defaults`)
+  }
   const emitter = new BunServerEmitter({
     hash: 'arc',
     db: dbAdapter,
@@ -303,13 +310,11 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   const outFile = path.join(distDir, 'server.js')
   await fs.promises.writeFile(outFile, serverJs)
 
-  // Copy .env from project root to dist/ so the bun server (which runs from dist/)
-  // can load SESSION_SECRET and other env vars via bun's automatic .env loading.
-  const envSrc = path.join(absDir, '.env')
-  const envDst = path.join(distDir, '.env')
-  try {
-    if (fs.existsSync(envSrc)) await fs.promises.copyFile(envSrc, envDst)
-  } catch { /* non-fatal — server falls back to .arc-dev-secret */ }
+  // Do NOT copy .env to dist/ — the file contains secrets (SESSION_SECRET, DATABASE_URL,
+  // API keys) that must not be bundled into the deployment artifact. Inject secrets at
+  // runtime via your platform's environment mechanism (Docker env, systemd Environment=,
+  // CI/CD secrets, etc.). For local development, run the server from the project root
+  // so Bun's automatic .env loading picks up the root .env file.
 
   const size = Buffer.byteLength(serverJs)
   const _elapsed = Date.now() - _t0
@@ -326,7 +331,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
         const type = routeTypeLabel(r)
         console.log(`  ${_SDIM}${method}${_SRST}  ${rpath}  ${_SDIM}${type}${_SRST}`)
       }
-      console.log(`  ${_SDIM}GET     /health${''.padEnd(maxPath - 7)}  built-in${_SRST}`)
+      console.log(`  ${_SDIM}GET     /_arc/health${''.padEnd(maxPath - 12)}  built-in${_SRST}`)
       console.log()
     }
     console.log(`  ${_SGREEN}✓${_SRST}  built in ${_SDIM}${_elapsed}ms${_SRST}\n`)

@@ -156,6 +156,14 @@ Arc is designed to work with no config file at all. Add `arc.config.json` only w
 }
 ```
 
+## Build-time environment variables
+
+Read by `arc build-server` (and other build commands) during compilation:
+
+| Variable | Description |
+| --- | --- |
+| `ARC_STRICT_PARSER=1` | Treat Rust parser warnings as hard errors — aborts the build if the parser emits a corrupted AST instead of logging a warning and continuing. Recommended for CI. Default is lenient (warnings only). |
+
 ## Runtime environment variables
 
 These are not part of `arc.config.json` but are read by the generated server at runtime:

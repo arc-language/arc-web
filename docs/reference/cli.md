@@ -92,6 +92,7 @@ Flags:
 
 | Flag | Effect |
 | --- | --- |
+| `--watch` | Watch `.arc` files and rebuild `server.js` automatically on changes |
 | `--no-rate-limit` | Omit built-in rate-limiter middleware |
 | `--no-tracing` | Omit request trace ID injection |
 | `--bun-routes` | Use Bun native C++ route dispatcher (fastest, Bun 1.x only) |

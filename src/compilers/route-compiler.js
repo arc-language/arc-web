@@ -131,13 +131,23 @@ function emitBunRoutesObject(routes, opts = {}) {
     preambleLines.push(`        const _clientId = req.headers.get('x-request-id') ?? ''`)
     preambleLines.push(`        req._traceId = _TRACE_ID_RE.test(_clientId) ? _clientId : crypto.randomUUID().slice(0, 8)`)
   }
+  // Middleware must run before rate-limit so it can short-circuit auth before counting
+  if (opts.hasMiddleware) {
+    preambleLines.push(`        const _mwPn = (() => { const _u3 = req.url, _s3 = _u3.indexOf('/', 8), _q3 = _u3.indexOf('?', _s3 > -1 ? _s3 : 8); return _u3.slice(_s3 > -1 ? _s3 : _u3.length, _q3 > -1 ? _q3 : undefined) || '/' })()`)
+    preambleLines.push(`        const _mwRes = await _middleware(req, _mwPn); if (_mwRes) return _mwRes`)
+  }
   if (!opts.noRateLimit) {
-    preambleLines.push(`        const _rl = _checkRateLimit(req); if (_rl) return _rl`)
+    // Pass _bunCtx.server so requestIP() returns the actual client address (not null)
+    preambleLines.push(`        const _rl = _checkRateLimit(req, _bunCtx?.server); if (_rl) return _rl`)
+  }
+  if (opts.pgGuard) {
+    preambleLines.push(`        if (db === null) { if (_schemaInitErr) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' }); await _schemaInitP; if (_schemaInitErr || db === null) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' }) }`)
   }
   const preamble = preambleLines.length > 0 ? '\n' + preambleLines.join('\n') : ''
 
+  const healthBody = opts.healthBody ?? `return _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a', version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' })`
   const healthEntry = `    '/_arc/health': {
-      GET: async () => _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a', version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' }),
+      GET: async (req) => { try { ${healthBody} } catch (_he) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'health_check_error', msg: _he?.message ?? String(_he) })); return _json({ status: 'error' }, 503, { 'Cache-Control': 'no-store, no-cache' }) } },
     },`
 
   const routeEntries = []
@@ -146,15 +156,14 @@ function emitBunRoutesObject(routes, opts = {}) {
       const staticConstName = opts.staticHandlers?.get(handlerName)
       // Item 4: static routes use a sync wrapper - no async/await overhead
       if (staticConstName && !preamble) {
-        return `      ${method}: (_req, _ctx) => ${staticConstName},`
+        return `      ${method}: (_req, _bunCtx) => ${staticConstName},`
       }
       if (staticConstName && preamble) {
-        // Preamble is sync (rate-limit check) - still avoid Promise for the return
-        return `      ${method}: (req, _ctx) => {${preamble}
+        return `      ${method}: async (req, _bunCtx) => {${preamble}
         return ${staticConstName}
       },`
       }
-      return `      ${method}: async (req, { params }) => {${preamble}
+      return `      ${method}: async (req, _bunCtx) => { const params = _bunCtx?.params;${preamble}
         return ${handlerName}(req, params ?? {})
       },`
     }).join('\n')

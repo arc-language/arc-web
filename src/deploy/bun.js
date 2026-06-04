@@ -43,7 +43,7 @@ async function handleEdgeFunction(path, req) {
     const _fnRes = await fn(arcReq)
     return _fnRes instanceof Response ? _fnRes : new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   } catch (e) {
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'edge_fn_error', path, msg: e instanceof Error ? e.message : String(e) }))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'edge_fn_error', path, msg: e instanceof Error ? e.message : String(e), name: e instanceof Error ? e.name : undefined, stack: e instanceof Error ? e.stack?.split('\n').slice(0, 4).join(' | ') : undefined }))
     return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 }

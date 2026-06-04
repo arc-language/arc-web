@@ -265,7 +265,7 @@ widget SubmitButton
   button
     type="submit"
     disabled={ @form.isSubmitting }
-    aria-busy={ @form.isSubmitting ? "true" : "false" }
+    aria-busy={ @form.isSubmitting ? "true" : null }
     class={ @form.isSubmitting ? "btn-submitting" : "" }
     if @form.isSubmitting
       span aria-hidden="true" "⏳ "
