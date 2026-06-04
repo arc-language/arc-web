@@ -95,7 +95,7 @@ function _storageServeBlock(storage) {
     .sort((a, b) => b.prefix.length - a.prefix.length)
   return entries.map(({ name, prefix }) => {
     const p = JSON.stringify(prefix + '/')
-    return `if (req.method === 'GET' && pathname.startsWith(${p})) { const _sk = decodeURIComponent(pathname.slice(${prefix.length + 1})); if (_sk.includes('..') || _sk.startsWith('/')) return new Response('Not found', { status: 404 }); return _storages[${JSON.stringify(name)}].serve(_sk, req) }`
+    return `if (req.method === 'GET' && pathname.startsWith(${p})) { const _sk = decodeURIComponent(pathname.slice(${prefix.length + 1})); if (!_sk || _sk.includes('..') || _sk.startsWith('/') || _sk.includes('\\0') || _sk.includes('\\\\')) return new Response('Not found', { status: 404 }); return _storages[${JSON.stringify(name)}].serve(_sk, req) }`
   }).join('\n  ')
 }
 
@@ -491,6 +491,7 @@ function _getArcFnFiles() {
 }
 // O(1) handler map: built once on first /_arc/fn/ request. Returns a Promise so
 // concurrent callers all await the same build rather than each getting an empty Map.
+// Resets to null on rejection so the next request can retry rather than being permanently broken.
 let _arcHandlerCache = null
 function _getHandlerCache() {
   if (_arcHandlerCache) return _arcHandlerCache
@@ -507,7 +508,7 @@ function _getHandlerCache() {
       } catch (e) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'fn_module_load_failed', file: _fnPath, msg: e?.message ?? String(e) })) }
     }
     return _m
-  })()
+  })().catch(e => { _arcHandlerCache = null; console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'handler_cache_build_failed', msg: e?.message ?? String(e) })); return new Map() })
   return _arcHandlerCache
 }
 // Cached path -> required role table from server/admin-roles.json (arc-cms config).
@@ -561,6 +562,7 @@ async function _serveStatic(req, pathname) {
   // to the static-page admin guard below.
   let _r
   try { _r = await _dispatch(req, pathname) } catch (_de) {
+    if (_de instanceof Response) return _de
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] dispatch error', path: pathname, error: _de?.message ?? String(_de) }))
     return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
@@ -630,11 +632,11 @@ async function _serveStatic(req, pathname) {
             req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
             const _ldata = await _resolveData(req)
             if (_ldata && _ldata.__arc_render_error__) {
-              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Error</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
             }
             let _html = _fillHtml(_ldata)
             _html = _html.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
-            return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-cache, must-revalidate, private', 'Pragma': 'no-cache', 'Expires': '0', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'" } })
+            return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-cache, must-revalidate, private', 'Pragma': 'no-cache', 'Expires': '0', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com data:; img-src 'self' data: blob: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'" } })
           }
         } catch (_rendErr) {
           console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] admin renderer error', path: pathname, method: req.method, error: _rendErr?.message ?? String(_rendErr) }))
@@ -660,11 +662,11 @@ async function _serveStatic(req, pathname) {
           req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
           const _ld2 = await _rd2(req)
           if (_ld2 && _ld2.__arc_render_error__) {
-            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Error</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem;text-align:center"><main id="main-content"><div role="alert"><h1>Something went wrong</h1><p>Please try refreshing the page.</p></div></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
           }
           let _html2 = _fh2(_ld2)
           _html2 = _html2.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
-          return new Response(_html2, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'" } })
+          return new Response(_html2, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com data:; img-src 'self' data: blob: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'" } })
         }
       } catch (_re2) {
         console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] page renderer error', path: pathname, error: _re2?.message ?? String(_re2) }))
@@ -1516,6 +1518,8 @@ const _server = Bun.serve({
 })
 _printBanner(_server.port)
 _getStaticFiles()
+process.on('SIGTERM', () => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal: 'SIGTERM' })); _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
+process.on('SIGINT', () => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal: 'SIGINT' })); _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
 `.trim()
     }
 

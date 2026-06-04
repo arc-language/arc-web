@@ -26,6 +26,7 @@ Arc reads `arc.config.json` from the project root (next to `index.arc` or the fi
     "target": "cloudflare",
     "projectName": "my-arc-app"
   },
+  "cors": "https://app.example.com",
   "img": {
     "formats": ["avif", "webp", "original"],
     "widths": [400, 800, 1200, 1600],
@@ -93,6 +94,25 @@ If `validate` is unset, Arc treats any presence of the cookie as a valid session
 | `target` | String | `"cloudflare"` | Default target for `arc deploy` |
 | `projectName` | String | derived from `package.json` name | Used in target-specific config (e.g., `wrangler.toml` `name`) |
 
+### `cors`
+
+Set the `Access-Control-Allow-Origin` header emitted by the built server. Applies to all routes and handles OPTIONS preflight requests automatically.
+
+```json
+{ "cors": "*" }
+```
+
+```json
+{ "cors": "https://app.example.com" }
+```
+
+| Value | Effect |
+| --- | --- |
+| `"*"` | Allow any origin |
+| `"https://..."` | Allow exactly that origin |
+
+Only applies to the Bun server target (`arc build-server`). The `--cors` CLI flag overrides this value.
+
 ### `img`
 
 | Key | Type | Default | Effect |
@@ -131,6 +151,16 @@ Arc is designed to work with no config file at all. Add `arc.config.json` only w
   }
 }
 ```
+
+## Runtime environment variables
+
+These are not part of `arc.config.json` but are read by the generated server at runtime:
+
+| Variable | Description |
+|---|---|
+| `PORT` | HTTP port to listen on (default: `3000`) |
+| `ARC_DEBUG=1` | Include error `message`, `name`, and truncated `stack` in HTTP 500 JSON responses. **Never set in production** — automatically suppressed when `NODE_ENV=production`. Useful for local debugging when console logs are not accessible. |
+| `TRUSTED_PROXY_IPS` | Comma-separated list of trusted proxy IPs. When set, the rate limiter honours the `X-Forwarded-For` header from these IPs. |
 
 ## See also
 

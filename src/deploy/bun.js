@@ -33,9 +33,13 @@ async function handleEdgeFunction(path, req) {
   const fn = _ARC_HANDLERS[segment]
   if (typeof fn !== 'function') return new Response(JSON.stringify({ error: 'Edge function not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
   try {
-    const _body = await req.arrayBuffer()
-    if (_body.byteLength > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
-    const arcReq = new Request(req.url, { method: req.method, headers: req.headers, body: _body })
+    const _hasBody = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'DELETE'
+    const _cl = _hasBody ? +(req.headers.get('content-length') ?? 0) : 0
+    if (_cl > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
+    const _body = _hasBody ? await req.arrayBuffer() : null
+    if (_body && _body.byteLength > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
+    const arcReq = new Request(req.url, { method: req.method, headers: req.headers, ...(_body ? { body: _body } : {}) })
+    arcReq._arc_session = req._arc_session ?? {}
     return await fn(arcReq)
   } catch (e) {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'edge_fn_error', msg: e instanceof Error ? e.message : String(e) }))

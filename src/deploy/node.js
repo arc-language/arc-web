@@ -184,9 +184,10 @@ function _shutdown(signal) {
   _shuttingDown = true
   try {
     console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
-    setTimeout(() => process.exit(0), 10000)
+    const _ft = setTimeout(() => process.exit(0), 10000)
     if (typeof server.closeAllConnections === 'function') server.closeAllConnections()
     server.close(err => {
+      clearTimeout(_ft)
       try {
         if (err) console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_error', msg: err.message }))
       } catch {}
