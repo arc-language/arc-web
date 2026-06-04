@@ -42,7 +42,7 @@ async function handleEdgeFunction(path, req) {
     arcReq._arc_session = req._arc_session ? { ...req._arc_session } : {}
     return await fn(arcReq)
   } catch (e) {
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'edge_fn_error', msg: e instanceof Error ? e.message : String(e) }))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'edge_fn_error', path, msg: e instanceof Error ? e.message : String(e) }))
     return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 }
@@ -64,15 +64,10 @@ const ASSETS = {
 ${assetsEntries}
 }
 
+const _MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' }
 function getContentType(path) {
-  if (path.endsWith('.html')) return 'text/html; charset=utf-8'
-  if (path.endsWith('.css')) return 'text/css; charset=utf-8'
-  if (path.endsWith('.js')) return 'application/javascript'
-  if (path.endsWith('.json')) return 'application/json'
-  if (path.endsWith('.svg')) return 'image/svg+xml'
-  if (path.endsWith('.png')) return 'image/png'
-  if (path.endsWith('.ico')) return 'image/x-icon'
-  return 'application/octet-stream'
+  const dot = path.lastIndexOf('.')
+  return dot !== -1 ? (_MIME[path.slice(dot)] ?? 'application/octet-stream') : 'application/octet-stream'
 }
 ${edgeFunctionsBlock}
 const _rawPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000
@@ -93,7 +88,7 @@ try {
         let path = url.pathname
         if (path === '' || path === '/') path = '/'
         if (path === '/_arc/health') {
-          return new Response(JSON.stringify({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }), {
+          return new Response(JSON.stringify({ status: 'ok', uptime: process.uptime(), version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }), {
             headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY' }
           })
         }
@@ -130,7 +125,7 @@ process.stdout.isTTY
   : console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${_server.port}\` }))
 async function _shutdown(signal) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
-  const _t = setTimeout(() => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000)
+  const _t = setTimeout(() => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000)
   try { await _server.stop(true) } catch {}
   clearTimeout(_t)
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_complete', signal }))

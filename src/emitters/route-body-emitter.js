@@ -93,7 +93,16 @@ function emitRouteStmt(stmt, jsEmitter) {
     return `{${emitRouteBody(stmt.body, jsEmitter)}}`
   }
 
-  // ReturnStatement, IfStatement, ForStatement, etc. fall through to general emitter
+  if (stmt.type === 'IfStatement') {
+    const cond = jsEmitter.emitExpr(stmt.condition)
+    const cons = emitRouteBody(stmt.consequent?.body ?? stmt.consequent, jsEmitter)
+    const alt = stmt.alternate
+      ? `else{${emitRouteBody(stmt.alternate?.body ?? stmt.alternate, jsEmitter)}}`
+      : ''
+    return `if(${cond}){${cons}}${alt}`
+  }
+
+  // ReturnStatement, ForStatement, WhileStatement etc. fall through to general emitter
   return jsEmitter.emitStmt(stmt)
 }
 
@@ -101,6 +110,7 @@ function emitRouteArmBody(body, jsEmitter) {
   if (!body) return ''
   if (body.type === 'BlockStatement') return emitRouteBody(body.body, jsEmitter)
   if (Array.isArray(body)) return emitRouteBody(body, jsEmitter)
+  if (body.type === 'ExprStatement') return emitRouteArmBody(body.expr ?? body.expression, jsEmitter)
   // Single expression arm: treat as a statement
   if (body.type === 'CallExpr') {
     const name = _calleePath(body.callee)

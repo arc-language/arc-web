@@ -167,6 +167,7 @@ These are not part of `arc.config.json` but are read by the generated server at 
 | `SESSION_SECRET` | Secret key for session signing. **Required in production** when any `@auth` route is present — the server will refuse to start without it. |
 | `ARC_DEBUG=1` | Include error `message`, `name`, and truncated `stack` in HTTP 500 JSON responses. Only active when `NODE_ENV=development` is also set — never fires with unset or production `NODE_ENV`. Useful for local debugging when console logs are not accessible. Also controls verbose output in `arc serve` and `arc build`. |
 | `TRUSTED_PROXY_IPS` | Comma-separated list of trusted proxy IPs (matched against the direct TCP connection). When set, the rate limiter reads the client IP from the `X-Forwarded-For` header only when the TCP-level peer IP is in this list. |
+| `REDIS_URL` | Redis connection string (e.g. `redis://localhost:6379`). Required when `arc-jobs` is configured with a Redis queue backend. |
 
 ## See also
 

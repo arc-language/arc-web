@@ -96,11 +96,19 @@ Flags:
 | `--no-tracing` | Omit request trace ID injection |
 | `--bun-routes` | Use Bun native C++ route dispatcher (fastest, Bun 1.x only) |
 | `--db postgres` | Emit PostgreSQL queries + `pg` Pool (default: SQLite via `bun:sqlite`) |
+| `--cors` | Allow all origins (`Access-Control-Allow-Origin: *`) |
+| `--cors <origin>` | Allow a specific origin (e.g. `--cors https://app.example.com`) |
 
 Stats:
 ```
 arc: server built → dist/server.js (18.1 KB)
 ```
+
+Runtime endpoints (available in every generated server):
+
+| Endpoint | Description |
+| --- | --- |
+| `/_arc/health` | JSON health check. Returns `{ status, db, uptime, version, ts }`. Status is `"ok"` (200) or `"degraded"` (503) when the DB probe fails. No authentication required — safe for load balancer and k8s liveness probes. |
 
 See [Deployment](../features/deployment.md) for running in production.
 
