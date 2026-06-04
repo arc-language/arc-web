@@ -388,8 +388,8 @@ function _resolveImageFormats(program) {
     if (d.type === 'PageDecl' && d.meta?.imageFormats) {
       const v = d.meta.imageFormats
       // Static array literal expected
-      if (v?.type === 'ArrayLiteral' || Array.isArray(v?.elements)) {
-        return (v.elements ?? v).map(e => e?.value ?? e).filter(Boolean)
+      if (Array.isArray(v?.elements)) {
+        return v.elements.map(e => e?.value ?? e).filter(Boolean)
       }
     }
   }

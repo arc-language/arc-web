@@ -412,16 +412,21 @@ const _ATTACHMENT_EXTS = new Set(['.svg', '.pdf'])
 // Built lazily on first request so the process starts fast even with many dist files.
 let _staticFiles = null
 let _dynamicRoutes = null
+let _rendererPaths = null
 function _getStaticFiles() {
   if (_staticFiles) return _staticFiles
   _staticFiles = new Set()
+  _rendererPaths = new Set()
   _dynamicRoutes = []
   try {
     const _walkDir = (dir) => {
       for (const entry of _fs.readdirSync(dir, { withFileTypes: true })) {
         const full = _path.join(dir, entry.name)
         if (entry.isDirectory()) _walkDir(full)
-        else _staticFiles.add(full)
+        else {
+          _staticFiles.add(full)
+          if (entry.name === 'renderer.js' && _path.basename(dir) === '_arc') _rendererPaths.add(full)
+        }
       }
     }
     _walkDir(_DIST_DIR)
@@ -484,6 +489,23 @@ function _getArcFnFiles() {
   _walkFn(_DIST_DIR)
   return _arcFnFiles
 }
+// O(1) handler map: built once on first /_arc/fn/ request. Maps fnName → handler fn.
+let _arcHandlerCache = null
+async function _getHandlerCache() {
+  if (_arcHandlerCache) return _arcHandlerCache
+  _arcHandlerCache = new Map()
+  for (const _fnPath of _getArcFnFiles()) {
+    try {
+      const _fmod = await import(_fnPath)
+      for (const [_k, _v] of Object.entries(_fmod)) {
+        if (_k.startsWith('_handler_') && typeof _v === 'function') {
+          _arcHandlerCache.set(_k.slice('_handler_'.length), _v)
+        }
+      }
+    } catch {}
+  }
+  return _arcHandlerCache
+}
 // Cached path -> required role table from server/admin-roles.json (arc-cms config).
 // null = no config (fall back to session-only guard).
 let _adminRoles = undefined
@@ -520,7 +542,7 @@ async function _serveStatic(req, pathname) {
       return new Response('Not found', { status: 404 })
     }
     try {
-      const _uStat = _fs.statSync(_uf)
+      const _uStat = await _fs.promises.stat(_uf)
       if (_uStat.isFile()) {
         const _uext = _path.extname(_uf).toLowerCase()
         const _headers = { 'Content-Type': _UPLOAD_MIME[_uext] ?? 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' }
@@ -533,7 +555,11 @@ async function _serveStatic(req, pathname) {
   // Dispatch @route handlers FIRST so routes with their own @auth(...) annotations
   // run with their own auth logic. Only unmatched paths (returns 404) fall through
   // to the static-page admin guard below.
-  const _r = await _dispatch(req, pathname)
+  let _r
+  try { _r = await _dispatch(req, pathname) } catch (_de) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] dispatch error', path: pathname, error: _de?.message ?? String(_de) }))
+    return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+  }
   // Fall through to static files on 404 (unknown route) or on 405 for GET requests
   // (route exists but only handles non-GET methods — static HTML page should be served instead).
   if (!(_r instanceof Response) || (_r.status !== 404 && !(_r.status === 405 && req.method === 'GET'))) return _r
@@ -547,7 +573,7 @@ async function _serveStatic(req, pathname) {
       try {
         const _pr = require(_path.join(process.cwd(), 'server', 'cms', 'page-renderer.js'))
         if (_pr && _pr.renderCmsPage) {
-          const _prRes = _pr.renderCmsPage(req, _db, _slug)
+          const _prRes = await _pr.renderCmsPage(req, _db, _slug)
           if (_prRes) return _prRes
           // null → module requested fall-through (editor session bypass)
         }
@@ -561,16 +587,8 @@ async function _serveStatic(req, pathname) {
     if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(_fnName)) {
       try {
         req._arc_session = await auth.session(req) ?? {}
-        let _matchedHandler = null
-        for (const _fnPath of _getArcFnFiles()) {
-          try {
-            const _fmod = await import(_fnPath)
-            const _handlerKey = '_handler_' + _fnName
-            if (typeof _fmod[_handlerKey] === 'function') {
-              _matchedHandler = _fmod[_handlerKey]; break
-            }
-          } catch {}
-        }
+        const _hCache = await _getHandlerCache()
+        const _matchedHandler = _hCache.get(_fnName)
         if (_matchedHandler) return await _matchedHandler(req)
       } catch (_fnErr) {
         console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] fn handler error', fn: pathname, method: req.method, error: _fnErr?.message ?? String(_fnErr) }))
@@ -595,11 +613,11 @@ async function _serveStatic(req, pathname) {
     if (req.method === 'GET') {
       const _clean = pathname.endsWith('/') ? pathname.slice(0, -1) : pathname
       let _rendererPath = _path.join(_DIST_DIR, _clean, '_arc', 'renderer.js')
-      if (!_fs.existsSync(_rendererPath)) {
+      if (!_rendererPaths?.has(_rendererPath)) {
         const _dynFile = _matchDynamicRoute(_clean)
         if (_dynFile) _rendererPath = _path.join(_dynFile.replace(/\.html$/, ''), '_arc', 'renderer.js')
       }
-      if (_fs.existsSync(_rendererPath)) {
+      if (_rendererPaths?.has(_rendererPath)) {
         try {
           const _rmod = await import(_rendererPath)
           const _resolveData = _rmod._resolveData ?? _rmod.default?._resolveData
@@ -625,11 +643,11 @@ async function _serveStatic(req, pathname) {
   if (req.method === 'GET') {
     const _clean2 = pathname.replace(/\\/$/, '') || '/index'
     let _rPath2 = _path.join(_DIST_DIR, _clean2, '_arc', 'renderer.js')
-    if (!_fs.existsSync(_rPath2)) {
+    if (!_rendererPaths?.has(_rPath2)) {
       const _df2 = _matchDynamicRoute(_clean2)
       if (_df2) _rPath2 = _path.join(_df2.replace(/\.html$/, ''), '_arc', 'renderer.js')
     }
-    if (_fs.existsSync(_rPath2)) {
+    if (_rendererPaths?.has(_rPath2)) {
       try {
         const _rm2 = await import(_rPath2)
         const _rd2 = _rm2._resolveData ?? _rm2.default?._resolveData
@@ -656,7 +674,7 @@ async function _serveStatic(req, pathname) {
   for (const _try of [_clean, _clean + '.html', _clean + '/index.html']) {
     const _fp = _path.join(_DIST_DIR, _try)
     if (!_fp.startsWith(_DIST_DIR + _path.sep) && _fp !== _DIST_DIR) continue
-    if (_sf.has(_fp) || (_fs.existsSync(_fp) && _fs.statSync(_fp).isFile() && (_sf.add(_fp), true))) {
+    if (_sf.has(_fp)) {
       const _ext = _path.extname(_fp)
       const _isAdminPath = _clean === '/admin' || _clean.startsWith('/admin/')
       const _cc = _isAdminPath ? 'no-store, no-cache, must-revalidate, private' : (_ext === '.html' ? 'no-store' : 'public, max-age=31536000, immutable')
@@ -1540,7 +1558,8 @@ const _server = Bun.serve({
     const _u = req.url
     const _s = _u.indexOf('/', 8)
     const _q = _u.indexOf('?', _s > -1 ? _s : 8)
-    const _pathname = _u.slice(_s > -1 ? _s : _u.length, _q > -1 ? _q : undefined) || '/'
+    let _pathname = _u.slice(_s > -1 ? _s : _u.length, _q > -1 ? _q : undefined) || '/'
+    if (_pathname.includes('%')) { try { _pathname = decodeURIComponent(_pathname) } catch { return new Response('Bad Request', { status: 400 }) } }
     ${hasMiddleware ? 'const _mwRes = await _middleware(req, _pathname); if (_mwRes) return _mwRes\n    ' : ''}if (_pathname === '/health') {
       try {
     ${healthBody}
@@ -1553,6 +1572,8 @@ const _server = Bun.serve({
 })
 _printBanner(_server.port)
 _getStaticFiles()
+process.on('SIGTERM', () => { _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
+process.on('SIGINT', () => { _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
 ${this.profile ? `console.log('  \\x1b[36marc: profiler\\x1b[0m  \\x1b[2mhttp://localhost:' + _server.port + '/_arc/profiler\\x1b[0m')
 console.warn('  \\x1b[33marc: --profile is for development only — disable in production\\x1b[0m')` : ''}
 `.trim()

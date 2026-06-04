@@ -94,15 +94,19 @@ async function serve(projectDir, flags, buildServer, buildSite) {
     if (_rebuilding) { _pendingServerRebuild = true; return }
     _rebuilding = true
     try {
-      await buildServer(projectDir, {}, flags)
-      console.log(`${CYAN}arc: server reloaded${RESET}`)
-      await startChild()
-    } catch (e) {
-      console.error(`arc: server rebuild failed: ${e?.stack ?? e?.message ?? String(e)}`)
+      do {
+        _pendingServerRebuild = false
+        try {
+          await buildServer(projectDir, {}, flags)
+          console.log(`${CYAN}arc: server reloaded${RESET}`)
+          await startChild()
+        } catch (e) {
+          console.error(`arc: server rebuild failed: ${e?.stack ?? e?.message ?? String(e)}`)
+        }
+      } while (_pendingServerRebuild)
     } finally {
       _rebuilding = false
     }
-    if (_pendingServerRebuild) { _pendingServerRebuild = false; await rebuildServer() }
   }
 
   let _siteBusy = false

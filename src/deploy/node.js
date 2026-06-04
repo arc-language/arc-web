@@ -127,38 +127,43 @@ function getContentType(path) {
 }
 ${edgeFunctionsBlock}
 const server = http.createServer(async (req, res) => {
-  let urlPath = (req.url || '/').split('?')[0]
-  if (urlPath === '' || urlPath === '/') urlPath = '/'
-  if (urlPath === '/_arc/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY' })
-    res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }))
-    return
-  }
+  try {
+    let urlPath = (req.url || '/').split('?')[0]
+    if (urlPath === '' || urlPath === '/') urlPath = '/'
+    if (urlPath === '/_arc/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY' })
+      res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }))
+      return
+    }
 ${edgeRoutingBlock}
-  const asset = ASSETS[urlPath]
-  if (asset !== undefined) {
-    res.writeHead(200, {
-      'Content-Type': getContentType(urlPath),
-      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",
+    const asset = ASSETS[urlPath]
+    if (asset !== undefined) {
+      res.writeHead(200, {
+        'Content-Type': getContentType(urlPath),
+        'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'SAMEORIGIN',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+        'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+        'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+      })
+      res.end(asset)
+      return
+    }
+
+    res.writeHead(404, {
+      'Content-Type': 'text/plain',
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'SAMEORIGIN',
+      'Content-Security-Policy': "default-src 'none'",
       'Referrer-Policy': 'strict-origin-when-cross-origin',
-      'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
       'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
     })
-    res.end(asset)
-    return
+    res.end('Not found')
+  } catch (e) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'request_error', msg: e instanceof Error ? e.message : String(e) }))
+    if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Internal server error' })) }
   }
-
-  res.writeHead(404, {
-    'Content-Type': 'text/plain',
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'SAMEORIGIN',
-    'Content-Security-Policy': "default-src 'none'",
-    'Referrer-Policy': 'strict-origin-when-cross-origin',
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-  })
-  res.end('Not found')
 })
 
 const _rawPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000
@@ -173,9 +178,10 @@ server.headersTimeout = 66000
 server.requestTimeout = 300000
 server.on('error', e => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_error', msg: e.message })); process.exit(1) })
 server.on('clientError', (err, socket) => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'client_error', msg: err.message })); if (!socket.destroyed) socket.destroy() })
-process.on('SIGTERM', () => {
+function _shutdown(signal) {
   try {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started' }))
+    console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
+    setTimeout(() => process.exit(0), 10000).unref()
     server.close(err => {
       try {
         if (err) console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_error', msg: err.message }))
@@ -185,7 +191,9 @@ process.on('SIGTERM', () => {
   } catch (e) {
     process.exit(1)
   }
-})
+}
+process.on('SIGTERM', () => _shutdown('SIGTERM'))
+process.on('SIGINT', () => _shutdown('SIGINT'))
 `
 
   return [

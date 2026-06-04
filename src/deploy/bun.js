@@ -79,6 +79,10 @@ try {
   _server = Bun.serve({
     port: PORT,
     idleTimeout: 65,
+    error(err) {
+      console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_error', msg: err instanceof Error ? err.message : String(err) }))
+      return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    },
     async fetch(req) {
       const url = new URL(req.url)
       let path = url.pathname

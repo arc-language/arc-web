@@ -353,28 +353,30 @@ async function buildServer(projectDir, opts = {}, flags = {}, hooks = {}) {
         debounceTimer = setTimeout(() => {
           ;(async () => {
             if (building) { rebuildRequested = true; return }
-            do {
-              building = true
-              rebuildRequested = false
-              if (_C) {
-                console.log(`  ${_SCYAN}↺${_SRST}  ${_SDIM}${filename} changed${_SRST}`)
-              } else {
-                console.log(`arc: ${filename} changed, rebuilding...`)
-              }
-              const t0 = Date.now()
-              try {
-                await buildServerOnce(projectDir, opts, flags, hooks)
+            building = true
+            try {
+              do {
+                rebuildRequested = false
                 if (_C) {
-                  console.log(`  ${_SGREEN}✓${_SRST}  rebuilt in ${_SDIM}${Date.now() - t0}ms${_SRST}`)
+                  console.log(`  ${_SCYAN}↺${_SRST}  ${_SDIM}${filename} changed${_SRST}`)
                 } else {
-                  console.log(`arc: rebuilt in ${Date.now() - t0}ms`)
+                  console.log(`arc: ${filename} changed, rebuilding...`)
                 }
-              } catch (e) {
-                console.error(`arc: rebuild failed: ${e?.message ?? String(e)}`)
-              } finally {
-                building = false
-              }
-            } while (rebuildRequested)
+                const t0 = Date.now()
+                try {
+                  await buildServerOnce(projectDir, opts, flags, hooks)
+                  if (_C) {
+                    console.log(`  ${_SGREEN}✓${_SRST}  rebuilt in ${_SDIM}${Date.now() - t0}ms${_SRST}`)
+                  } else {
+                    console.log(`arc: rebuilt in ${Date.now() - t0}ms`)
+                  }
+                } catch (e) {
+                  console.error(`arc: rebuild failed: ${e?.message ?? String(e)}`)
+                }
+              } while (rebuildRequested)
+            } finally {
+              building = false
+            }
           })().catch(e => {
             building = false
             console.error(`arc: watch handler fatal: ${e?.message ?? String(e)}`)
