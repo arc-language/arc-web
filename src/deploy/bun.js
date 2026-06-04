@@ -40,7 +40,8 @@ async function handleEdgeFunction(path, req) {
     if (_body && _body.byteLength > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
     const arcReq = new Request(req.url, { method: req.method, headers: req.headers, ...(_body ? { body: _body } : {}) })
     arcReq._arc_session = req._arc_session ? { ...req._arc_session } : {}
-    return await fn(arcReq)
+    const _fnRes = await fn(arcReq)
+    return _fnRes instanceof Response ? _fnRes : new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   } catch (e) {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'edge_fn_error', path, msg: e instanceof Error ? e.message : String(e) }))
     return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })

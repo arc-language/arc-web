@@ -96,9 +96,13 @@ function emitRouteStmt(stmt, jsEmitter) {
   if (stmt.type === 'IfStatement') {
     const cond = jsEmitter.emitExpr(stmt.condition)
     const cons = emitRouteBody(stmt.consequent?.body ?? stmt.consequent, jsEmitter)
-    const alt = stmt.alternate
-      ? `else{${emitRouteBody(stmt.alternate?.body ?? stmt.alternate, jsEmitter)}}`
-      : ''
+    let alt = ''
+    if (stmt.alternate) {
+      const altNode = stmt.alternate?.body ?? stmt.alternate
+      alt = (stmt.alternate.type === 'IfStatement')
+        ? `else ${emitRouteStmt(stmt.alternate, jsEmitter)}`
+        : `else{${emitRouteBody(altNode, jsEmitter)}}`
+    }
     return `if(${cond}){${cons}}${alt}`
   }
 
@@ -111,6 +115,7 @@ function emitRouteArmBody(body, jsEmitter) {
   if (body.type === 'BlockStatement') return emitRouteBody(body.body, jsEmitter)
   if (Array.isArray(body)) return emitRouteBody(body, jsEmitter)
   if (body.type === 'ExprStatement') return emitRouteArmBody(body.expr ?? body.expression, jsEmitter)
+  if (body.type === 'IfStatement') return emitRouteStmt(body, jsEmitter)
   // Single expression arm: treat as a statement
   if (body.type === 'CallExpr') {
     const name = _calleePath(body.callee)

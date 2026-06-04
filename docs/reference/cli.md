@@ -108,7 +108,7 @@ Runtime endpoints (available in every generated server):
 
 | Endpoint | Description |
 | --- | --- |
-| `/_arc/health` | JSON health check. Returns `{ status, db, uptime, version, ts }`. Status is `"ok"` (200) or `"degraded"` (503) when the DB probe fails. No authentication required — safe for load balancer and k8s liveness probes. |
+| `/_arc/health` | JSON health check. Returns `{ status, uptime, queue, version, ts }` (no `@model` declarations) or `{ status, db, queue, uptime, version, ts }` (with `@model`). Status is `"ok"` (200) or `"degraded"` (503) when the DB probe fails. No authentication required — safe for load balancer and k8s liveness probes. |
 
 See [Deployment](../features/deployment.md) for running in production.
 

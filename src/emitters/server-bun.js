@@ -498,7 +498,8 @@ function _getArcFnFiles() {
 }
 // O(1) handler map: built once on first /_arc/fn/ request. Returns a Promise so
 // concurrent callers all await the same build rather than each getting an empty Map.
-// Resets to null on rejection so the next request can retry rather than being permanently broken.
+// On catastrophic failure (import error), permanently resolves to empty Map — avoids
+// retry storms. Process restart required to recover, which is the right recovery path.
 let _arcHandlerCache = null
 function _getHandlerCache() {
   if (_arcHandlerCache) return _arcHandlerCache
@@ -603,6 +604,7 @@ async function _serveStatic(req, pathname) {
         const _hCache = await _getHandlerCache()
         const _matchedHandler = _hCache.get(_fnName)
         if (_matchedHandler) { const _fnRes = await _matchedHandler(req); return _fnRes instanceof Response ? _fnRes : new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } }) }
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
       } catch (_fnErr) {
         console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] fn handler error', fn: pathname, method: req.method, error: _fnErr?.message ?? String(_fnErr) }))
         return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
@@ -643,14 +645,14 @@ async function _serveStatic(req, pathname) {
             req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
             const _ldata = await _resolveData(req)
             if (_ldata && _ldata.__arc_render_error__) {
-              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
+              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
             }
             let _html = _fillHtml(_ldata)
             _html = _html.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
             return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-cache, must-revalidate, private', 'Pragma': 'no-cache', 'Expires': '0', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com data:; img-src 'self' data: blob: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'" } })
           }
         } catch (_rendErr) {
-          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] admin renderer error', path: pathname, method: req.method, error: _rendErr?.message ?? String(_rendErr) }))
+          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] admin renderer error', path: pathname, method: req.method, error: _rendErr?.message ?? String(_rendErr), name: _rendErr?.name, stack: (_rendErr?.stack ?? '').split('\\n').slice(0, 6) }))
           // fall through to static file serving
         }
       }
@@ -673,14 +675,14 @@ async function _serveStatic(req, pathname) {
           req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
           const _ld2 = await _rd2(req)
           if (_ld2 && _ld2.__arc_render_error__) {
-            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
+            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
           }
           let _html2 = _fh2(_ld2)
           _html2 = _html2.replace(/<meta\\s+http-equiv="Content-Security-Policy"[^>]*>/gi, '')
           return new Response(_html2, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com data:; img-src 'self' data: blob: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'" } })
         }
       } catch (_re2) {
-        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] page renderer error', path: pathname, error: _re2?.message ?? String(_re2) }))
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] page renderer error', path: pathname, error: _re2?.message ?? String(_re2), name: _re2?.name, stack: (_re2?.stack ?? '').split('\\n').slice(0, 6) }))
         // fall through to static file serving
       }
     }
@@ -1428,7 +1430,7 @@ async function ${name}(req, params) {
     const dbProbe = isPg
       ? `let _dbOk=false;try{await Promise.race([_pool.query('SELECT 1'),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),2000))]);_dbOk=true}catch(_dbProbeErr){console.warn(JSON.stringify({ts:new Date().toISOString(),level:'warn',event:'health_db_probe_failed',msg:_dbProbeErr?.message??String(_dbProbeErr)}))}`
       : `let _dbOk=false;try{_db.query('SELECT 1').get();_dbOk=true}catch(_dbProbeErr){console.warn(JSON.stringify({ts:new Date().toISOString(),level:'warn',event:'health_db_probe_failed',msg:_dbProbeErr?.message??String(_dbProbeErr)}))}`
-    return `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', uptime: process.uptime(), version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
+    return `${dbProbe}\n    return _json({ status: _dbOk ? 'ok' : 'degraded', db: _dbOk ? 'up' : 'down', queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a', uptime: process.uptime(), version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, _dbOk ? 200 : 503, { 'Cache-Control': 'no-store, no-cache' })`
   }
 
   _emitTraceSetup(noTracing) {
