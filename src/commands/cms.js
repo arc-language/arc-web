@@ -171,7 +171,7 @@ ${formRows || '          text class="cms-hint" "No simple fields defined."'}${ar
 
           row gap="10px"
             button class="!btn !btn--primary" on:click={ save(id, pageName, visible, ${saveArgs}) } "Save"
-            button class="!btn !btn--danger" on:click={ @deleted = (confirm("Delete block?") && deleteBlock(id).ok == true) } "Delete"
+            button class="!btn !btn--danger" on:click={ if confirm("Delete block?") { const _res = await deleteBlock(id); @deleted = _res.ok == true } } "Delete"
 
         col class="cms-preview" style="flex:1; min-width:0"
           text class="cms-section" "Live preview"
@@ -693,4 +693,117 @@ async function cmsAddTree(projectDir = '.', opts = {}) {
   console.log(`  3. Each row needs: id, parentId, depth, label (pre-compute label in your @server fn)`)
 }
 
-module.exports = { cmsInit, cmsCreateSuperuser, cmsEject, cmsAddTree }
+// arc cms update — re-sync scaffolded admin pages + server helpers from the installed
+// @arc-lang/arc-cms npm package. Skips project-specific files (block type editors,
+// custom schemas). Widgets are NOT touched — they resolve live from the package already.
+async function cmsUpdate(projectDir, opts = {}) {
+  const absDir = path.resolve(projectDir || '.')
+  const _t0 = Date.now()
+
+  const pkgSrc = _findCmsPackageSrc(absDir)
+  if (!pkgSrc) {
+    console.error(`${_RED}arc cms update: @arc-lang/arc-cms not found. Run: npm install @arc-lang/arc-cms${_RST}`)
+    process.exit(1)
+  }
+
+  // Check it resolved from node_modules, not the monorepo fallback
+  const fromNpm = pkgSrc.includes('node_modules')
+  if (!fromNpm) {
+    console.warn(`${_DIM}arc cms update: resolving from monorepo source (${pkgSrc}), not node_modules${_RST}`)
+  }
+
+  const log = { updated: [], skipped: [] }
+  const rel = p => path.relative(absDir, p)
+
+  // Helper: copy src → dest, always overwriting (update semantics).
+  // Skips entries listed in `skip` (relative to src).
+  function _updateDir(src, dest, skip = new Set()) {
+    if (!fs.existsSync(src)) return
+    fs.mkdirSync(dest, { recursive: true })
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      if (skip.has(entry.name)) { log.skipped.push(path.join(dest, entry.name)); continue }
+      const s = path.join(src, entry.name)
+      const d = path.join(dest, entry.name)
+      if (entry.isDirectory()) {
+        _updateDir(s, d, new Set())
+      } else {
+        fs.copyFileSync(s, d)
+        log.updated.push(d)
+      }
+    }
+  }
+
+  // 1. Admin pages — skip project-specific subdirs (block type editors, custom entity pages).
+  //    Detect project-specific dirs as those NOT present in the package source.
+  // Returns the set of entries in destDir that are not present in srcDir (project-specific).
+  function _projectOnly(srcDir, destDir) {
+    if (!fs.existsSync(destDir)) return new Set()
+    const inPkg = new Set(fs.existsSync(srcDir) ? fs.readdirSync(srcDir) : [])
+    return new Set(fs.readdirSync(destDir).filter(n => !inPkg.has(n)))
+  }
+
+  // 1. Admin pages — skip dirs in admin/ and admin/blocks/ not present in the package.
+  const pkgPages = path.join(pkgSrc, 'pages')
+  const destPages = path.join(absDir, 'admin')
+  if (fs.existsSync(pkgPages) && fs.existsSync(destPages)) {
+    const skipTop = _projectOnly(pkgPages, destPages)
+    const skipBlocks = _projectOnly(path.join(pkgPages, 'blocks'), path.join(destPages, 'blocks'))
+    // Record project-only items directly — they never appear in the src iteration loop
+    for (const name of skipTop) log.skipped.push(path.join(destPages, name))
+    for (const name of skipBlocks) log.skipped.push(path.join(destPages, 'blocks', name))
+    function _updatePages(src, dest, skipSet) {
+      if (!fs.existsSync(src)) return
+      fs.mkdirSync(dest, { recursive: true })
+      for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        if (skipSet.has(entry.name)) continue
+        const s = path.join(src, entry.name)
+        const d = path.join(dest, entry.name)
+        if (entry.isDirectory()) {
+          const childSkip = (entry.name === 'blocks') ? skipBlocks : new Set()
+          _updatePages(s, d, childSkip)
+        } else {
+          fs.copyFileSync(s, d)
+          log.updated.push(d)
+        }
+      }
+    }
+    _updatePages(pkgPages, destPages, skipTop)
+  }
+
+  // 2. Server helpers — skip schemas in server/cms/schemas/ not present in the package.
+  const pkgServer = path.join(pkgSrc, 'server')
+  const destServer = path.join(absDir, 'server', 'cms')
+  if (fs.existsSync(pkgServer) && fs.existsSync(destServer)) {
+    const skipSchemas = _projectOnly(path.join(pkgServer, 'schemas'), path.join(destServer, 'schemas'))
+    // Record project-only schemas directly
+    for (const name of skipSchemas) log.skipped.push(path.join(destServer, 'schemas', name))
+    function _updateServer(src, dest, skipSet) {
+      if (!fs.existsSync(src)) return
+      fs.mkdirSync(dest, { recursive: true })
+      for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        if (skipSet.has(entry.name)) continue
+        const s = path.join(src, entry.name)
+        const d = path.join(dest, entry.name)
+        if (entry.isDirectory()) {
+          const childSkip = (entry.name === 'schemas') ? skipSchemas : new Set()
+          _updateServer(s, d, childSkip)
+        } else {
+          fs.copyFileSync(s, d)
+          log.updated.push(d)
+        }
+      }
+    }
+    _updateServer(pkgServer, destServer, new Set())
+  }
+
+  // 3. Print summary
+  const elapsed = Date.now() - _t0
+  console.log(`\n  ${_CYAN}⚡ arc cms update${_RST} (${elapsed}ms)\n`)
+  if (!fromNpm) console.log(`  ${_DIM}Source: monorepo fallback — run npm install @arc-lang/arc-cms for npm-based updates${_RST}\n`)
+  for (const f of log.updated) console.log(`  ${_GREEN}updated${_RST}  ${rel(f)}`)
+  for (const f of log.skipped) console.log(`  ${_DIM}skipped${_RST}  ${rel(f)}`)
+  console.log(`\n  ${log.updated.length} files updated, ${log.skipped.length} project-specific files preserved.\n`)
+  console.log(`  ${_DIM}Rebuild to apply: arc build-site .${_RST}\n`)
+}
+
+module.exports = { cmsInit, cmsUpdate, cmsCreateSuperuser, cmsEject, cmsAddTree }

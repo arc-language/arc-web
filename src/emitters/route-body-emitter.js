@@ -74,6 +74,7 @@ function emitRouteStmt(stmt, jsEmitter) {
 
   if (stmt.type === 'VarDecl') {
     const kind = stmt.kind === 'let' ? 'let' : 'const'
+    if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(stmt.name)) throw new Error(`Arc: invalid identifier '${stmt.name}' in route body`)
     if (stmt.init?.type === 'CallExpr') {
       const name = _calleePath(stmt.init.callee)
       if (_AWAIT_FUNS.has(name) || _isDbCall(name))

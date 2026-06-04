@@ -23,6 +23,7 @@ class EdgeRenderer {
   emitProgram(program, baseHtml, baseCss, clientJs, stateBindings = [], urlPattern = null) {
     const liveDecls = program.declarations.filter(d => d.type === 'LiveDecl')
     const serverFns = program.declarations.filter(d => d.type === 'ServerFn')
+    this.serverFns = serverFns
     const stateDecls = program.declarations.filter(d => d.type === 'StateDecl')
     // @param declarations: VarDecl nodes with null init — their values come from URL segments
     const paramDecls = program.declarations.filter(d => d.type === 'VarDecl' && d.init === null)
@@ -50,7 +51,8 @@ class EdgeRenderer {
 
     // Emit @server fn implementations (called at request time on edge)
     if (serverFns.length > 0) {
-      parts.push(`let session = {}`)
+      // session is passed as a per-request argument to avoid module-level mutable state
+      // (module-level state leaks between concurrent requests in CF Workers / Deno Deploy)
       parts.push(`// @server functions: run at request time on the edge`)
       for (const fn of serverFns) {
         parts.push(this.emitServerFnImpl(fn))
@@ -72,10 +74,11 @@ class EdgeRenderer {
   emitServerFnImpl(fn) {
     const params = (fn.params ?? []).map(p => p.name ?? p).join(', ')
     const body = this.jsEmitter.emitBody(fn.body?.body ?? fn.body)
+    // session is injected per-request via _makeServerFns(session) below
     return [
-      `async function ${fn.name}(${params}) {`,
+      `function _impl_${fn.name}(session) { return async function ${fn.name}(${params}) {`,
       `  ${body}`,
-      `}`,
+      `}; }`,
       ``,
     ].join('\n')
   }
@@ -134,10 +137,14 @@ class EdgeRenderer {
       ),
     ] : []
 
+    const serverFnBindings = this.serverFns?.length > 0
+      ? this.serverFns.map(fn => `  const ${fn.name} = _impl_${fn.name}(session)`).join('\n')
+      : ''
+
     return [
       `async function _resolveData(request) {`,
-      `  const _session = request._arc_session ?? {}`,
-      `  session = _session`,
+      `  const session = request._arc_session ?? {}`,
+      ...(serverFnBindings ? [serverFnBindings] : []),
       ...urlParseLines,
       ...preStateDefaults,
       `  const _results = await Promise.allSettled([${calls}])`,

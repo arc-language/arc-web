@@ -646,6 +646,7 @@ async function _serveStatic(req, pathname) {
   const _clean = pathname.replace(/\\/$/, '')
   for (const _try of [_clean, _clean + '.html', _clean + '/index.html']) {
     const _fp = _path.join(_DIST_DIR, _try)
+    if (!_fp.startsWith(_DIST_DIR + _path.sep) && _fp !== _DIST_DIR) continue
     if (_sf.has(_fp) || (_fs.existsSync(_fp) && _fs.statSync(_fp).isFile() && (_sf.add(_fp), true))) {
       const _ext = _path.extname(_fp)
       const _isAdminPath = _clean === '/admin' || _clean.startsWith('/admin/')
@@ -777,7 +778,8 @@ const _db = {
     _arc_versions: {
       findMany: (opts = {}) => {
         const _w = opts.where, _ob = opts.orderBy, _lim = Math.min(opts.limit ?? 20, 10000), _off = opts.offset ?? 0
-        const _order = _ob ? ' ORDER BY ' + Object.entries(_ob).map(([k, d]) => '"' + k + '" ' + (d === 'desc' ? 'DESC' : 'ASC')).join(', ') : ' ORDER BY id DESC'
+        const _arcVersionsCols = new Set(['id', 'modelName', 'recordId', 'action', 'data', 'userId', 'createdAt'])
+        const _order = _ob ? ' ORDER BY ' + Object.entries(_ob).filter(([k]) => _arcVersionsCols.has(k)).map(([k, d]) => '"' + k + '" ' + (d === 'desc' ? 'DESC' : 'ASC')).join(', ') : ' ORDER BY id DESC'
         if (!_w || !Object.keys(_w).length) return _db.query('SELECT * FROM _arc_versions' + _order + ' LIMIT ? OFFSET ?').all(_lim, _off)
         const _keys = Object.keys(_w), _vals = Object.values(_w)
         const _wsql = _keys.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(' AND ')
@@ -957,7 +959,8 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
   ${tableName}: {
     findMany: (opts = {}) => {
       const _w = opts?.where
-      const _ob = opts?.orderBy ? Object.entries(opts.orderBy).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
+      const _allowedCols = new Set([..._${tableName}_fields, 'id'])
+      const _ob = opts?.orderBy ? Object.entries(opts.orderBy).filter(([k]) => _allowedCols.has(k)).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
       const _order = _ob ? \` ORDER BY \${_ob}\` : ''
       const _lim = Math.min(opts?.limit ?? 20, 100000), _off = opts?.offset ?? 0
       if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT ? OFFSET ?\`).all(_lim, _off)
@@ -967,7 +970,8 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
     },
     findFirst: (opts = {}) => {
       const _w = opts?.where
-      const _ob = opts?.orderBy ? Object.entries(opts.orderBy).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
+      const _allowedCols2 = new Set([..._${tableName}_fields, 'id'])
+      const _ob = opts?.orderBy ? Object.entries(opts.orderBy).filter(([k]) => _allowedCols2.has(k)).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
       const _order = _ob ? \` ORDER BY \${_ob}\` : ''
       if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT 1\`).get() ?? null
       const { sql: _wsql, vals: _wv } = _arcWhere(_${tableName}_fields, _w)
