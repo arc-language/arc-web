@@ -292,7 +292,8 @@ class EdgeRenderer {
       `const _RESPONSE_HEADERS = {`,
       `  'Content-Type': 'text/html; charset=utf-8',`,
       `  'Cache-Control': 'private, no-cache',`,
-      `  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",`,
+      `  // 'unsafe-inline' is required: _fillHtml injects CLIENT_JS and _arc_live data as inline <script> tags
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'",`,
       `  'X-Content-Type-Options': 'nosniff',`,
       `  'X-Frame-Options': 'SAMEORIGIN',`,
       `  'Referrer-Policy': 'strict-origin-when-cross-origin',`,
