@@ -320,8 +320,10 @@ function _makeEmail(env) {
           try { msg.ack() } catch (_e) {} // intentionally ignored - ack failure after invalid-args; message will be redelivered
           continue
         }
-        try { await fn(...args, env) } catch (e) {
-          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: e?.message ?? String(e) }))
+        let _fnErr = null
+        try { await fn(...args, env) } catch (e) { _fnErr = e }
+        if (_fnErr) {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, msg: _fnErr?.message ?? String(_fnErr) }))
           try {
             if (msg.attempts >= 3) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', queue: job, event: 'dlq', msg: 'max retries exceeded' })); msg.ack() }
             else { msg.retry() }

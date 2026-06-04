@@ -93,7 +93,7 @@ async function serve(projectDir, flags, buildServer, buildSite) {
     } finally {
       _rebuilding = false
     }
-    if (_pendingServerRebuild) { _pendingServerRebuild = false; rebuildServer().catch(e => console.error(`arc: rebuild error: ${e?.message ?? String(e)}`)) }
+    if (_pendingServerRebuild) { _pendingServerRebuild = false; await rebuildServer() }
   }
 
   let _siteBusy = false

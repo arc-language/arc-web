@@ -161,19 +161,25 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     findArcFiles(dir).filter(f => path.basename(f) !== 'middleware.arc').map(file => ({ file, serverDir: dir }))
   )
   const pkgDeclResults = await Promise.all(pkgRouteFileInfos.map(async ({ file, serverDir: pkgServerDir }) => {
-    let src
-    try { src = await fs.promises.readFile(file, 'utf8') }
-    catch (e) { console.error(`arc: cannot read ${file}: ${e.message}`); return [] }
-    const program = await parseArcFile(file, src, formatError)
-    const dynamicPath = filePathToRoutePath(file, pkgServerDir)
-    if (dynamicPath) {
-      for (const d of program.declarations) {
-        if (d.type === 'RouteDecl' && !d._fileRoutePath) d._fileRoutePath = dynamicPath
+    try {
+      const src = await fs.promises.readFile(file, 'utf8')
+      const program = await parseArcFile(file, src, formatError)
+      const dynamicPath = filePathToRoutePath(file, pkgServerDir)
+      if (dynamicPath) {
+        for (const d of program.declarations) {
+          if (d.type === 'RouteDecl' && !d._fileRoutePath) d._fileRoutePath = dynamicPath
+        }
       }
+      return program.declarations
+    } catch (e) {
+      console.error(`arc: failed to load package routes from ${file}: ${e.message}`)
+      return []
     }
-    return program.declarations
   }))
   const pkgDeclarations = pkgDeclResults.flat()
+  if (pkgRouteFileInfos.length > 0 && pkgDeclarations.length === 0 && pkgDeclResults.some(r => r.length === 0)) {
+    console.warn('arc: warning — all package route files failed to load; check errors above')
+  }
 
   // Parse project routes.
   const projectDeclResults = await Promise.all(routeFiles.map(async (file) => {

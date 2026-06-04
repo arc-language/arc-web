@@ -698,17 +698,16 @@ const _TRUSTED_PROXIES = process.env.TRUSTED_PROXY_IPS
   : null
 // Sweep expired entries every minute so burst-then-silent IPs don't accumulate between hourly resets
 setInterval(() => { const _n = Date.now(); for (const [_k, _v] of _rlMap) if (_n > _v.resetAt) _rlMap.delete(_k) }, 60000).unref()
-function _checkRateLimit(req) {
+function _checkRateLimit(req, _bunServer) {
   if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'DELETE' && req.method !== 'PATCH') return null
   const xff = req.headers.get('x-forwarded-for')
-  // Use the rightmost non-trusted IP from XFF: the leftmost entry is client-controlled and
-  // can be spoofed; the correct client IP when behind trusted proxies is the rightmost entry
-  // that is NOT in the trusted proxy set.
-  // Without trusted proxies configured, all client-supplied IP headers (x-forwarded-for,
-  // x-real-ip) are spoofable - fall back to 'unknown' so the limiter applies globally.
-  const ip = (_TRUSTED_PROXIES && xff)
+  // Only trust X-Forwarded-For if the *connecting* IP itself is a known trusted proxy.
+  // Otherwise an attacker can inject arbitrary IPs into XFF to spoof their rate-limit bucket.
+  const _connIp = _bunServer?.requestIP?.(req)?.address ?? null
+  const _connIsTrusted = _TRUSTED_PROXIES && _connIp && _TRUSTED_PROXIES.has(_connIp)
+  const ip = (_connIsTrusted && xff)
     ? (xff.split(',').map(s => s.trim()).reverse().find(i => !_TRUSTED_PROXIES.has(i)) ?? xff.split(',')[0].trim())
-    : 'unknown'
+    : (_connIp ?? 'unknown')
   const now = Date.now()
   const _windowMs = 60000
   let entry = _rlMap.get(ip)
@@ -1457,11 +1456,11 @@ function _printBanner(port) {
 const _TRACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/`
 
     const rlCheck = this.noRateLimit ? '' : `
-    const _rl = _checkRateLimit(req)
+    const _rl = _checkRateLimit(req, _bunServer)
     if (_rl) return _rl`
 
     const pgGuard = (this.isPg && schemas && schemas.length > 0)
-      ? `\n    if (db === null) { if (_schemaInitErr) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' }); await _schemaInitP; if (db === null) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' }) }`
+      ? `\n    if (db === null) { if (_schemaInitErr) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' }); await _schemaInitP; if (_schemaInitErr || db === null) return _json({ error: 'Server initialization failed — check logs' }, 503, { 'Retry-After': '5' }) }`
       : ''
 
     // Item 12: startup env-var validation
@@ -1534,7 +1533,7 @@ ${bannerFn}
 ${envBlock}// Start Bun server
 const _server = Bun.serve({
   port: ${port},
-  ${fetchKeyword}(req) {
+  ${fetchKeyword}(req, _bunServer) {
     ${traceSetup.trim() ? traceSetup.trim() + '\n    ' : ''}// Fast pathname extraction — avoids full URL parse (new URL() overhead)
     const _u = req.url
     const _s = _u.indexOf('/', 8)
