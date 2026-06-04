@@ -115,7 +115,9 @@ function emitRouteArmBody(body, jsEmitter) {
   if (body.type === 'BlockStatement') return emitRouteBody(body.body, jsEmitter)
   if (Array.isArray(body)) return emitRouteBody(body, jsEmitter)
   if (body.type === 'ExprStatement') return emitRouteArmBody(body.expr ?? body.expression, jsEmitter)
-  if (body.type === 'IfStatement') return emitRouteStmt(body, jsEmitter)
+  if (body.type === 'IfStatement' || body.type === 'VarDecl' || body.type === 'ReturnStatement' ||
+      body.type === 'MatchStatement' || body.type === 'ForStatement' || body.type === 'WhileStatement')
+    return emitRouteStmt(body, jsEmitter)
   // Single expression arm: treat as a statement
   if (body.type === 'CallExpr') {
     const name = _calleePath(body.callee)
@@ -137,13 +139,22 @@ function emitRouteMatch(stmt, jsEmitter) {
   // Move wildcard/identifier catch-all arms to the end so they don't orphan
   // subsequent `else if` clauses. Parser should enforce this, but guard here too.
   const wildcardCount = (stmt.arms ?? []).filter(a => !a.pattern || a.pattern.type === 'Wildcard' || a.pattern.type === 'Identifier').length
-  if (wildcardCount > 1) console.warn(`[arc] match statement has ${wildcardCount} wildcard/catch-all arms — only the first will be reachable`)
-  const sorted = [...(stmt.arms ?? [])].sort((a, b) => {
-    const aIsWild = !a.pattern || a.pattern.type === 'Wildcard' || a.pattern.type === 'Identifier'
-    const bIsWild = !b.pattern || b.pattern.type === 'Wildcard' || b.pattern.type === 'Identifier'
-    if (aIsWild === bIsWild) return 0
-    return aIsWild ? 1 : -1
-  })
+  if (wildcardCount > 1) console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'match_multiple_wildcards', count: wildcardCount }))
+  const isWild = a => !a.pattern || a.pattern.type === 'Wildcard' || a.pattern.type === 'Identifier'
+  // Keep at most one wildcard arm — extras produce unreachable else clauses
+  let seenWild = false
+  const sorted = [...(stmt.arms ?? [])]
+    .sort((a, b) => {
+      const aIsWild = isWild(a), bIsWild = isWild(b)
+      if (aIsWild === bIsWild) return 0
+      return aIsWild ? 1 : -1
+    })
+    .filter(a => {
+      if (!isWild(a)) return true
+      if (seenWild) return false
+      seenWild = true
+      return true
+    })
 
   const arms = sorted.map((arm, i) => {
     const body = emitRouteArmBody(arm.body, jsEmitter)

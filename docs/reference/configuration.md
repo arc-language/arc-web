@@ -48,7 +48,7 @@ Sets defaults for per-page meta that aren't overridden.
 | --- | --- | --- | --- |
 | `baseUrl` | String (URL) | derived from `meta.canonical` | Used in `sitemap.xml` and `robots.txt` when no canonical present |
 | `name` | String | none | Default for `meta.siteName` |
-| `lang` | String | `"en"` | Default `<html lang="...">` |
+| `lang` | String ([BCP 47](https://www.ietf.org/rfc/bcp/bcp47.txt)) | `"en"` | Default `<html lang="...">`. Use subtags for regional variants: `"en-US"`, `"fr-CA"`, `"zh-Hans"`. |
 | `defaultDescription` | String | none | Used when a page lacks `meta.description` |
 | `defaultImage` | String (URL) | none | Used when a page lacks `meta.image` |
 

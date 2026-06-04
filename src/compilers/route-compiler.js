@@ -136,8 +136,8 @@ function emitBunRoutesObject(routes, opts = {}) {
   }
   const preamble = preambleLines.length > 0 ? '\n' + preambleLines.join('\n') : ''
 
-  const healthEntry = `    '/health': {
-      GET: async () => _json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' }),
+  const healthEntry = `    '/_arc/health': {
+      GET: async () => _json({ status: 'ok', uptime: process.uptime(), queue: typeof Queue !== 'undefined' ? 'configured' : 'n/a', version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store, no-cache' }),
     },`
 
   const routeEntries = []

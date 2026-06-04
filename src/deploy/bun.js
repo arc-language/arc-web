@@ -89,7 +89,7 @@ try {
         let path = url.pathname
         if (path === '' || path === '/') path = '/'
         if (path === '/_arc/health') {
-          return new Response(JSON.stringify({ status: 'ok', uptime: process.uptime(), version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }), {
+          return new Response(JSON.stringify({ status: 'ok', uptime: process.uptime(), queue: 'n/a', version: process.env.npm_package_version ?? 'unknown', ts: new Date().toISOString() }), {
             headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY' }
           })
         }
@@ -110,7 +110,7 @@ ${edgeRoutingBlock}
           })
         }
 
-        return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': "default-src 'none'", 'Referrer-Policy': 'strict-origin-when-cross-origin', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=()' } })
+        return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1>Page not found</h1><p>The page you requested does not exist.</p><p><a href="/">Return home</a></p></main></body></html>', { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'", 'Referrer-Policy': 'strict-origin-when-cross-origin', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=()' } })
       } catch (e) {
         console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'request_error', msg: e instanceof Error ? e.message : String(e) }))
         return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })

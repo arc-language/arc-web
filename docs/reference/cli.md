@@ -230,6 +230,30 @@ dist/
 
 `arc deploy` only **builds** the deploy bundle; you still run the target's deploy command (`wrangler deploy`, `deployctl deploy`, etc.). See [Deployment](../features/deployment.md).
 
+## `arc serve [dir]`
+
+Run the compiled Bun server from `dist/server.js`.
+
+```bash
+arc serve
+arc serve my-app
+arc serve --port 8080
+```
+
+Equivalent to `bun run dist/server.js`. Uses `PORT` env var if set.
+
+## `arc cms <subcommand>`
+
+Manage the CMS admin panel (requires `arc-cms` installed).
+
+```bash
+arc cms init [dir]              # scaffold admin panel into project
+arc cms update                  # re-sync admin panel from installed package
+arc cms create-superuser [dir]  # create an admin user interactively
+arc cms eject <Name>            # copy a built-in widget for local override
+arc cms add tree                # install arc-tree mixin
+```
+
 ## Common flags
 
 | Flag | Effect |
@@ -254,7 +278,7 @@ Flags are global where they make sense — `arc --version` works regardless of c
 | Var | Effect |
 | --- | --- |
 | `ARC_LOG_LEVEL` | `silent`, `warn`, `info` (default), `debug` |
-| `NO_COLOR` | Disable colored output |
+| `NO_COLOR` | Disable colored output. Follows the [no-color.org](https://no-color.org) convention. Same effect as `--no-color`. |
 | `ARC_NO_SHARP` | Force-skip image pipeline even if `sharp` is installed |
 
 ## See also

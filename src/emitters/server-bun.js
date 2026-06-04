@@ -542,7 +542,8 @@ function _requiredRole(pathname) {
 function _roleOk(have, need) {
   if (need === 'exempt' || need == null) return true
   const ranks = { viewer: 1, editor: 2, admin: 3 }
-  return (ranks[have] ?? 0) >= (ranks[need] ?? 0)
+  if (!Object.prototype.hasOwnProperty.call(ranks, have)) return false
+  return ranks[have] >= (ranks[need] ?? 0)
 }
 async function _serveStatic(req, pathname) {
   ${_storageServeDispatch}
