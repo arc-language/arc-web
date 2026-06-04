@@ -38,7 +38,7 @@ function insertRoute(root, method, path, handlerName) {
         node.param = paramName
         node.paramChild = makeNode()
       } else if (node.param !== paramName) {
-        throw new Error(`Arc: conflicting param names at same route level: ':${node.param}' vs ':${paramName}'`)
+        throw new Error(`Arc: conflicting param names at same route level: ':${node.param}' vs ':${paramName}' (route: ${method} ${path})`)
       }
       node = node.paramChild
     } else {

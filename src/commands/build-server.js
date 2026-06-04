@@ -286,6 +286,14 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   })
   emitter.hasMiddleware = !!middlewareFile
   emitter.middlewareDecls = middlewareDecls
+
+  // Finding 4: warn at build time when @auth routes exist but no session validator is configured.
+  // Without a validator, any non-empty cookie is treated as authenticated.
+  const hasAuthRoutes = allDeclarations.some(d => d.type === 'RouteDecl' && d.annotations?.some(a => a === '@auth' || a.startsWith('@auth(')))
+  if (hasAuthRoutes && !arcCfg?.session?.validate) {
+    console.warn('arc: warning — @auth routes present but session.validate is not configured in arc.config.json. Any non-empty cookie will be treated as a valid session. Set session.validate before deploying to production.')
+  }
+
   const serverJs = emitter.emitProgram(mergedProgram)
 
   if (!serverJs.trim()) {

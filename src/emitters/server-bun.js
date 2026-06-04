@@ -127,7 +127,13 @@ function emitArcJobsImport(queues = {}) {
       return `  ${name}: createQueue(new SqliteAdapter({ name: ${JSON.stringify(name)}, db: globalThis.db }))`
     } else if (backend === 'redis') {
       const url = cfg.url ?? '${REDIS_URL}'
-      const resolvedUrl = url.startsWith('${') ? `process.env.${url.slice(2, -1)}` : JSON.stringify(url)
+      let resolvedUrl
+      if (url.startsWith('${') && url.endsWith('}')) {
+        const envName = url.slice(2, -1)
+        resolvedUrl = /^[A-Z_][A-Z0-9_]*$/.test(envName) ? `process.env.${envName}` : 'process.env.REDIS_URL'
+      } else {
+        resolvedUrl = JSON.stringify(url)
+      }
       return `  ${name}: createQueue(new RedisAdapter({ name: ${JSON.stringify(name)}, url: ${resolvedUrl} }))`
     }
     return `  ${name}: createQueue(new MemoryAdapter({ name: ${JSON.stringify(name)} }))`
@@ -204,6 +210,8 @@ const _SAFE_IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 // Flatten RouteGroupDecl nodes into RouteDecl[], prepending prefix and
 // tagging each route with a _groupGuardFn so a shared guard is used instead
 // of inlining the auth check N times (~95% less emitted JS for auth logic).
+// Flattens RouteGroupDecl into individual RouteDecls with prefixed paths.
+// Route-level params are recomputed from the final path string; original params discarded.
 function flattenGroups(declarations) {
   const routes = []
   for (const d of declarations) {
@@ -241,7 +249,7 @@ function emitGroupGuard(prefix, annotations) {
   const roleMatch = authAnn.match(/^@auth\(([^)]+)\)$/)
   const roles = roleMatch ? roleMatch[1].split(',').map(r => r.trim()).filter(Boolean) : null
   const roleCheck = roles
-    ? `\n  if (!${JSON.stringify(roles)}.includes(s.role)) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Forbidden' }, 403) : Response.redirect('/admin/login', 302) }`
+    ? `\n  if (!${JSON.stringify(roles)}.includes(s.role)) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Forbidden' }, 403) : Response.redirect('/admin/403', 302) }`
     : ''
   return `async function ${name}(req) {
   const s = await auth.session(req)
@@ -420,7 +428,7 @@ const _UPLOAD_MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'ima
 // SVG/PDF are user-uploaded content - force download to prevent script execution in browser origin
 const _ATTACHMENT_EXTS = new Set(['.svg', '.pdf'])
 // Pre-populate known static file paths at startup to avoid existsSync() on every request.
-// Built lazily on first request so the process starts fast even with many dist files.
+// Called eagerly after server.listen() so the set is ready before the first request.
 let _staticFiles = null
 let _dynamicRoutes = null
 let _rendererPaths = null
@@ -502,6 +510,7 @@ function _getArcFnFiles() {
 }
 // O(1) handler map: built once on first /_arc/fn/ request. Returns a Promise so
 // concurrent callers all await the same build rather than each getting an empty Map.
+// Lazily imports /_arc/functions.js handler modules on first request and caches the result.
 // On catastrophic failure (import error), permanently resolves to empty Map — avoids
 // retry storms. Process restart required to recover, which is the right recovery path.
 let _arcHandlerCache = null
@@ -579,7 +588,7 @@ async function _serveStatic(req, pathname) {
   let _r
   try { _r = await _dispatch(req, pathname) } catch (_de) {
     if (_de instanceof Response) return _de
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] dispatch error', path: pathname, error: _de?.message ?? String(_de) }))
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] dispatch error', path: pathname, error: _de?.message ?? String(_de), name: _de?.name, stack: (_de?.stack ?? '').split('\\n').slice(0, 6) }))
     return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
   // Fall through to static files on 404 (unknown route) or on 405 for GET requests
@@ -616,7 +625,7 @@ async function _serveStatic(req, pathname) {
         if (_matchedHandler) { const _fnRes = await _matchedHandler(req); return _fnRes instanceof Response ? _fnRes : new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } }) }
         return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
       } catch (_fnErr) {
-        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] fn handler error', fn: pathname, method: req.method, error: _fnErr?.message ?? String(_fnErr) }))
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] fn handler error', fn: pathname, method: req.method, error: _fnErr?.message ?? String(_fnErr), name: _fnErr?.name, stack: (_fnErr?.stack ?? '').split('\\n').slice(0, 6) }))
         return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
       }
     }
@@ -655,7 +664,7 @@ async function _serveStatic(req, pathname) {
             req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
             const _ldata = await _resolveData(req)
             if (_ldata && _ldata.__arc_render_error__) {
-              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
+              return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><a href="#main-content" style="position:absolute;left:-9999px;top:auto;overflow:hidden;clip:rect(0,0,0,0)">Skip to main content</a><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page, or <a href="/admin">return to the admin panel</a>.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
             }
             let _html = _fillHtml(_ldata)
             _html = _html.replace(/<meta\\s+http-equiv=["']Content-Security-Policy["'][^>]*\\/?>/gi, '')
@@ -685,7 +694,7 @@ async function _serveStatic(req, pathname) {
           req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
           const _ld2 = await _rd2(req)
           if (_ld2 && _ld2.__arc_render_error__) {
-            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
+            return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><a href="#main-content" style="position:absolute;left:-9999px;top:auto;overflow:hidden;clip:rect(0,0,0,0)">Skip to main content</a><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page, or <a href="/admin">return to the admin panel</a>.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
           }
           let _html2 = _fh2(_ld2)
           _html2 = _html2.replace(/<meta\\s+http-equiv=["']Content-Security-Policy["'][^>]*\\/?>/gi, '')
@@ -737,7 +746,7 @@ ${rateLimiter}`.trim()
   _rateLimiterBlock() {
     return `
 
-// In-memory rate limiter - 60 POST requests per IP per minute (sliding window)
+// In-memory rate limiter - 60 POST requests per IP per minute (fixed window)
 // Applies to all mutating requests. Resets hourly to prevent unbounded Map growth.
 // Set TRUSTED_PROXY_IPS (comma-separated) to opt-in to X-Forwarded-For trust.
 // Without it, X-Forwarded-For is ignored to prevent IP spoofing.
@@ -763,7 +772,7 @@ function _checkRateLimit(req, _bunServer) {
   if (!entry || now > entry.resetAt) entry = { count: 0, resetAt: now + _windowMs }
   entry.count++
   _rlMap.set(ip, entry)
-  if (entry.count > 60) return _json({ error: 'Too many requests' }, 429, { 'Retry-After': String(Math.ceil((entry.resetAt - now) / 1000)) })
+  if (entry.count > 60) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'rate_limit_exceeded', ip })); return _json({ error: 'Too many requests' }, 429, { 'Retry-After': String(Math.ceil((entry.resetAt - now) / 1000)) }) }
   return null
 }`
   }
@@ -810,7 +819,7 @@ const _db = {
   }
 
   _emitVersioningWrapper(cfg = {}) {
-    const maxV = Number(cfg.maxVersionsPerRecord ?? 100)
+    const maxV = Math.min(Number(cfg.maxVersionsPerRecord ?? 100), 10000)
     const exclude = JSON.stringify(['_arc_versions', ...((cfg.excludeModels ?? []))])
     return `
 // ── arc-versioning ────────────────────────────────────────────────────────────
@@ -862,7 +871,7 @@ const _db = {
     Promise.resolve().then(() => {
       try {
         const _rows = _db.query('SELECT id FROM _arc_versions WHERE modelName = ?1 AND recordId = ?2 ORDER BY id DESC LIMIT -1 OFFSET ' + _maxV).all(modelName, recordId)
-        if (_rows.length) _db.run('DELETE FROM _arc_versions WHERE id IN (' + _rows.map(r => r.id).join(',') + ')')
+        if (_rows.length) _db.run('DELETE FROM _arc_versions WHERE id IN (' + _rows.map(r => parseInt(r.id, 10)).filter(n => Number.isFinite(n)).join(',') + ')')
       } catch (_trimErr) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'versioning_trim_failed', msg: _trimErr?.message ?? String(_trimErr) })) }
     })
   }
@@ -1104,7 +1113,7 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
     },
     find: async (id) => _pool.query('SELECT ${selectCols} FROM ${tableName} WHERE id = $1', [id]).then(r => r.rows[0] ?? null),
     ${colList ? `create: async (data) => { const _d = _pick(data, _flds); const _miss = _req.filter(k => _d[k] == null); if (_miss.length) throw Object.assign(new Error('${tableName}.create: missing required fields: ' + _miss.join(', ')), { status: 422 }); return _pool.query('INSERT INTO ${tableName} (${colList}) VALUES (${placeholders}) RETURNING *', [${fields.map(f => this._isNowDefault(f) ? `(_d.${f.name} ?? new Date().toISOString())` : `_d.${f.name}`).join(', ')}]).then(r => r.rows[0]) },` : ''}
-    ${colList ? `update: async (id, data) => { const _d = _pick(data, _flds); return _pool.query('UPDATE ${tableName} SET ${updates} WHERE id = $${fields.length + 1} RETURNING *', [${fields.map(f => `_d.${f.name}`).join(', ')}, id]).then(r => r.rows[0]) },` : ''}
+    ${colList ? `update: async (id, data) => { const _d = _pick(data, _flds); const _ks = Object.keys(_d); if (!_ks.length) return null; const _sets = _ks.map((k, i) => '"' + k + '" = $' + (i + 1)).join(', '); return _pool.query('UPDATE ${tableName} SET ' + _sets + ' WHERE id = $' + (_ks.length + 1) + ' RETURNING *', [..._ks.map(k => _d[k]), id]).then(r => r.rows[0]) },` : ''}
     delete: async (id) => { await _pool.query('DELETE FROM ${tableName} WHERE id = $1', [id]); return true },
     deleteMany: async (opts = {}) => {
       const _w = opts?.where
@@ -1420,7 +1429,7 @@ async function ${name}(req, params) {
     let authGuard = `const _sess = await auth.session(req); if (!_sess) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Unauthorized' }, 401) : Response.redirect('/admin/login', 302); }\n    const session = _sess;`
     if (authRole) {
       const roles = authRole.split(',').map(r => r.trim()).filter(Boolean)
-      authGuard += `\n    if (!${JSON.stringify(roles)}.includes(session.role)) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Forbidden' }, 403) : Response.redirect('/admin/login', 302); }`
+      authGuard += `\n    if (!${JSON.stringify(roles)}.includes(session.role)) { const _acc = req.headers.get('accept') ?? ''; return _acc.includes('application/json') ? _json({ error: 'Forbidden' }, 403) : Response.redirect('/admin/403', 302); }`
     }
     return authGuard
   }
@@ -1543,6 +1552,20 @@ const _server = Bun.serve({
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: '[arc] unhandled server error', error: err?.message ?? String(err) }))
     return _json({ error: 'Internal server error' }, 500)
   },
+  // fetch() handles paths not matched by the native routes object:
+  // static files, admin renderer, /_arc/fn/ edge functions.
+  async fetch(req, _bunServer) {
+    const _u = req.url
+    const _s = _u.indexOf('/', 8)
+    const _q = _u.indexOf('?', _s > -1 ? _s : 8)
+    let _pathname = _u.slice(_s > -1 ? _s : _u.length, _q > -1 ? _q : undefined) || '/'
+    if (_pathname.includes('%')) { try { _pathname = decodeURIComponent(_pathname) } catch { return new Response('Bad Request', { status: 400 }) } }
+    if (_pathname !== '/' && (_pathname.includes('..') || _pathname.includes('./'))) { try { _pathname = new URL('http://x' + _pathname).pathname } catch { return new Response('Bad Request', { status: 400 }) } }
+    try { return await _serveStatic(req, _pathname) } catch (_fe) {
+      console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'bun_routes_fallback_error', path: _pathname, msg: _fe?.message ?? String(_fe) }))
+      return _json({ error: 'Internal server error' }, 500)
+    }
+  },
   ..._arcRoutes,
 })
 _printBanner(_server.port)
@@ -1605,6 +1628,7 @@ const _server = Bun.serve({
     const _q = _u.indexOf('?', _s > -1 ? _s : 8)
     let _pathname = _u.slice(_s > -1 ? _s : _u.length, _q > -1 ? _q : undefined) || '/'
     if (_pathname.includes('%')) { try { _pathname = decodeURIComponent(_pathname) } catch { return new Response('Bad Request', { status: 400 }) } }
+    if (_pathname !== '/' && (_pathname.includes('..') || _pathname.includes('./'))) { try { _pathname = new URL('http://x' + _pathname).pathname } catch { return new Response('Bad Request', { status: 400 }) } }
     try {
     if (_pathname === '/_arc/health') {
       try {
