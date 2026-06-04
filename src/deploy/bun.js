@@ -78,6 +78,7 @@ let _server
 try {
   _server = Bun.serve({
     port: PORT,
+    idleTimeout: 65,
     async fetch(req) {
       const url = new URL(req.url)
       let path = url.pathname
@@ -114,6 +115,8 @@ ${edgeRoutingBlock}
 process.stdout.isTTY
   ? console.log(\`arc: server running on http://localhost:\${_server.port}\`)
   : console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_start', msg: \`arc: server running on http://localhost:\${_server.port}\` }))
+process.on('SIGTERM', () => { _server.stop(true) })
+process.on('SIGINT', () => { _server.stop(true) })
 `
 
   return [

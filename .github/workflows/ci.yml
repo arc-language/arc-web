@@ -50,6 +50,7 @@ jobs:
           EOF
           node src/cli.js build-server /tmp/buildserver-smoke
           test -s /tmp/buildserver-smoke/dist/server.js
+          rm -rf /tmp/buildserver-smoke
 
       - name: Build-site smoke test (multi-page command)
         if: matrix.node == 22
@@ -75,3 +76,4 @@ jobs:
           test -s /tmp/buildsite-smoke/dist/_headers
           test -s /tmp/buildsite-smoke/dist/robots.txt
           ls /tmp/buildsite-smoke/dist/shared.*.css
+          rm -rf /tmp/buildsite-smoke

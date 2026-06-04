@@ -163,10 +163,13 @@ server.listen(PORT, () => {
 })
 server.keepAliveTimeout = 65000
 server.headersTimeout = 66000
+server.requestTimeout = 300000
 server.on('error', e => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_error', msg: e.message })); process.exit(1) })
+server.on('clientError', (err, socket) => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'client_error', msg: err.message })); socket.end() })
 process.on('SIGTERM', () => {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started' }))
   server.close(err => {
-    if (err) console.error('arc: server close error:', err.message)
+    if (err) console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_error', msg: err.message }))
     process.exit(err ? 1 : 0)
   })
 })

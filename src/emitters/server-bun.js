@@ -1050,7 +1050,7 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
       const _w = opts?.where; if (!_w) throw new Error('${tableName}.findUnique: where is required')
       const { sql: _wsql, vals: _wv } = _arcWherePg(_flds, _w, 1)
       if (_wsql === '0=1') return null
-      const _rs = await _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_wsql} LIMIT 2\`, _wv).then(r => r.rows)
+      const _rs = (await _pool.query(\`SELECT ${selectCols} FROM ${tableName} WHERE \${_wsql} LIMIT 2\`, _wv)).rows
       if (_rs.length > 1) throw Object.assign(new Error('${tableName}.findUnique: multiple rows'), { status: 400 })
       return _rs[0] ?? null
     },
