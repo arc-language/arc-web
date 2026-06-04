@@ -33,7 +33,7 @@ async function handleEdgeFunction(path, req) {
   const fn = _ARC_HANDLERS[segment]
   if (typeof fn !== 'function') return new Response(JSON.stringify({ error: 'Edge function not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
   try {
-    const _hasBody = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'DELETE'
+    const _hasBody = req.method !== 'GET' && req.method !== 'HEAD'
     const _cl = _hasBody ? +(req.headers.get('content-length') ?? 0) : 0
     if (_cl > 1048576) return new Response(JSON.stringify({ error: 'Request body too large' }), { status: 413, headers: { 'Content-Type': 'application/json' } })
     const _body = _hasBody ? await req.arrayBuffer() : null

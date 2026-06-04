@@ -157,10 +157,10 @@ Arc is designed to work with no config file at all. Add `arc.config.json` only w
 These are not part of `arc.config.json` but are read by the generated server at runtime:
 
 | Variable | Description |
-|---|---|
+| --- | --- |
 | `PORT` | HTTP port to listen on (default: `3000`) |
-| `ARC_DEBUG=1` | Include error `message`, `name`, and truncated `stack` in HTTP 500 JSON responses. **Never set in production** — automatically suppressed when `NODE_ENV=production`. Useful for local debugging when console logs are not accessible. |
-| `TRUSTED_PROXY_IPS` | Comma-separated list of trusted proxy IPs. When set, the rate limiter honours the `X-Forwarded-For` header from these IPs. |
+| `ARC_DEBUG=1` | Include error `message`, `name`, and truncated `stack` in HTTP 500 JSON responses. Only active when `NODE_ENV=development` is also set — never fires with unset or production `NODE_ENV`. Useful for local debugging when console logs are not accessible. Also controls verbose output in `arc serve` and `arc build`. |
+| `TRUSTED_PROXY_IPS` | Comma-separated list of trusted proxy IPs (matched against the direct TCP connection). When set, the rate limiter reads the client IP from the `X-Forwarded-For` header only when the TCP-level peer IP is in this list. |
 
 ## See also
 

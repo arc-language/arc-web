@@ -95,6 +95,7 @@ function _storageServeBlock(storage) {
     .sort((a, b) => b.prefix.length - a.prefix.length)
   return entries.map(({ name, prefix }) => {
     const p = JSON.stringify(prefix + '/')
+    // \\\\  = literal backslash at runtime — blocks Windows-style path segments
     return `if (req.method === 'GET' && pathname.startsWith(${p})) { const _sk = decodeURIComponent(pathname.slice(${prefix.length + 1})); if (!_sk || _sk.includes('..') || _sk.startsWith('/') || _sk.includes('\\0') || _sk.includes('\\\\')) return new Response('Not found', { status: 404 }); return _storages[${JSON.stringify(name)}].serve(_sk, req) }`
   }).join('\n  ')
 }
@@ -508,7 +509,7 @@ function _getHandlerCache() {
       } catch (e) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'fn_module_load_failed', file: _fnPath, msg: e?.message ?? String(e) })) }
     }
     return _m
-  })().catch(e => { _arcHandlerCache = null; console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'handler_cache_build_failed', msg: e?.message ?? String(e) })); return new Map() })
+  })().catch(e => { _arcHandlerCache = Promise.resolve(new Map()); console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'handler_cache_build_failed', msg: e?.message ?? String(e) })); return new Map() })
   return _arcHandlerCache
 }
 // Cached path -> required role table from server/admin-roles.json (arc-cms config).
@@ -1518,8 +1519,15 @@ const _server = Bun.serve({
 })
 _printBanner(_server.port)
 _getStaticFiles()
-process.on('SIGTERM', () => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal: 'SIGTERM' })); _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
-process.on('SIGINT', () => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal: 'SIGINT' })); _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
+async function _shutdown(signal) {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
+  const _t = setTimeout(() => process.exit(0), 5000)
+  try { await _server.stop(true) } catch {}
+  clearTimeout(_t)
+  process.exit(0)
+}
+process.on('SIGTERM', () => _shutdown('SIGTERM').catch(() => process.exit(1)))
+process.on('SIGINT', () => _shutdown('SIGINT').catch(() => process.exit(1)))
 `.trim()
     }
 
@@ -1582,8 +1590,15 @@ const _server = Bun.serve({
 })
 _printBanner(_server.port)
 _getStaticFiles()
-process.on('SIGTERM', () => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal: 'SIGTERM' })); _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
-process.on('SIGINT', () => { console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal: 'SIGINT' })); _server.stop(true); setTimeout(() => process.exit(0), 5000).unref() })
+async function _shutdown(signal) {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
+  const _t = setTimeout(() => process.exit(0), 5000)
+  try { await _server.stop(true) } catch {}
+  clearTimeout(_t)
+  process.exit(0)
+}
+process.on('SIGTERM', () => _shutdown('SIGTERM').catch(() => process.exit(1)))
+process.on('SIGINT', () => _shutdown('SIGINT').catch(() => process.exit(1)))
 ${this.profile ? `console.log('  \\x1b[36marc: profiler\\x1b[0m  \\x1b[2mhttp://localhost:' + _server.port + '/_arc/profiler\\x1b[0m')
 console.warn('  \\x1b[33marc: --profile is for development only — disable in production\\x1b[0m')` : ''}
 `.trim()
