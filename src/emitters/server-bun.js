@@ -432,9 +432,12 @@ const _fs = require('fs')
 ;(function(){
   const _ll = (process.env.ARC_LOG_LEVEL ?? 'info').toLowerCase()
   const _noop = () => {}
-  if (_ll === 'silent') { console.log = _noop; console.warn = _noop; console.error = _noop }
-  else if (_ll === 'warn') { console.log = _noop }
-  // 'info' (default) and 'debug' leave console untouched
+  // console.error is never suppressed — security events and startup failures must always emit
+  if (_ll === 'silent') { console.log = _noop; console.info = _noop; console.debug = _noop; console.warn = _noop }
+  else if (_ll === 'warn') { console.log = _noop; console.info = _noop; console.debug = _noop }
+  else if (_ll === 'info') { console.debug = _noop }
+  // 'debug' leaves all console methods untouched
+  else if (_ll !== 'debug') { console.warn('[arc] ARC_LOG_LEVEL="' + process.env.ARC_LOG_LEVEL + '" is not recognised; expected silent|warn|info|debug — defaulting to info') }
 })()
 // Bun exposes the Web Crypto API on globalThis.crypto but not Node.js crypto methods.
 // Assign them so user code can call crypto.scryptSync / crypto.randomBytes directly.
@@ -624,7 +627,7 @@ async function _serveStatic(req, pathname) {
     const _slug = pathname.slice(3)
     if (/^[a-z0-9][a-z0-9-]*$/i.test(_slug)) {
       try {
-        if (_cmsPageRenderer === undefined) { try { _cmsPageRenderer = require(_path.join(process.cwd(), 'server', 'cms', 'page-renderer.js')) } catch (_re) { _cmsPageRenderer = _re?.code === 'MODULE_NOT_FOUND' ? null : undefined } }
+        if (_cmsPageRenderer === undefined) { try { _cmsPageRenderer = require(_path.join(process.cwd(), 'server', 'cms', 'page-renderer.js')) } catch (_re) { _cmsPageRenderer = null } }
         const _pr = _cmsPageRenderer
         if (_pr && _pr.renderCmsPage) {
           const _prRes = await _pr.renderCmsPage(req, _db, _slug)
@@ -660,7 +663,7 @@ async function _serveStatic(req, pathname) {
   if (pathname === '/admin' || pathname.startsWith('/admin/')) {
     if (pathname !== '/admin/login' && pathname !== '/admin/login/') {
       let _sess
-      try { _sess = await auth.session(req) } catch (_sessErr) {
+      try { _sess = typeof auth !== 'undefined' ? await auth.session(req) : null } catch (_sessErr) {
         console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'admin_session_error', path: pathname, msg: _sessErr?.message ?? String(_sessErr), name: _sessErr?.name, stack: (_sessErr?.stack ?? '').split('\\n').slice(0, 6) }))
         return Response.redirect('/admin/login', 302)
       }
@@ -716,7 +719,7 @@ async function _serveStatic(req, pathname) {
         const _rd2 = _rm2._resolveData ?? _rm2.default?._resolveData
         const _fh2 = _rm2._fillHtml ?? _rm2.default?._fillHtml
         if (_rd2 && _fh2) {
-          req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
+          req._arc_session = req._arc_session ?? (await auth.session(req) ?? null)
           const _ld2 = await _rd2(req)
           if (_ld2 && _ld2.__arc_render_error__) {
             return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><a href="#main-content" style="position:absolute;left:-9999px;top:auto;overflow:hidden;clip:rect(0,0,0,0)">Skip to main content</a><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page, or <a href="/admin">return to the admin panel</a>.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
@@ -876,7 +879,7 @@ const _db = {
         const _order = _ob ? ' ORDER BY ' + Object.entries(_ob).filter(([k]) => _arcVersionsCols.has(k)).map(([k, d]) => '"' + k + '" ' + (d === 'desc' ? 'DESC' : 'ASC')).join(', ') : ' ORDER BY id DESC'
         if (!_w || !Object.keys(_w).length) return _db.query('SELECT * FROM _arc_versions' + _order + ' LIMIT ? OFFSET ?').all(_lim, _off)
         const _keys = Object.keys(_w).filter(k => _arcVersionsCols.has(k)), _vals = _keys.map(k => _w[k])
-        if (!_keys.length) return _db.query('SELECT * FROM _arc_versions' + _order + ' LIMIT ?' + (_keys.length + 1) + ' OFFSET ?' + (_keys.length + 2)).all(_lim, _off)
+        if (!_keys.length) return _db.query('SELECT * FROM _arc_versions' + _order + ' LIMIT ? OFFSET ?').all(_lim, _off)
         const _wsql = _keys.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(' AND ')
         return _db.query('SELECT * FROM _arc_versions WHERE ' + _wsql + _order + ' LIMIT ?' + (_keys.length + 1) + ' OFFSET ?' + (_keys.length + 2)).all(..._vals, _lim, _off)
       },

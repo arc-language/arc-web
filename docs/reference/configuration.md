@@ -174,9 +174,9 @@ These are not part of `arc.config.json` but are read by the generated server at 
 | `DATABASE_URL` | SQLite file path (default: `app.db`) or Postgres connection string (`postgres://user:pass@host/db`). Required in production when using `@model` declarations. |
 | `SESSION_SECRET` | Secret key for session signing. Required when `NODE_ENV` is not `development` and any `@auth` route is present — the server refuses to start without it. Set `NODE_ENV=development` to suppress in local dev. |
 | `ARC_DEBUG=1` | Include error `message`, `name`, and truncated `stack` in HTTP 500 JSON responses. Only active when `NODE_ENV=development` is also set — never fires with unset or production `NODE_ENV`. Useful for local debugging when console logs are not accessible. |
-| `ARC_LOG_LEVEL` | `silent`, `warn`, `info` (default), `debug`. Controls server log verbosity. |
+| `ARC_LOG_LEVEL` | `silent`, `warn`, `info` (default), `debug`. Controls server log verbosity. Implemented via console patching — `silent` suppresses `console.log`, `console.info`, `console.debug`, and `console.warn` but never `console.error` (security events and startup failures always emit). `warn` suppresses `console.log`, `console.info`, and `console.debug`. `info` suppresses `console.debug` only. An unrecognised value emits a warning and falls back to `info`. |
+| `REDIS_URL` | Redis connection string (e.g. `redis://localhost:6379`). Required when `arc-jobs` is configured with a Redis queue backend — the server exits with a non-zero code on startup if this variable is absent. |
 | `TRUSTED_PROXY_IPS` | Comma-separated list of trusted proxy IPs (matched against the direct TCP connection). When set, the rate limiter reads the client IP from the `X-Forwarded-For` header only when the TCP-level peer IP is in this list. |
-| `REDIS_URL` | Redis connection string (e.g. `redis://localhost:6379`). Required when `arc-jobs` is configured with a Redis queue backend. |
 
 ## See also
 
