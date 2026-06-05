@@ -437,7 +437,7 @@ const _fs = require('fs')
   else if (_ll === 'warn') { console.log = _noop; console.info = _noop; console.debug = _noop }
   else if (_ll === 'info') { console.debug = _noop }
   // 'debug' leaves all console methods untouched
-  else if (_ll !== 'debug') { console.warn('[arc] ARC_LOG_LEVEL="' + process.env.ARC_LOG_LEVEL + '" is not recognised; expected silent|warn|info|debug — defaulting to info') }
+  else if (_ll !== 'debug') { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'arc_log_level_invalid', value: process.env.ARC_LOG_LEVEL, fallback: 'info', msg: 'ARC_LOG_LEVEL value not recognised; expected silent|warn|info|debug' })) }
 })()
 // Bun exposes the Web Crypto API on globalThis.crypto but not Node.js crypto methods.
 // Assign them so user code can call crypto.scryptSync / crypto.randomBytes directly.
@@ -523,7 +523,7 @@ function _getArcFnFiles() {
         if (e.isDirectory()) _walkFn(f)
         else if (e.name === 'functions.js' && _path.basename(dir) === '_arc') _arcFnFiles.push(f)
       }
-    } catch {}
+    } catch (e) { if (e?.code !== 'ENOENT') console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'fn_dir_walk_failed', msg: e?.message ?? String(e) })) }
   }
   _walkFn(_DIST_DIR)
   return _arcFnFiles
@@ -695,7 +695,7 @@ async function _serveStatic(req, pathname) {
               return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><a href="#main-content" style="position:absolute;left:-9999px;top:auto;overflow:hidden;clip:rect(0,0,0,0)">Skip to main content</a><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page, or <a href="/admin">return to the admin panel</a>.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
             }
             let _html = _fillHtml(_ldata)
-            _html = _html.replace(/<meta\\s+http-equiv=["']Content-Security-Policy["'][^>]*\\/?>/gi, '')
+            if (_html.includes('http-equiv')) _html = _html.replace(/<meta\\s+http-equiv=["']Content-Security-Policy["'][^>]*\\/?>/gi, '')
             return new Response(_html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-cache, must-revalidate, private', 'Pragma': 'no-cache', 'Expires': '0', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com data:; img-src 'self' data: blob: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'" } })
           }
         } catch (_rendErr) {
@@ -719,13 +719,13 @@ async function _serveStatic(req, pathname) {
         const _rd2 = _rm2._resolveData ?? _rm2.default?._resolveData
         const _fh2 = _rm2._fillHtml ?? _rm2.default?._fillHtml
         if (_rd2 && _fh2) {
-          req._arc_session = req._arc_session ?? (await auth.session(req) ?? null)
+          req._arc_session = req._arc_session ?? (typeof auth !== 'undefined' ? (await auth.session(req) ?? null) : null)
           const _ld2 = await _rd2(req)
           if (_ld2 && _ld2.__arc_render_error__) {
             return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><a href="#main-content" style="position:absolute;left:-9999px;top:auto;overflow:hidden;clip:rect(0,0,0,0)">Skip to main content</a><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page, or <a href="/admin">return to the admin panel</a>.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
           }
           let _html2 = _fh2(_ld2)
-          _html2 = _html2.replace(/<meta\\s+http-equiv=["']Content-Security-Policy["'][^>]*\\/?>/gi, '')
+          if (_html2.includes('http-equiv')) _html2 = _html2.replace(/<meta\\s+http-equiv=["']Content-Security-Policy["'][^>]*\\/?>/gi, '')
           return new Response(_html2, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com data:; img-src 'self' data: blob: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'" } })
         }
       } catch (_re2) {
@@ -880,8 +880,8 @@ const _db = {
         if (!_w || !Object.keys(_w).length) return _db.query('SELECT * FROM _arc_versions' + _order + ' LIMIT ? OFFSET ?').all(_lim, _off)
         const _keys = Object.keys(_w).filter(k => _arcVersionsCols.has(k)), _vals = _keys.map(k => _w[k])
         if (!_keys.length) return _db.query('SELECT * FROM _arc_versions' + _order + ' LIMIT ? OFFSET ?').all(_lim, _off)
-        const _wsql = _keys.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(' AND ')
-        return _db.query('SELECT * FROM _arc_versions WHERE ' + _wsql + _order + ' LIMIT ?' + (_keys.length + 1) + ' OFFSET ?' + (_keys.length + 2)).all(..._vals, _lim, _off)
+        const _wsql = _keys.map(k => '"' + k + '" = ?').join(' AND ')
+        return _db.query('SELECT * FROM _arc_versions WHERE ' + _wsql + _order + ' LIMIT ? OFFSET ?').all(..._vals, _lim, _off)
       },
       find: (id) => _db.query('SELECT * FROM _arc_versions WHERE id = ?1').get(id) ?? null,
       create: (data) => {
@@ -893,7 +893,7 @@ const _db = {
         if (!_w || !Object.keys(_w).length) return _db.query('SELECT COUNT(*) as count FROM _arc_versions').get()?.count ?? 0
         const _keys = Object.keys(_w).filter(k => _arcVersionsCols.has(k)), _vals = _keys.map(k => _w[k])
         if (!_keys.length) return _db.query('SELECT COUNT(*) as count FROM _arc_versions').get()?.count ?? 0
-        const _wsql = _keys.map((k, i) => '"' + k + '" = ?' + (i + 1)).join(' AND ')
+        const _wsql = _keys.map(k => '"' + k + '" = ?').join(' AND ')
         return _db.query('SELECT COUNT(*) as count FROM _arc_versions WHERE ' + _wsql).get(..._vals)?.count ?? 0
       },
       delete: (id) => (_db.run('DELETE FROM _arc_versions WHERE id = ?', [id]), true),
@@ -906,8 +906,7 @@ const _db = {
   const _trim = (modelName, recordId) => {
     Promise.resolve().then(() => {
       try {
-        const _rows = _db.query('SELECT id FROM _arc_versions WHERE modelName = ?1 AND recordId = ?2 ORDER BY id DESC LIMIT -1 OFFSET ' + _maxV).all(modelName, recordId)
-        if (_rows.length) _db.run('DELETE FROM _arc_versions WHERE id IN (' + _rows.map(r => parseInt(r.id, 10)).filter(n => Number.isFinite(n)).join(',') + ')')
+        _db.run('DELETE FROM _arc_versions WHERE id IN (SELECT id FROM _arc_versions WHERE modelName = ?1 AND recordId = ?2 ORDER BY id DESC LIMIT -1 OFFSET ' + _maxV + ')', [modelName, recordId])
       } catch (_trimErr) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'versioning_trim_failed', msg: _trimErr?.message ?? String(_trimErr) })) }
     }).catch(_trimErr => { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'versioning_trim_failed', msg: _trimErr?.message ?? String(_trimErr) })) })
   }
@@ -1549,10 +1548,11 @@ function _printBanner(port) {
     const bannerFn = this._buildBannerFn(routeTableStr, dbDisplayLabel, dbLabel)
     const traceSetup = this._emitTraceSetup(this.noTracing)
 
-    const traceHoist = this.noTracing ? '' : `
+    const traceHoist = `
 // Hoisted: avoids per-request RegExp allocation at high request rates
-const _TRACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/
-const _ARC_FN_NAME_RE = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/`
+const _ARC_FN_NAME_RE = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/` +
+      (this.noTracing ? '' : `
+const _TRACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/`)
 
     const rlCheck = this.noRateLimit ? '' : `
     const _rl = _checkRateLimit(req, _bunServer)
@@ -1615,7 +1615,7 @@ _printBanner(_server.port)
 _getStaticFiles()
 async function _shutdown(signal) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
-  const _t = setTimeout(() => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000)
+  const _t = setTimeout(() => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000).unref()
   try { await _server.stop(true) } catch (_se) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'server_stop_error', signal, msg: _se?.message ?? String(_se) })) }
   clearTimeout(_t)
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_complete', signal }))
@@ -1690,7 +1690,7 @@ _printBanner(_server.port)
 _getStaticFiles()
 async function _shutdown(signal) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
-  const _t = setTimeout(() => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000)
+  const _t = setTimeout(() => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000).unref()
   try { await _server.stop(true) } catch (_se) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'server_stop_error', signal, msg: _se?.message ?? String(_se) })) }
   clearTimeout(_t)
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_complete', signal }))

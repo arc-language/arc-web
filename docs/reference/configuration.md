@@ -34,7 +34,13 @@ Arc reads `arc.config.json` from the project root (next to `index.arc` or the fi
     "widths": [400, 800, 1200, 1600],
     "avifBenefitThreshold": 0.20,
     "dominantColors": true
-  }
+  },
+  "queues": {
+    "default": { "backend": "sqlite", "concurrency": 5 }
+  },
+  "storage": { "driver": "local", "root": "./uploads" },
+  "search": { "provider": "sqlite-fts" },
+  "packages": ["./packages/my-plugin"]
 }
 ```
 
@@ -128,6 +134,27 @@ Only applies to the Bun server target (`arc build-server`). The `--cors` CLI fla
 
 Per-page overrides via page `meta.imageFormats=["webp","jpg"]` etc.
 
+### `queues`
+
+Configure background job queues (requires `arc-jobs` package).
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `<name>.backend` | `"sqlite"` \| `"memory"` \| `"redis"` | `"memory"` | Queue adapter. `"redis"` requires `REDIS_URL` at runtime |
+| `<name>.concurrency` | Number | `5` | Max parallel workers for this queue |
+
+### `storage`
+
+Configure file upload storage (requires `arc-storage` package). See `arc-storage` docs for driver options.
+
+### `search`
+
+Configure full-text search (requires `arc-search` package). See `arc-search` docs for provider options.
+
+### `packages`
+
+Array of local or npm package paths that provide additional `@route`, `@model`, or widget declarations. Arc resolves each entry relative to the project root.
+
 ## No config = sensible defaults
 
 Arc is designed to work with no config file at all. Add `arc.config.json` only when you need to override a default — e.g., custom CSP, custom session validator, custom realtime broker URL.
@@ -170,6 +197,7 @@ These are not part of `arc.config.json` but are read by the generated server at 
 
 | Variable | Description |
 | --- | --- |
+| `NODE_ENV` | `production` or `development` (default: unset). Controls production mode: enforces `SESSION_SECRET` requirement and disables `ARC_DEBUG` response enrichment when not `development`. Set to `development` to suppress the `SESSION_SECRET` startup check in local dev. |
 | `PORT` | HTTP port to listen on (default: `3000`) |
 | `DATABASE_URL` | SQLite file path (default: `app.db`) or Postgres connection string (`postgres://user:pass@host/db`). Required in production when using `@model` declarations. |
 | `SESSION_SECRET` | Secret key for session signing. Required when `NODE_ENV` is not `development` and any `@auth` route is present — the server refuses to start without it. Set `NODE_ENV=development` to suppress in local dev. |

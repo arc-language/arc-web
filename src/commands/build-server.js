@@ -284,7 +284,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   // Load arc.config.json once for build-time configuration (storage backends, etc.)
   let arcCfg = {}
   try {
-    arcCfg = JSON.parse(fs.readFileSync(path.join(absDir, 'arc.config.json'), 'utf8'))
+    arcCfg = JSON.parse(await fs.promises.readFile(path.join(absDir, 'arc.config.json'), 'utf8'))
   } catch (e) {
     if (e.code !== 'ENOENT') console.warn(`arc: warning — arc.config.json could not be parsed (${e.message}), using defaults`)
   }
@@ -297,6 +297,7 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
     cors: flags.cors ?? null,
     profile: flags.profile ?? false,
     storage: arcCfg.storage,
+    queues: arcCfg.queues ?? {},
     versioningEnabled: opts.versioningEnabled ?? false,
     versioningConfig: opts.versioningConfig ?? {},
     searchConfig: arcCfg.search ?? {},

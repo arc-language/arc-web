@@ -18,7 +18,9 @@ const path = require('path')
 const crypto = require('crypto')
 
 let sharp = null
-try { sharp = require('sharp') } catch (_e) { /* optional - pipeline becomes a no-op. Install sharp for AVIF/WebP support. */ }
+if (!process.env.ARC_NO_SHARP) {
+  try { sharp = require('sharp') } catch (_e) { /* optional - pipeline becomes a no-op. Install sharp for AVIF/WebP support. */ }
+}
 
 const DEFAULT_WIDTHS = [400, 800, 1200, 1600]
 const DEFAULT_FORMATS = ['avif', 'webp', 'original']

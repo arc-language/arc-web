@@ -238,7 +238,6 @@ widget Field
       placeholder={ @placeholder ?? "" }
       required={ isRequired ? true : none }
       aria-required={ isRequired ? "true" : none }
-      aria-labelledby={ @label ? "label-" + @name : none }
       aria-label={ @label ? none : @name }
       aria-invalid={ isTouched ? (error ? "true" : "false") : none }
       aria-describedby={ isTouched && error ? "error-" + @name : none }
@@ -248,8 +247,9 @@ widget Field
     span
       id={"error-" + @name}
       class="field-error-msg"
-      aria-live={ isTouched ? "polite" : none }
-      aria-hidden={ !(isTouched && error) ? "true" : none }
+      aria-live="polite"
+      role="status"
+      aria-atomic="true"
       "{isTouched && error ? error : ""}"
 
   design
@@ -272,7 +272,7 @@ widget SubmitButton
   button
     type="submit"
     disabled={ @form.isSubmitting }
-    aria-busy={ @form.isSubmitting ? "true" : null }
+    aria-busy={ @form.isSubmitting ? "true" : none }
     class={ @form.isSubmitting ? "btn-submitting" : "" }
     if @form.isSubmitting
       span aria-hidden="true" "⏳ "

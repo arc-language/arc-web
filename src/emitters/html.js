@@ -282,7 +282,7 @@ class HtmlEmitter {
       '<head>',
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
-      (seo?.robots && seo.robots !== 'index,follow') ? `<meta name="robots" content="${this.escape(seo.robots)}">` : '',
+      (seo?.robots && (seo.robots.replace(/\s/g, '').toLowerCase() !== 'index,follow')) ? `<meta name="robots" content="${this.escape(seo.robots)}">` : '',
       // CSP meta tag is a fallback hint only — does not replace server-sent Content-Security-Policy headers in production
       '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com https://api.fontshare.com; font-src \'self\' https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com data:; object-src \'none\'; base-uri \'self\'; form-action \'self\';">',
       `<title>${this.escape(title)}</title>`,
@@ -290,14 +290,15 @@ class HtmlEmitter {
       seo.keywords ? `<meta name="keywords" content="${this.escape(seo.keywords)}">` : '',
       seo.author ? `<meta name="author" content="${this.escape(seo.author)}">` : '',
       seo.canonical ? `<link rel="canonical" href="${this.escape(seo.canonical)}">` : '',
-      seo.favicon ? `<link rel="icon" type="image/png" href="${this.escape(seo.favicon)}">` : '',
-      seo.favicon ? `<link rel="apple-touch-icon" href="${this.escape(seo.favicon)}">` : '',
+      seo.favicon ? (() => { const _ext = (seo.favicon.split('.').pop() ?? '').toLowerCase(); const _type = _ext === 'svg' ? 'image/svg+xml' : _ext === 'ico' ? 'image/x-icon' : _ext === 'webp' ? 'image/webp' : 'image/png'; const _sizes = _ext === 'svg' ? ' sizes="any"' : ''; return `<link rel="icon" type="${_type}"${_sizes} href="${this.escape(seo.favicon)}">` })() : '',
+      seo.favicon && !seo.favicon.endsWith('.svg') ? `<link rel="apple-touch-icon" href="${this.escape(seo.favicon)}">` : '',
       // Open Graph
       `<meta property="og:title" content="${this.escape(title)}">`,
       description ? `<meta property="og:description" content="${this.escape(description)}">` : '',
       `<meta property="og:type" content="${this.escape(seo.ogType ?? 'website')}">`,
       seo.canonical ? `<meta property="og:url" content="${this.escape(seo.canonical)}">` : '',
       seo.image ? `<meta property="og:image" content="${this.escape(seo.image)}">` : '',
+      seo.image && seo.imageAlt ? `<meta property="og:image:alt" content="${this.escape(seo.imageAlt)}">` : '',
       seo.siteName ? `<meta property="og:site_name" content="${this.escape(seo.siteName)}">` : '',
       _locale !== 'en_US' ? `<meta property="og:locale" content="${this.escape(_locale)}">` : '',
       // Twitter Card

@@ -99,6 +99,7 @@ Flags:
 | `--db postgres` | Emit PostgreSQL queries + `pg` Pool (default: SQLite via `bun:sqlite`) |
 | `--cors` | Allow all origins (`Access-Control-Allow-Origin: *`) |
 | `--cors <origin>` | Allow a specific origin (e.g. `--cors https://app.example.com`) |
+| `--profile` | Enable in-process request profiler at `/_arc/profiler`. Development only — disable in production. |
 
 Stats:
 ```
@@ -280,7 +281,7 @@ Flags are global where they make sense — `arc --version` works regardless of c
 | --- | --- |
 | `ARC_LOG_LEVEL` | `silent`, `warn`, `info` (default), `debug` |
 | `NO_COLOR` | Disable colored output. Follows the [no-color.org](https://no-color.org) convention. Same effect as `--no-color`. |
-| `ARC_NO_SHARP` | Force-skip image pipeline even if `sharp` is installed |
+| `ARC_NO_SHARP` | Force-skip image pipeline even if `sharp` is installed. Useful in CI environments without native addon support. |
 
 ## See also
 

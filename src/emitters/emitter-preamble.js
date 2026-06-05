@@ -70,14 +70,14 @@ function _arcWherePg(fields, w, offset) {
 // Pre-allocated header objects - reused across requests to avoid per-request allocation
 // _CORS_ORIGIN is emitted by callers (null = no CORS, string = allowed origin)
 const _HEADERS_JSON = _CORS_ORIGIN
-  ? { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': _CORS_ORIGIN }
-  : { 'Content-Type': 'application/json' }
+  ? { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff', 'Access-Control-Allow-Origin': _CORS_ORIGIN }
+  : { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' }
 const _HEADERS_HTML = _CORS_ORIGIN
-  ? { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': _CORS_ORIGIN }
-  : { 'Content-Type': 'text/html; charset=utf-8' }
+  ? { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Access-Control-Allow-Origin': _CORS_ORIGIN }
+  : { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff' }
 const _HEADERS_TEXT = _CORS_ORIGIN
-  ? { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': _CORS_ORIGIN }
-  : { 'Content-Type': 'text/plain; charset=utf-8' }
+  ? { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Access-Control-Allow-Origin': _CORS_ORIGIN }
+  : { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' }
 
 // Response helpers
 const _json = (data, status = 200, headers = null) =>
