@@ -12,6 +12,22 @@
 //     Field form={ loginForm } name="password" label="Password" type="password"
 //     SubmitButton form={ loginForm } "Log in"
 
+// Built-in locale message maps — add more keys or locales as needed
+// Pass locale="fr" (or any BCP 47 language tag) to createForm() to use built-in translations
+const _FORM_MESSAGES = {
+  en: { required: "This field is required", email: "Enter a valid email address", phone: "Enter a valid phone number", number: "Must be a number", amount: "Enter a valid amount", positive: "Amount must be positive" },
+  fr: { required: "Ce champ est obligatoire", email: "Saisissez une adresse e-mail valide", phone: "Saisissez un numéro de téléphone valide", number: "Doit être un nombre", amount: "Saisissez un montant valide", positive: "Le montant doit être positif" },
+  es: { required: "Este campo es obligatorio", email: "Introduce un correo electrónico válido", phone: "Introduce un número de teléfono válido", number: "Debe ser un número", amount: "Introduce un importe válido", positive: "El importe debe ser positivo" },
+  de: { required: "Dieses Feld ist erforderlich", email: "Gib eine gültige E-Mail-Adresse ein", phone: "Gib eine gültige Telefonnummer ein", number: "Muss eine Zahl sein", amount: "Gib einen gültigen Betrag ein", positive: "Der Betrag muss positiv sein" },
+  nl: { required: "Dit veld is verplicht", email: "Voer een geldig e-mailadres in", phone: "Voer een geldig telefoonnummer in", number: "Moet een getal zijn", amount: "Voer een geldig bedrag in", positive: "Het bedrag moet positief zijn" },
+  pt: { required: "Este campo é obrigatório", email: "Insira um endereço de e-mail válido", phone: "Insira um número de telefone válido", number: "Deve ser um número", amount: "Insira um valor válido", positive: "O valor deve ser positivo" },
+  ja: { required: "このフィールドは必須です", email: "有効なメールアドレスを入力してください", phone: "有効な電話番号を入力してください", number: "数値を入力してください", amount: "有効な金額を入力してください", positive: "金額は正の数にしてください" }
+}
+
+const _SUBMIT_LABELS = {
+  en: "Submitting…", fr: "Envoi en cours…", es: "Enviando…", de: "Wird gesendet…", nl: "Bezig met verzenden…", pt: "Enviando…", ja: "送信中…"
+}
+
 // Validators — pure functions, return error string or none
 fn _required(value) {
   if !value || value.trim() == "" { return "This field is required" }
@@ -123,17 +139,21 @@ fn _validateField(value, validators) {
 // createForm — returns a form handle with reactive state
 // messages: optional object to override default validator error messages,
 //   e.g. { required: "Verplicht veld", email: "Ongeldig e-mailadres", ... }
-fn createForm(schema, messages) {
+// locale: BCP 47 language tag (e.g. "fr", "nl", "de") — picks built-in translations as defaults
+//   before any messages overrides. Falls back to "en" for unknown locales.
+fn createForm(schema, messages, locale) {
   @state let values = {}
   @state let errors = {}
   @state let touched = {}
   @state let isSubmitting = false
   @state let isSubmitted = false
 
-  // Pre-build validators for each field; merge schema-level with form-level message overrides
+  // Pre-build validators for each field; merge locale defaults → form messages → field overrides
+  const _localeDefaults = _FORM_MESSAGES[locale?.split("-")[0]] ?? _FORM_MESSAGES.en
+  const _baseMessages = messages ? { ..._localeDefaults, ...messages } : _localeDefaults
   const validators = {}
   for name, config in schema {
-    const fieldConfig = messages ? { ...config, _messages: { ...messages, ...(config._messages ?? {}) } } : config
+    const fieldConfig = { ...config, _messages: { ..._baseMessages, ...(config._messages ?? {}) } }
     validators[name] = _buildValidators(fieldConfig)
   }
 
@@ -214,9 +234,10 @@ fn createForm(schema, messages) {
     validateAll,
     reset,
     submit,
-    // For Field widget
+    // For Field widget and SubmitButton locale defaults
     _validators: validators,
-    _schema: schema
+    _schema: schema,
+    locale
   }
 }
 
@@ -265,10 +286,11 @@ widget Field
       outline-color: #b91c1c
 
 // SubmitButton widget — submit button that auto-disables during submission
-// Usage: SubmitButton form={ loginForm } submittingLabel="Verzenden…" "Log in"
+// Usage: SubmitButton form={ loginForm } locale="nl" "Log in"
+// locale attr picks a built-in submitting label; submittingLabel overrides fully
 widget SubmitButton
-  // Attrs: form (handle from createForm), submittingLabel (optional, defaults to "Submitting…"), (slot for children)
-  const _submittingText = @submittingLabel ?? "Submitting…"
+  // Attrs: form (handle from createForm), locale (optional BCP 47 tag), submittingLabel (optional), (slot for children)
+  const _submittingText = @submittingLabel ?? (_SUBMIT_LABELS[@locale?.split("-")[0]] ?? _SUBMIT_LABELS.en)
   button
     type="submit"
     disabled={ @form.isSubmitting }
