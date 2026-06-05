@@ -127,7 +127,7 @@ process.stdout.isTTY
 async function _shutdown(signal) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
   const _t = setTimeout(() => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000)
-  try { await _server.stop(true) } catch {}
+  try { await _server.stop(true) } catch (_se) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'server_stop_error', signal, msg: _se?.message ?? String(_se) })) }
   clearTimeout(_t)
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_complete', signal }))
   process.exit(0)

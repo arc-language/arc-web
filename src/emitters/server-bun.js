@@ -427,6 +427,15 @@ class BunServerEmitter {
     const staticFallback = `
 const _path = require('path')
 const _fs = require('fs')
+// ARC_LOG_LEVEL: silent | warn | info (default) | debug
+// Implemented via console patching so all log calls (including third-party) respect the level.
+;(function(){
+  const _ll = (process.env.ARC_LOG_LEVEL ?? 'info').toLowerCase()
+  const _noop = () => {}
+  if (_ll === 'silent') { console.log = _noop; console.warn = _noop; console.error = _noop }
+  else if (_ll === 'warn') { console.log = _noop }
+  // 'info' (default) and 'debug' leave console untouched
+})()
 // Bun exposes the Web Crypto API on globalThis.crypto but not Node.js crypto methods.
 // Assign them so user code can call crypto.scryptSync / crypto.randomBytes directly.
 ;(function(){ const _nc = require('node:crypto'); if (!crypto.scryptSync) crypto.scryptSync = _nc.scryptSync.bind(_nc); if (!crypto.randomBytes) crypto.randomBytes = _nc.randomBytes.bind(_nc); })()
@@ -519,8 +528,8 @@ function _getArcFnFiles() {
 // O(1) handler map: built once on first /_arc/fn/ request. Returns a Promise so
 // concurrent callers all await the same build rather than each getting an empty Map.
 // Lazily imports /_arc/functions.js handler modules on first request and caches the result.
-// On catastrophic failure (import error), permanently resolves to empty Map — avoids
-// retry storms. Process restart required to recover, which is the right recovery path.
+// On failure, clears cache after 10 seconds so a subsequent rebuild + request can recover
+// without a full process restart (watch-mode DX improvement).
 let _arcHandlerCache = null
 function _getHandlerCache() {
   if (_arcHandlerCache) return _arcHandlerCache
@@ -537,7 +546,11 @@ function _getHandlerCache() {
       } catch (e) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'fn_module_load_failed', file: _fnPath, msg: e?.message ?? String(e) })) }
     }
     return _m
-  })().catch(e => { _arcHandlerCache = Promise.resolve(new Map()); console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'handler_cache_build_failed', msg: e?.message ?? String(e) })); return new Map() })
+  })().catch(e => {
+    console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'handler_cache_build_failed', msg: e?.message ?? String(e) }))
+    setTimeout(() => { _arcHandlerCache = null }, 10000).unref()
+    return new Map()
+  })
   return _arcHandlerCache
 }
 // Cached path -> required role table from server/admin-roles.json (arc-cms config).
@@ -569,6 +582,7 @@ function _roleOk(have, need) {
   if (!Object.prototype.hasOwnProperty.call(ranks, have)) return false
   return ranks[have] >= (ranks[need] ?? 0)
 }
+let _cmsPageRenderer = undefined
 async function _serveStatic(req, pathname) {
   ${_storageServeDispatch}
   // Serve user-uploaded media from public/uploads/ with safe headers (no auth — public assets).
@@ -610,14 +624,15 @@ async function _serveStatic(req, pathname) {
     const _slug = pathname.slice(3)
     if (/^[a-z0-9][a-z0-9-]*$/i.test(_slug)) {
       try {
-        const _pr = require(_path.join(process.cwd(), 'server', 'cms', 'page-renderer.js'))
+        if (_cmsPageRenderer === undefined) { try { _cmsPageRenderer = require(_path.join(process.cwd(), 'server', 'cms', 'page-renderer.js')) } catch (_re) { _cmsPageRenderer = _re?.code === 'MODULE_NOT_FOUND' ? null : undefined } }
+        const _pr = _cmsPageRenderer
         if (_pr && _pr.renderCmsPage) {
           const _prRes = await _pr.renderCmsPage(req, _db, _slug)
           if (_prRes) return _prRes
           // null → module requested fall-through (editor session bypass)
         }
       } catch (_e) {
-        if (_e?.code !== 'MODULE_NOT_FOUND') console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'cms_page_renderer_error', slug: _slug, msg: _e?.message ?? String(_e), name: _e?.name }))
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'cms_page_renderer_error', slug: _slug, msg: _e?.message ?? String(_e), name: _e?.name }))
       }
     }
   }
@@ -628,7 +643,8 @@ async function _serveStatic(req, pathname) {
     if (_ARC_FN_NAME_RE.test(_fnName)) {
       try {
         // Store null when unauthenticated — handlers must check req._arc_session before accessing protected data
-        req._arc_session = await auth.session(req) ?? null
+        // auth is only emitted when @auth routes or middleware are present; guard for @live-only projects
+        req._arc_session = typeof auth !== 'undefined' ? (await auth.session(req) ?? null) : null
         const _hCache = await _getHandlerCache()
         const _matchedHandler = _hCache.get(_fnName)
         if (_matchedHandler) { const _fnRes = await _matchedHandler(req); return _fnRes instanceof Response ? _fnRes : new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } }) }
@@ -670,7 +686,7 @@ async function _serveStatic(req, pathname) {
           const _resolveData = _rmod._resolveData ?? _rmod.default?._resolveData
           const _fillHtml = _rmod._fillHtml ?? _rmod.default?._fillHtml
           if (_resolveData && _fillHtml) {
-            req._arc_session = req._arc_session ?? (await auth.session(req) ?? {})
+            req._arc_session = req._arc_session ?? (typeof auth !== 'undefined' ? (await auth.session(req) ?? null) : null)
             const _ldata = await _resolveData(req)
             if (_ldata && _ldata.__arc_render_error__) {
               return new Response('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Something went wrong – Arc</title></head><body style="font-family:system-ui;padding:2rem"><a href="#main-content" style="position:absolute;left:-9999px;top:auto;overflow:hidden;clip:rect(0,0,0,0)">Skip to main content</a><main id="main-content" style="max-width:40rem;margin:4rem auto"><h1 style="text-align:center">Something went wrong</h1><p>Please try refreshing the page, or <a href="/admin">return to the admin panel</a>.</p></main></body></html>', { status: 500, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store' } })
@@ -852,10 +868,11 @@ const _db = {
   _db.run('CREATE INDEX IF NOT EXISTS _arc_versions_user   ON _arc_versions (userId, createdAt DESC)')
   // Register _arc_versions db helpers
   Object.assign(globalThis.db ?? (globalThis.db = {}), {
-    _arc_versions: {
+    _arc_versions: (() => {
+      const _arcVersionsCols = new Set(['id', 'modelName', 'recordId', 'action', 'data', 'userId', 'createdAt'])
+      return {
       findMany: (opts = {}) => {
         const _w = opts.where, _ob = opts.orderBy, _lim = Math.min(opts.limit ?? 20, 10000), _off = opts.offset ?? 0
-        const _arcVersionsCols = new Set(['id', 'modelName', 'recordId', 'action', 'data', 'userId', 'createdAt'])
         const _order = _ob ? ' ORDER BY ' + Object.entries(_ob).filter(([k]) => _arcVersionsCols.has(k)).map(([k, d]) => '"' + k + '" ' + (d === 'desc' ? 'DESC' : 'ASC')).join(', ') : ' ORDER BY id DESC'
         if (!_w || !Object.keys(_w).length) return _db.query('SELECT * FROM _arc_versions' + _order + ' LIMIT ? OFFSET ?').all(_lim, _off)
         const _keys = Object.keys(_w).filter(k => _arcVersionsCols.has(k)), _vals = _keys.map(k => _w[k])
@@ -878,6 +895,7 @@ const _db = {
       },
       delete: (id) => (_db.run('DELETE FROM _arc_versions WHERE id = ?', [id]), true),
     }
+  })()
   })
   // Wrap all model mutations to auto-snapshot
   const _skip = new Set(${exclude})
@@ -1033,13 +1051,13 @@ const _q_${tableName}_delete = _db.query('DELETE FROM ${tableName} WHERE id = ?1
 const _q_${tableName}_count = _db.query('SELECT COUNT(*) as count FROM ${tableName}')
 const _${tableName}_fields = ${fieldNames}
 const _${tableName}_required = ${requiredFieldNames}
+const _${tableName}_allowedCols = new Set([..._${tableName}_fields, 'id'])
 
 Object.assign(globalThis.db ?? (globalThis.db = {}), {
   ${tableName}: {
     findMany: (opts = {}) => {
       const _w = opts?.where
-      const _allowedCols = new Set([..._${tableName}_fields, 'id'])
-      const _ob = opts?.orderBy ? Object.entries(opts.orderBy).filter(([k]) => _allowedCols.has(k)).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
+      const _ob = opts?.orderBy ? Object.entries(opts.orderBy).filter(([k]) => _${tableName}_allowedCols.has(k)).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
       const _order = _ob ? \` ORDER BY \${_ob}\` : ''
       const _lim = Math.min(opts?.limit ?? 20, 100000), _off = opts?.offset ?? 0
       if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT ? OFFSET ?\`).all(_lim, _off)
@@ -1049,8 +1067,7 @@ Object.assign(globalThis.db ?? (globalThis.db = {}), {
     },
     findFirst: (opts = {}) => {
       const _w = opts?.where
-      const _allowedCols2 = new Set([..._${tableName}_fields, 'id'])
-      const _ob = opts?.orderBy ? Object.entries(opts.orderBy).filter(([k]) => _allowedCols2.has(k)).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
+      const _ob = opts?.orderBy ? Object.entries(opts.orderBy).filter(([k]) => _${tableName}_allowedCols.has(k)).map(([k, d]) => \`"\${k}" \${d === 'desc' ? 'DESC' : 'ASC'}\`).join(', ') : null
       const _order = _ob ? \` ORDER BY \${_ob}\` : ''
       if (!_w || !Object.keys(_w).length) return _db.query(\`SELECT ${selectCols} FROM ${tableName}\${_order} LIMIT 1\`).get() ?? null
       const { sql: _wsql, vals: _wv } = _arcWhere(_${tableName}_fields, _w)
@@ -1483,7 +1500,7 @@ async function ${name}(req, params) {
     const corsOriginLiteral = JSON.stringify(cors)
     return `
     if (req.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': ${corsOriginLiteral}, 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', 'Access-Control-Max-Age': '86400' } })
+      return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': ${corsOriginLiteral}, 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-ID', 'Access-Control-Max-Age': '86400' } })
     }`
   }
 
@@ -1518,7 +1535,7 @@ function _printBanner(port) {
 
   emitBunServe(routes, schemas, hasMiddleware = false) {
     const port = '_port'
-    const portValidation = `const _rawPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000\nconst _port = (Number.isInteger(_rawPort) && _rawPort > 0 && _rawPort < 65536) ? _rawPort : 3000`
+    const portValidation = `const _rawPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000\nif (process.env.PORT && (isNaN(_rawPort) || _rawPort <= 0 || _rawPort >= 65536)) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'invalid_port_env', raw: process.env.PORT, fallback: 3000 })) }\nconst _port = (Number.isInteger(_rawPort) && _rawPort > 0 && _rawPort < 65536) ? _rawPort : 3000`
     const hasAuth = routes.some(r => r.annotations?.find(a => a === '@auth' || a.startsWith('@auth(')))
     const hasDb = schemas && schemas.length > 0
     const healthBody = this._emitHealthBody(hasDb, this.isPg)
@@ -1546,6 +1563,11 @@ const _ARC_FN_NAME_RE = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/`
     const envChecks = []
     if (hasAuth) {
       envChecks.push(`if (!process.env.SESSION_SECRET && process.env.NODE_ENV !== 'development') { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: 'arc: SESSION_SECRET env var is required when @auth routes are present (set NODE_ENV=development to suppress in local dev)' })); process.exit(1) }`)
+    }
+    const queues = this.options.queues ?? {}
+    const hasRedisQueue = Object.values(queues).some(q => (q.backend ?? 'memory') === 'redis')
+    if (hasRedisQueue) {
+      envChecks.push(`if (!process.env.REDIS_URL) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: 'arc: REDIS_URL env var is required when arc-jobs is configured with a Redis queue backend' })); process.exit(1) }`)
     }
     const envBlock = envChecks.length > 0 ? envChecks.join('\n') + '\n\n' : ''
 
@@ -1591,7 +1613,7 @@ _getStaticFiles()
 async function _shutdown(signal) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
   const _t = setTimeout(() => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000)
-  try { await _server.stop(true) } catch {}
+  try { await _server.stop(true) } catch (_se) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'server_stop_error', signal, msg: _se?.message ?? String(_se) })) }
   clearTimeout(_t)
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_complete', signal }))
   process.exit(0)
@@ -1666,7 +1688,7 @@ _getStaticFiles()
 async function _shutdown(signal) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_started', signal }))
   const _t = setTimeout(() => { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', event: 'server_shutdown_timeout', signal })); process.exit(0) }, 5000)
-  try { await _server.stop(true) } catch {}
+  try { await _server.stop(true) } catch (_se) { console.warn(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'server_stop_error', signal, msg: _se?.message ?? String(_se) })) }
   clearTimeout(_t)
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', event: 'server_shutdown_complete', signal }))
   process.exit(0)

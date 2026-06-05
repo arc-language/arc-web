@@ -109,7 +109,7 @@ Runtime endpoints (available in every generated server):
 
 | Endpoint | Description |
 | --- | --- |
-| `/_arc/health` | JSON health check. Returns `{ status, uptime, queue, version, ts }` (no `@model` declarations) or `{ status, db, queue, uptime, version, ts }` (with `@model`). Status is `"ok"` (200) or `"degraded"` (503) when the DB probe fails. No authentication required — safe for load balancer and k8s liveness probes. |
+| `/_arc/health` | JSON health check. Returns `{ status, uptime, queue, version, ts }` (no `@model` declarations) or `{ status, db, queue, uptime, version, ts }` (with `@model`). Status is `"ok"` (200) or `"degraded"` (503) when the DB probe fails. No authentication required — safe for load balancer and k8s liveness probes. With `--bun-routes`, this endpoint is registered as a native Bun route and bypasses middleware and rate-limiter layers so load-balancer probes are never blocked. |
 
 See [Deployment](../features/deployment.md) for running in production.
 

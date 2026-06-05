@@ -101,7 +101,7 @@ function emitDispatchFn(root, opts = {}) {
       const methodCases = [...handlers.entries()]
         .map(([m, h]) => `        case '${m}': return ${h}(req, _EMPTY_PARAMS)`)
         .join('\n')
-      return `    case '${path}':\n      switch (req.method) {\n${methodCases}\n        default: return new Response('Method Not Allowed', { status: 405 })\n      }`
+      return `    case ${JSON.stringify(path)}:\n      switch (req.method) {\n${methodCases}\n        default: return new Response('Method Not Allowed', { status: 405 })\n      }`
     }).join('\n')
     fastPath = `switch (_pathname) {\n${cases}\n  }\n  `
   }
@@ -167,7 +167,7 @@ function emitBunRoutesObject(routes, opts = {}) {
         return ${handlerName}(req, params ?? {})
       },`
     }).join('\n')
-    routeEntries.push(`    '${path}': {\n${handlerLines}\n    },`)
+    routeEntries.push(`    ${JSON.stringify(path)}: {\n${handlerLines}\n    },`)
   }
 
   return `
@@ -217,7 +217,7 @@ function emitTrieNodeWithExtra(node, depth, indent, extra) {
     lines.push(`${pad}const seg${depth} = segments[${depth}]`)
     lines.push(`${pad}switch (seg${depth}) {`)
     for (const [seg, child] of node.children) {
-      lines.push(`${pad}  case '${seg}': {`)
+      lines.push(`${pad}  case ${JSON.stringify(seg)}: {`)
       lines.push(emitTrieNodeWithExtra(child, depth + 1, indent + 2, extra))
       lines.push(`${pad}  }`)
     }

@@ -160,9 +160,19 @@ async function buildServerOnce(projectDir, opts = {}, flags = {}, { formatError 
   // Parse package routes (from arc.config.json `packages`, resolved by cli.js `buildServer`).
   // Each package server dir is paired with its own serverDir root for dynamic path resolution.
   const pkgServerDirs = opts.pkgServerDirs || []
-  const pkgRouteFileInfos = pkgServerDirs.flatMap(dir =>
-    findArcFiles(dir).filter(f => path.basename(f) !== 'middleware.arc').map(file => ({ file, serverDir: dir }))
-  )
+  const pkgRouteFileInfos = pkgServerDirs.flatMap(dir => {
+    const absPkgDir = path.resolve(dir)
+    return findArcFiles(dir)
+      .filter(f => {
+        const absF = path.resolve(f)
+        if (!absF.startsWith(absPkgDir + path.sep)) {
+          console.warn(`arc: warning: skipping package file outside package directory: ${f}`)
+          return false
+        }
+        return path.basename(f) !== 'middleware.arc'
+      })
+      .map(file => ({ file, serverDir: dir }))
+  })
   const pkgDeclResults = await Promise.all(pkgRouteFileInfos.map(async ({ file, serverDir: pkgServerDir }) => {
     try {
       const src = await fs.promises.readFile(file, 'utf8')
@@ -396,8 +406,10 @@ async function buildServer(projectDir, opts = {}, flags = {}, hooks = {}) {
           })
         }, 50)
       })
-    } catch {
-      // fs.watch not available (some platforms); silently skip
+    } catch (e) {
+      if (e?.code !== 'ENOSYS' && e?.code !== 'ENOTSUP' && e?.code !== 'ENOENT') {
+        console.warn(`arc: watch unavailable for ${dir}: ${e?.message ?? String(e)}`)
+      }
     }
   }
 

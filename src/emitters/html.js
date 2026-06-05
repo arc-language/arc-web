@@ -295,13 +295,13 @@ class HtmlEmitter {
       // Open Graph
       `<meta property="og:title" content="${this.escape(title)}">`,
       description ? `<meta property="og:description" content="${this.escape(description)}">` : '',
-      seo.ogType !== 'website' ? `<meta property="og:type" content="${this.escape(seo.ogType)}">` : '',
+      `<meta property="og:type" content="${this.escape(seo.ogType ?? 'website')}">`,
       seo.canonical ? `<meta property="og:url" content="${this.escape(seo.canonical)}">` : '',
       seo.image ? `<meta property="og:image" content="${this.escape(seo.image)}">` : '',
       seo.siteName ? `<meta property="og:site_name" content="${this.escape(seo.siteName)}">` : '',
       _locale !== 'en_US' ? `<meta property="og:locale" content="${this.escape(_locale)}">` : '',
       // Twitter Card
-      seo.image ? `<meta name="twitter:card" content="summary_large_image">` : '',
+      `<meta name="twitter:card" content="${seo.image ? 'summary_large_image' : 'summary'}">`,
       `<meta name="twitter:title" content="${this.escape(title)}">`,
       description ? `<meta name="twitter:description" content="${this.escape(description)}">` : '',
       seo.image ? `<meta name="twitter:image" content="${this.escape(seo.image)}">` : '',
@@ -806,6 +806,7 @@ class HtmlEmitter {
     // <avatar> maps to <img>. A missing alt makes the identity image invisible to AT users.
     if (node.tag === 'avatar' && attrs.alt === undefined) {
       process.stderr.write(`[arc] a11y: <avatar> at line ${node.line ?? '?'} is missing alt= — add alt="Person's name" for identity images, or alt="" if purely decorative\n`)
+      attrs.alt = ''
     }
 
     // <button> defaults to type="submit" inside a <form> per HTML spec.

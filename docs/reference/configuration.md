@@ -172,7 +172,7 @@ These are not part of `arc.config.json` but are read by the generated server at 
 | --- | --- |
 | `PORT` | HTTP port to listen on (default: `3000`) |
 | `DATABASE_URL` | SQLite file path (default: `app.db`) or Postgres connection string (`postgres://user:pass@host/db`). Required in production when using `@model` declarations. |
-| `SESSION_SECRET` | Secret key for session signing. **Required in production** when any `@auth` route is present — the server will refuse to start without it. |
+| `SESSION_SECRET` | Secret key for session signing. Required when `NODE_ENV` is not `development` and any `@auth` route is present — the server refuses to start without it. Set `NODE_ENV=development` to suppress in local dev. |
 | `ARC_DEBUG=1` | Include error `message`, `name`, and truncated `stack` in HTTP 500 JSON responses. Only active when `NODE_ENV=development` is also set — never fires with unset or production `NODE_ENV`. Useful for local debugging when console logs are not accessible. |
 | `ARC_LOG_LEVEL` | `silent`, `warn`, `info` (default), `debug`. Controls server log verbosity. |
 | `TRUSTED_PROXY_IPS` | Comma-separated list of trusted proxy IPs (matched against the direct TCP connection). When set, the rate limiter reads the client IP from the `X-Forwarded-For` header only when the TCP-level peer IP is in this list. |

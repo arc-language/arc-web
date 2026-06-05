@@ -20,6 +20,7 @@ fn _required(value) {
 
 fn _email(value) {
   unless value { return none }
+  if value.length > 254 { return "Enter a valid email address" }
   const atIdx = value.indexOf("@")
   if atIdx < 1 { return "Enter a valid email address" }
   const domain = value.slice(atIdx + 1)
@@ -28,18 +29,18 @@ fn _email(value) {
   return none
 }
 
-fn _minLength(min) {
+fn _minLength(min, message) {
   return fn(value) {
     unless value { return none }
-    if value.length < min { return "Must be at least {min} characters" }
+    if value.length < min { return message ?? "Must be at least {min} characters" }
     return none
   }
 }
 
-fn _maxLength(max) {
+fn _maxLength(max, message) {
   return fn(value) {
     unless value { return none }
-    if value.length > max { return "Must be {max} characters or fewer" }
+    if value.length > max { return message ?? "Must be {max} characters or fewer" }
     return none
   }
 }
@@ -92,18 +93,20 @@ fn _money(value) {
 }
 
 // Build a validator list from a field config object
+// config._messages: optional overrides e.g. { required: "Required field", email: "Bad email" }
 fn _buildValidators(config) {
+  const m = config._messages ?? {}
   const validators = []
-  if config.required { validators.push(_required) }
-  if config.type == "email" { validators.push(_email) }
-  if config.type == "phone" { validators.push(_phone) }
+  if config.required { validators.push(m.required ? fn(v) { if !v || v.trim() == "" { return m.required } return none } : _required) }
+  if config.type == "email" { validators.push(m.email ? fn(v) { unless v { return none }; if v.length > 254 { return m.email }; const ai = v.indexOf("@"); if ai < 1 { return m.email }; const d = v.slice(ai + 1); if d.length < 3 || !d.includes(".") { return m.email }; if v.includes(" ") { return m.email }; return none } : _email) }
+  if config.type == "phone" { validators.push(m.phone ? fn(v) { unless v { return none }; const s = v.replace(/[\s\-().]/g, ""); const d = s.replace(/\D/g, ""); if d.length < 7 || d.length > 15 { return m.phone }; unless /^\+?[1-9]\d{6,14}$/.test(s) { return m.phone }; return none } : _phone) }
   if config.type == "money" { validators.push(_money) }
   if config.type == "number" || config.numeric { validators.push(_numeric) }
-  if config.minLength { validators.push(_minLength(config.minLength)) }
-  if config.maxLength { validators.push(_maxLength(config.maxLength)) }
+  if config.minLength { validators.push(_minLength(config.minLength, m.minLength)) }
+  if config.maxLength { validators.push(_maxLength(config.maxLength, m.maxLength)) }
   if config.min != none { validators.push(_min(config.min)) }
   if config.max != none { validators.push(_max(config.max)) }
-  if config.pattern { validators.push(_pattern(config.pattern, config.patternMessage)) }
+  if config.pattern { validators.push(_pattern(config.pattern, config.patternMessage ?? m.pattern)) }
   if config.validate { validators.push(config.validate) }
   return validators
 }
@@ -118,17 +121,20 @@ fn _validateField(value, validators) {
 }
 
 // createForm — returns a form handle with reactive state
-fn createForm(schema) {
+// messages: optional object to override default validator error messages,
+//   e.g. { required: "Verplicht veld", email: "Ongeldig e-mailadres", ... }
+fn createForm(schema, messages) {
   @state let values = {}
   @state let errors = {}
   @state let touched = {}
   @state let isSubmitting = false
   @state let isSubmitted = false
 
-  // Pre-build validators for each field
+  // Pre-build validators for each field; merge schema-level with form-level message overrides
   const validators = {}
   for name, config in schema {
-    validators[name] = _buildValidators(config)
+    const fieldConfig = messages ? { ...config, _messages: { ...messages, ...(config._messages ?? {}) } } : config
+    validators[name] = _buildValidators(fieldConfig)
   }
 
   fn getValue(name) { return values[name] ?? "" }
@@ -259,9 +265,10 @@ widget Field
       outline-color: #b91c1c
 
 // SubmitButton widget — submit button that auto-disables during submission
-// Usage: SubmitButton form={ loginForm } "Log in"
+// Usage: SubmitButton form={ loginForm } submittingLabel="Verzenden…" "Log in"
 widget SubmitButton
-  // Attrs: form (handle from createForm), (slot for children)
+  // Attrs: form (handle from createForm), submittingLabel (optional, defaults to "Submitting…"), (slot for children)
+  const _submittingText = @submittingLabel ?? "Submitting…"
   button
     type="submit"
     disabled={ @form.isSubmitting }
@@ -269,7 +276,7 @@ widget SubmitButton
     class={ @form.isSubmitting ? "btn-submitting" : "" }
     if @form.isSubmitting
       span aria-hidden="true" "⏳ "
-      span class="btn-label" "Submitting…"
+      span class="btn-label" "{_submittingText}"
     if !@form.isSubmitting
       @slot
 
